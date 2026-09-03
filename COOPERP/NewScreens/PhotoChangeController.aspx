@@ -652,7 +652,11 @@
 
     window.pcReview = function (id, approve) {
         if (!approve) { openReject({ mode: "single", id: id }, "Rejecting <b>1</b> photograph &mdash; it will be removed and the student asked to re-upload."); return; }
-        if (!confirm("Approve this photograph as the student's official photo?\n\nAny other versions this student submitted will be cleared automatically.")) return;
+        // Approving asks for no confirmation: it is the ordinary outcome of a review the
+        // reviewer has already made by looking at the photograph, and it is reversible from
+        // the version history. A prompt on every approval is pure friction on a queue that is
+        // worked through in bulk. Rejection and deletion still confirm, because those remove
+        // the submitted image.
         post("action=review&id=" + encodeURIComponent(id) + "&decision=approve&comment=")
             .then(function (d) { pcToast(d.message || "Done", !d.success); if (d.success) setTimeout(reloadKeep, 700); })
             .catch(function () { pcToast("Request failed.", true); });
@@ -662,7 +666,6 @@
         document.querySelectorAll(".pc-chk:checked").forEach(function (c) { ids.push(c.value); });
         if (ids.length === 0) { pcToast("Select at least one photo first.", true); return; }
         if (!approve) { openReject({ mode: "batch", ids: ids }, "Rejecting <b>" + ids.length + "</b> selected photograph(s) &mdash; each will be removed and the students asked to re-upload."); return; }
-        if (!confirm("Approve " + ids.length + " selected photograph(s)?\n\nFor each student, approving one photo clears their other submitted versions.")) return;
         post("action=batch&ids=" + encodeURIComponent(ids.join(",")) + "&decision=approve&comment=")
             .then(function (d) { pcToast(d.message || "Done", !d.success); if (d.success) setTimeout(reloadKeep, 800); })
             .catch(function () { pcToast("Request failed.", true); });

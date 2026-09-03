@@ -230,8 +230,20 @@ public static class ExamConfig
         public string AcadYear = "";
         public int Semester = 0;
 
+        /// <summary>
+        /// Study session (DAY / WEEKEND / INSERVICE / EVENING), taken from the teaching
+        /// allocation or the student's course registration.
+        ///
+        /// This exists because in-service is a MODE, not a programme: every programme that
+        /// has in-service students also has day or weekend students, so a PROGRAMME-scoped
+        /// override cannot open mark entry for the in-service cohort without also opening it
+        /// for the day cohort of the same programme.
+        /// </summary>
+        public string Session = "";
+
         public static Scope Global() { return new Scope(); }
         public Scope ForProgramme(string p) { Programme = (p ?? "").Trim(); return this; }
+        public Scope ForSession(string s) { Session = (s ?? "").Trim(); return this; }
         public Scope ForFaculty(string f) { Faculty = (f ?? "").Trim(); return this; }
         public Scope ForCampus(string c) { Campus = (c ?? "").Trim(); return this; }
         public Scope ForPeriod(string year, int sem) { AcadYear = (year ?? "").Trim(); Semester = sem; return this; }
@@ -248,13 +260,45 @@ public static class ExamConfig
     /// </summary>
     public static Scope ScopeForProgramme(string programme, string campus, string acadYear, int semester)
     {
+        return ScopeForProgramme(programme, campus, acadYear, semester, null);
+    }
+
+    /// <summary>
+    /// As above, and also carries the study session so that a SESSION-scoped rule
+    /// (e.g. "in-service may enter marks this year") can reach the right cohort.
+    /// Callers that genuinely have no session should use the four-argument overload;
+    /// an empty session simply cannot match a SESSION override.
+    /// </summary>
+    public static Scope ScopeForProgramme(string programme, string campus, string acadYear, int semester, string session)
+    {
         var sc = new Scope();
         sc.Programme = (programme ?? "").Trim();
         sc.Campus = (campus ?? "").Trim();
         sc.AcadYear = (acadYear ?? "").Trim();
         sc.Semester = semester;
+        sc.Session = NormaliseSession(session);
         sc.Faculty = FacultyOf(sc.Programme);
         return sc;
+    }
+
+    /// <summary>
+    /// Study session as stored varies in case and spacing across screens
+    /// ("InService", "IN SERVICE", "inservice"). Fold it to the canonical form used in
+    /// acad_studysessions so a SESSION rule matches regardless of which screen asked.
+    /// </summary>
+    public static string NormaliseSession(string session)
+    {
+        string v = (session ?? "").Trim();
+        if (v == "" || v == "-") return "";
+        string flat = v.Replace(" ", "").Replace("-", "").Replace("_", "").ToUpperInvariant();
+        switch (flat)
+        {
+            case "INSERVICE": case "INSRV": case "INSERV": return "INSERVICE";
+            case "DAY":       case "FULLTIME":             return "DAY";
+            case "WEEKEND":   case "WKD":                  return "WEEKEND";
+            case "EVENING":   case "EVE":                  return "EVENING";
+            default: return v.ToUpperInvariant();
+        }
     }
 
     private static readonly Dictionary<string, string> FacultyCache =
@@ -375,10 +419,14 @@ public static class ExamConfig
                     "  AND ( scope_type = 'GLOBAL' " +
                     "     OR (scope_type = 'CAMPUS'    AND scope_value = @campus    AND @campus    <> '') " +
                     "     OR (scope_type = 'FACULTY'   AND scope_value = @faculty   AND @faculty   <> '') " +
+                    "     OR (scope_type = 'SESSION'   AND scope_value = @session   AND @session   <> '') " +
                     "     OR (scope_type = 'PROGRAMME' AND scope_value = @programme AND @programme <> '') ) " +
                     "  AND (acad_year = '' OR acad_year = @year) " +
                     "  AND (semester  = 0  OR semester  = @sem) " +
-                    "ORDER BY FIELD(scope_type,'PROGRAMME','FACULTY','CAMPUS','GLOBAL'), " +
+                    // SESSION sits directly above GLOBAL: it targets a delivery mode across the
+                    // whole university, so it is broader than any campus/faculty/programme
+                    // decision but narrower than "everybody".
+                    "ORDER BY FIELD(scope_type,'PROGRAMME','FACULTY','CAMPUS','SESSION','GLOBAL'), " +
                     "         (acad_year <> '') DESC, (semester <> 0) DESC " +
                     "LIMIT 1", c))
                 {
@@ -386,6 +434,7 @@ public static class ExamConfig
                     cmd.Parameters.AddWithValue("@campus", scope.Campus ?? "");
                     cmd.Parameters.AddWithValue("@faculty", scope.Faculty ?? "");
                     cmd.Parameters.AddWithValue("@programme", scope.Programme ?? "");
+                    cmd.Parameters.AddWithValue("@session", scope.Session ?? "");
                     cmd.Parameters.AddWithValue("@year", scope.AcadYear ?? "");
                     cmd.Parameters.AddWithValue("@sem", scope.Semester);
 

@@ -51,15 +51,103 @@ public partial class COOPERP_NewScreens_FeesStructure : System.Web.UI.Page
         PopulatePFProgrammeDropdown("__ALL__");
     }
 
+    // ════════════════════════════════════════════════════════════════════════
+    //  WHICH FEE CONSOLE THIS IS
+    //
+    //  One physical page serves two consoles, chosen by the URL (routes registered in
+    //  Global.asax):
+    //
+    //      COOPERP/NewScreens/FeesStructure.aspx           -> standard (day / weekend)
+    //      COOPERP/NewScreens/MainFeesStructure.aspx       -> standard, explicitly
+    //      COOPERP/NewScreens/InServiceFeesStructure.aspx  -> in-service
+    //
+    //  Everything downstream — the listing, the Add button, the modal's default, the
+    //  heading — follows this one value, so the in-service console only ever shows and
+    //  writes in-service structures. Same file, same table, same code.
+    // ════════════════════════════════════════════════════════════════════════
+
+    /// <summary>
+    /// The structure this console administers: MAIN or INSERVICE. Taken from the route, with
+    /// a ?mode= fallback so the behaviour is still reachable if routing is ever unavailable,
+    /// and it is carried across postbacks because a postback to a routed URL keeps the route.
+    /// Anything unrecognised means the standard console — the safe default, and what every
+    /// existing bookmark of FeesStructure.aspx gets.
+    /// </summary>
+    protected string PFConsoleSession
+    {
+        get
+        {
+            string v = null;
+            try
+            {
+                if (RouteData != null && RouteData.Values.ContainsKey("mode"))
+                    v = Convert.ToString(RouteData.Values["mode"]);
+            }
+            catch { v = null; }
+
+            if (string.IsNullOrEmpty(v)) v = Request.QueryString["mode"];
+            if (string.IsNullOrEmpty(v)) v = hfConsoleSession != null ? hfConsoleSession.Value : null;
+
+            v = (v ?? "").Trim().ToUpperInvariant();
+            return v == "INSERVICE" ? "INSERVICE" : "MAIN";
+        }
+    }
+
+    protected bool IsInServiceConsole
+    {
+        get { return PFConsoleSession == "INSERVICE"; }
+    }
+
     protected void Page_Load(object sender, EventArgs e)
     {
         if (_ajaxHandled) return;
+
+        // Persisted so a postback that arrives without route values still knows which
+        // console the operator is working in.
+        if (hfConsoleSession != null && string.IsNullOrEmpty(hfConsoleSession.Value))
+            hfConsoleSession.Value = PFConsoleSession;
+
+        RenderConsoleHeader();
 
         // On initial load, re-populate to filter out programmes
         // that already have fee structures (cosmetic for the Add modal).
         if (!IsPostBack)
         {
             PopulatePFProgrammeDropdown("");
+        }
+    }
+
+    /// <summary>
+    /// States which console is open and offers the one-click switch to the other. Without
+    /// this the two URLs are visually identical, and an operator could enter in-service
+    /// rates into the standard structure — repricing every day student on the programme.
+    /// </summary>
+    private void RenderConsoleHeader()
+    {
+        if (litConsoleBanner == null) return;
+
+        if (IsInServiceConsole)
+        {
+            litConsoleBanner.Text =
+                "<div class=\"fs-console fs-console--inservice\">"
+              + "<span class=\"fs-console__tag\">IN-SERVICE</span>"
+              + "<span class=\"fs-console__txt\">You are administering <strong>in-service</strong> fee structures. "
+              + "Rates saved here are billed only to students whose study session is in-service; "
+              + "the standard structures are untouched.</span>"
+              + "<a class=\"fs-console__switch\" href=\"MainFeesStructure.aspx\">Switch to standard &rarr;</a>"
+              + "</div>";
+            if (Header != null) Header.Title = "In-Service Fee Structure - Campus Dynamics";
+        }
+        else
+        {
+            litConsoleBanner.Text =
+                "<div class=\"fs-console\">"
+              + "<span class=\"fs-console__tag fs-console__tag--main\">STANDARD</span>"
+              + "<span class=\"fs-console__txt\">You are administering <strong>standard</strong> (day / weekend) fee "
+              + "structures. In-service students are billed these rates until a separate in-service "
+              + "structure exists for their programme.</span>"
+              + "<a class=\"fs-console__switch\" href=\"InServiceFeesStructure.aspx\">Switch to in-service &rarr;</a>"
+              + "</div>";
         }
     }
 
@@ -481,6 +569,7 @@ public partial class COOPERP_NewScreens_FeesStructure : System.Web.UI.Page
         EnsureYear4Columns();
         var sql = new StringBuilder(@"
             SELECT pf.ID, pf.progcode, COALESCE(p.progname,'(Unknown)') AS progname,
+                   COALESCE(NULLIF(TRIM(pf.stud_session),''),'MAIN') AS stud_session,
                    COALESCE(f.faculty_name,'') AS faculty_name,
                    pf.has_year_1, pf.has_year_2, pf.has_year_3, pf.has_year_4,
                    pf.y1_s1_tuition, pf.y1_s1_functional,
@@ -505,7 +594,13 @@ public partial class COOPERP_NewScreens_FeesStructure : System.Web.UI.Page
             sql.Append(" AND pf.is_active = @status");
         if (!string.IsNullOrEmpty(searchFilter))
             sql.Append(" AND (pf.progcode LIKE @search OR p.progname LIKE @search)");
-        sql.Append(" ORDER BY pf.is_active DESC, p.progname, pf.progcode");
+        // The in-service console lists only in-service structures, and the standard console
+        // only standard ones. Mixing them in one grid is what makes the wrong row easy to edit.
+        sql.Append(" AND COALESCE(NULLIF(TRIM(pf.stud_session),''),'MAIN') = @consoleSess");
+        // Standard structure first, then in-service, so a programme's two rows sit together
+        // in a predictable order rather than interleaving with other programmes.
+        sql.Append(" ORDER BY pf.is_active DESC, p.progname, pf.progcode, " +
+                   "(COALESCE(NULLIF(TRIM(pf.stud_session),''),'MAIN') = 'MAIN') DESC, pf.stud_session");
 
         var rows = new StringBuilder();
         int count = 0;
@@ -521,6 +616,7 @@ public partial class COOPERP_NewScreens_FeesStructure : System.Web.UI.Page
                     cmd.Parameters.AddWithValue("@status", statusFilter);
                 if (!string.IsNullOrEmpty(searchFilter))
                     cmd.Parameters.AddWithValue("@search", "%" + searchFilter + "%");
+                cmd.Parameters.AddWithValue("@consoleSess", PFConsoleSession);
 
                 using (var rdr = cmd.ExecuteReader())
                 {
@@ -621,11 +717,18 @@ public partial class COOPERP_NewScreens_FeesStructure : System.Web.UI.Page
                             ? string.Format("<span class='fs-prog-fac'>{0}</span>", Server.HtmlEncode(faculty))
                             : "";
 
+                        // A programme can now hold two structures. Without a badge the two rows
+                        // look identical and there is no way to tell which one you are editing.
+                        string rowSess = rdr["stud_session"].ToString().Trim().ToUpperInvariant();
+                        string sessHtml = rowSess == "INSERVICE"
+                            ? "<span class='fs-sess-badge fs-sess-badge--inservice'>IN-SERVICE</span>"
+                            : "";
+
                         rows.AppendFormat(
                             "<tr>"
                             + "<td style='text-align:center;padding:7px 6px;'><input type='checkbox' class='fs-check fs-row-check' data-id='{8}' data-name='{1}' data-total='{9}' onclick='toggleRowCheck(this);' /></td>"
                             + "<td><span class='fs-rownum'>{0}</span></td>"
-                            + "<td><div class='fs-prog-cell'><span class='fs-prog-name'>{1}</span><span class='fs-prog-code'>{2}</span>{10}</div></td>"
+                            + "<td><div class='fs-prog-cell'><span class='fs-prog-name'>{1}{11}</span><span class='fs-prog-code'>{2}</span>{10}</div></td>"
                             + "<td style='text-align:center'>{3}</td>"
                             + "<td style='text-align:right' class='fs-amount' title='Year 1 Sem 1 Tuition'>{4:N0}</td>"
                             + "<td style='text-align:right' class='fs-amount' style='font-weight:700;color:#05275C;' title='Grand total across all years'>{5:N0}</td>"
@@ -637,7 +740,7 @@ public partial class COOPERP_NewScreens_FeesStructure : System.Web.UI.Page
                             yrDotsHtml,
                             y1s1t, grandTotal,
                             statusBadge, menuHtml,
-                            id, grandTotal.ToString("0"), facHtml);
+                            id, grandTotal.ToString("0"), facHtml, sessHtml);
                     }
                 }
             }
@@ -988,21 +1091,29 @@ public partial class COOPERP_NewScreens_FeesStructure : System.Web.UI.Page
                 conn.Open();
 
                 // If activating, ensure no other active structure exists for this programme
+                // AND THIS SESSION. Scoped by session because a programme legitimately holds
+                // two structures now — the standard one and the in-service one. Before this,
+                // the check refused any second active row, which made it impossible to add
+                // in-service rates at all.
                 if (activeVal == "Yes")
                 {
-                    string checkSql = "SELECT COUNT(*) FROM fin_programme_fees WHERE progcode=@prog AND is_active='Yes'";
+                    string checkSql = "SELECT COUNT(*) FROM fin_programme_fees " +
+                                      "WHERE progcode=@prog AND is_active='Yes' AND stud_session=@sess";
                     if (!string.IsNullOrEmpty(editId))
                         checkSql += " AND ID <> @editId";
 
                     using (var chk = new MySqlCommand(checkSql, conn))
                     {
                         chk.Parameters.AddWithValue("@prog", prog);
+                        chk.Parameters.AddWithValue("@sess", pfSession);
                         if (!string.IsNullOrEmpty(editId))
                             chk.Parameters.AddWithValue("@editId", Convert.ToInt32(editId));
                         int existing = Convert.ToInt32(chk.ExecuteScalar());
                         if (existing > 0)
                         {
-                            ShowToast("This programme already has an active fee structure. Deactivate the existing one first.", false);
+                            ShowToast(string.Format(
+                                "This programme already has an active {0} fee structure. Deactivate the existing one first.",
+                                PFSessionLabel(pfSession)), false);
                             return;
                         }
                     }
@@ -1012,14 +1123,14 @@ public partial class COOPERP_NewScreens_FeesStructure : System.Web.UI.Page
                 {
                     // INSERT
                     string sql = @"INSERT INTO fin_programme_fees
-                        (progcode, has_year_1, has_year_2, has_year_3, has_year_4,
+                        (progcode, stud_session, has_year_1, has_year_2, has_year_3, has_year_4,
                          y1_s1_tuition, y1_s1_functional, y1_s2_tuition, y1_s2_functional, y1_s3_tuition, y1_s3_functional,
                          y2_s1_tuition, y2_s1_functional, y2_s2_tuition, y2_s2_functional, y2_s3_tuition, y2_s3_functional,
                          y3_s1_tuition, y3_s1_functional, y3_s2_tuition, y3_s2_functional, y3_s3_tuition, y3_s3_functional,
                          y4_s1_tuition, y4_s1_functional, y4_s2_tuition, y4_s2_functional, y4_s3_tuition, y4_s3_functional,
                          is_active, created_by)
                         VALUES
-                        (@prog, @hy1, @hy2, @hy3, @hy4,
+                        (@prog, @sess, @hy1, @hy2, @hy3, @hy4,
                          @y1s1t, @y1s1f, @y1s2t, @y1s2f, @y1s3t, @y1s3f,
                          @y2s1t, @y2s1f, @y2s2t, @y2s2f, @y2s3t, @y2s3f,
                          @y3s1t, @y3s1f, @y3s2t, @y3s2f, @y3s3t, @y3s3f,
@@ -1033,10 +1144,12 @@ public partial class COOPERP_NewScreens_FeesStructure : System.Web.UI.Page
                             y2s1t, y2s1f, y2s2t, y2s2f, y2s3t, y2s3f,
                             y3s1t, y3s1f, y3s2t, y3s2f, y3s3t, y3s3f,
                             y4s1t, y4s1f, y4s2t, y4s2f, y4s3t, y4s3f);
+                        cmd.Parameters.AddWithValue("@sess", pfSession);
                         cmd.Parameters.AddWithValue("@user", GetCurrentUser());
                         cmd.ExecuteNonQuery();
                     }
-                    ShowToast(string.Format("Fee structure created for {0}.", prog), true);
+                    ShowToast(string.Format("{0} fee structure created for {1}.",
+                        PFSessionLabel(pfSession), prog), true);
                 }
                 else
                 {
@@ -1240,6 +1353,140 @@ public partial class COOPERP_NewScreens_FeesStructure : System.Web.UI.Page
         hfEditId.Value = "";
     }
 
+    // ════════════════════════════════════════════════════════════════════════
+    //  IN-SERVICE FEE STRUCTURE
+    //
+    //  A programme holds one fee structure per study session. In-service is a delivery
+    //  MODE, not a programme — every programme running in-service also runs day and/or
+    //  weekend students — so in-service rates cannot be expressed by editing the
+    //  programme's single structure without repricing the day cohort too.
+    //
+    //  Both structures share this one form. The selector picks which is loaded, and the
+    //  banner states it, because editing the wrong one silently reprices a whole cohort.
+    // ════════════════════════════════════════════════════════════════════════
+
+    /// <summary>The structure currently being edited. Defaults to the programme's standard one.</summary>
+    private string pfSession
+    {
+        get
+        {
+            string v = (ddlPFSession != null ? ddlPFSession.SelectedValue : "") ?? "";
+            v = v.Trim().ToUpperInvariant();
+            return v == "INSERVICE" ? "INSERVICE" : "MAIN";
+        }
+    }
+
+    private static string PFSessionLabel(string session)
+    {
+        return string.Equals(session, "INSERVICE", StringComparison.OrdinalIgnoreCase)
+            ? "in-service" : "standard";
+    }
+
+    /// <summary>
+    /// Says which structure is on screen. Also warns when an in-service structure does not
+    /// exist yet, because until one is saved those students are billed the standard rate —
+    /// which is exactly how the historic over-billing happened.
+    /// </summary>
+    private void RenderPFSessionBanner(string session, string progcode)
+    {
+        if (litPFSessionBanner == null) return;
+
+        bool inservice = string.Equals(session, "INSERVICE", StringComparison.OrdinalIgnoreCase);
+        string prog = string.IsNullOrEmpty(progcode) ? "this programme" : Server.HtmlEncode(progcode);
+
+        if (pfSessionBannerDiv != null)
+            pfSessionBannerDiv.Attributes["class"] = "pf-session-banner" + (inservice ? " pf-session-banner--inservice" : "");
+
+        if (inservice)
+        {
+            litPFSessionBanner.Text =
+                "Editing the IN-SERVICE fee structure for " + prog +
+                "<span class=\"pf-sb-note\">These rates are billed only to students whose study session is in-service. " +
+                "The standard structure is untouched. Every year and semester below is separate from the standard one.</span>";
+        }
+        else
+        {
+            litPFSessionBanner.Text =
+                "Editing the STANDARD fee structure for " + prog +
+                "<span class=\"pf-sb-note\">Billed to day and weekend students. If this programme also runs in-service, " +
+                "switch \"Fee structure for\" to In-service and enter those rates separately — otherwise in-service " +
+                "students are billed these standard rates.</span>";
+        }
+    }
+
+    /// <summary>
+    /// Switching the selector loads that session's saved structure for the chosen programme,
+    /// or clears the amounts when none exists yet so the admin starts from zero rather than
+    /// from the other session's figures — which would be an easy way to save a wrong rate.
+    /// </summary>
+    protected void ddlPFSession_Changed(object sender, EventArgs e)
+    {
+        string prog = ddlPFProg.SelectedValue;
+        if (string.IsNullOrEmpty(prog))
+        {
+            RenderPFSessionBanner(pfSession, prog);
+            return;
+        }
+
+        int existingId = 0;
+        try
+        {
+            using (var conn = new MySqlConnection(AcctConnStr))
+            {
+                conn.Open();
+                using (var cmd = new MySqlCommand(
+                    "SELECT ID FROM fin_programme_fees WHERE progcode=@p AND stud_session=@s " +
+                    "ORDER BY is_active DESC, ID DESC LIMIT 1", conn))
+                {
+                    cmd.Parameters.AddWithValue("@p", prog);
+                    cmd.Parameters.AddWithValue("@s", pfSession);
+                    object o = cmd.ExecuteScalar();
+                    if (o != null && o != DBNull.Value) existingId = Convert.ToInt32(o);
+                }
+            }
+        }
+        catch { existingId = 0; }
+
+        if (existingId > 0)
+        {
+            // Re-opens the modal and sets the selector and banner itself.
+            LoadPFForEdit(existingId);
+        }
+        else
+        {
+            // No structure for this session yet: a fresh sheet, not a copy of the other
+            // session's figures — inheriting those would make a wrong rate easy to save.
+            hfEditId.Value = "";
+            ClearPFAmounts();
+            SetDdl(ddlPFActive, "Yes");
+            RenderPFSessionBanner(pfSession, prog);
+            ShowToast(string.Format("No {0} structure exists for {1} yet — enter the rates and save.",
+                PFSessionLabel(pfSession), prog), true);
+            ShowPFModal();
+        }
+    }
+
+    /// <summary>
+    /// Re-opens the fee-structure modal after a postback. Switching the structure selector
+    /// posts back, and without this the dialog would close under the admin mid-edit.
+    /// </summary>
+    private void ShowPFModal()
+    {
+        ClientScript.RegisterStartupScript(GetType(), "pfReopen",
+            "openModal('modal-prog-fee');", true);
+    }
+
+    /// <summary>Zeroes every amount box, leaving the year check-boxes for the admin to set.</summary>
+    private void ClearPFAmounts()
+    {
+        var boxes = new[] {
+            txtY1S1T, txtY1S1F, txtY1S2T, txtY1S2F, txtY1S3T, txtY1S3F,
+            txtY2S1T, txtY2S1F, txtY2S2T, txtY2S2F, txtY2S3T, txtY2S3F,
+            txtY3S1T, txtY3S1F, txtY3S2T, txtY3S2F, txtY3S3T, txtY3S3F,
+            txtY4S1T, txtY4S1F, txtY4S2T, txtY4S2F, txtY4S3T, txtY4S3F };
+        foreach (var b in boxes) if (b != null) b.Text = "0";
+    }
+
     private void LoadPFForEdit(int pfId)
     {
         using (var conn = new MySqlConnection(AcctConnStr))
@@ -1259,6 +1506,14 @@ public partial class COOPERP_NewScreens_FeesStructure : System.Web.UI.Page
                     PopulatePFProgrammeDropdown(prog);
                     SetDdl(ddlPFProg, prog);
                     SetDdl(ddlPFActive, rdr["is_active"].ToString());
+
+                    // Which of the programme's structures this row is, so the banner and the
+                    // save path both act on the row actually on screen.
+                    string rowSession = rdr["stud_session"] != DBNull.Value
+                        ? rdr["stud_session"].ToString().Trim().ToUpperInvariant() : "MAIN";
+                    if (rowSession.Length == 0) rowSession = "MAIN";
+                    SetDdl(ddlPFSession, rowSession);
+                    RenderPFSessionBanner(rowSession, prog);
 
                     chkYear1.Checked = rdr["has_year_1"].ToString() == "Yes";
                     chkYear2.Checked = rdr["has_year_2"].ToString() == "Yes";
@@ -1326,6 +1581,12 @@ public partial class COOPERP_NewScreens_FeesStructure : System.Web.UI.Page
         chkYear3.Checked = false;
         chkYear4.Checked = false;
         ddlPFActive.SelectedValue = "No";
+
+        // A new structure defaults to whichever console is open, so "Add" on the in-service
+        // console creates an in-service structure without the operator having to remember to
+        // change the selector.
+        SetDdl(ddlPFSession, PFConsoleSession);
+        RenderPFSessionBanner(PFConsoleSession, "");
 
         ScriptManager.RegisterStartupScript(this, GetType(), "openAddPF",
             "openModal('modal-prog-fee');document.getElementById('modalPFTitle').innerText='Add Programme Fee Structure';", true);

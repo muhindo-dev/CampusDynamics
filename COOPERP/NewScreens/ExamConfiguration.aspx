@@ -143,7 +143,8 @@
     <div class="xc-scope">
         <div class="xc-scope__h">
             <h2>1. Who these settings apply to</h2>
-            <p>Start with the whole university. Narrow it only where a campus, faculty or programme genuinely differs &mdash; every rule you add here is one more place to look when something behaves unexpectedly.</p>
+            <p>Start with the whole university. Narrow it only where a campus, faculty, programme or study session genuinely differs &mdash; every rule you add here is one more place to look when something behaves unexpectedly.</p>
+            <p><strong>Study session</strong> targets a delivery mode (in-service, day, weekend) across every programme that runs it. Use it when the distinction is <em>how</em> a cohort is taught rather than <em>what</em> they study &mdash; in-service cannot be selected as a programme, because every in-service programme also has day or weekend students. A session rule beats the university-wide rule and is beaten by a campus, faculty or programme rule.</p>
         </div>
         <div class="xc-scope__b">
             <div class="xc-fld"><label for="scScope">Applies to</label>
@@ -152,6 +153,7 @@
                     <option value="CAMPUS">One campus</option>
                     <option value="FACULTY">One faculty</option>
                     <option value="PROGRAMME">One programme</option>
+                    <option value="SESSION">One study session (e.g. in-service)</option>
                 </select>
             </div>
             <div class="xc-fld" id="scWhichWrap"><label for="scValue">Which one</label>
@@ -218,7 +220,7 @@
        levels of quoting, and when it does not the whole script stops parsing and the
        page loads as a dead form. */
 
-    var SCOPES = { campuses: [], faculties: [], programmes: [], years: [], currentYear: "" };
+    var SCOPES = { campuses: [], faculties: [], programmes: [], sessions: [], years: [], currentYear: "" };
     var SETTINGS = [], WINDOWS = [], ALLRULES = [];
     var DIRTY = {};                 // key -> the value the operator has typed
     var BASELINE = {};              // key -> what was loaded, so Discard is exact
@@ -293,7 +295,7 @@
     function scopeWords(st, sv) {
         if (st === "GLOBAL") return "The whole university";
         if (sv === ALL) return "All " + pluralOf(st);
-        var list = st === "CAMPUS" ? SCOPES.campuses : (st === "FACULTY" ? SCOPES.faculties : SCOPES.programmes);
+        var list = st === "CAMPUS" ? SCOPES.campuses : (st === "FACULTY" ? SCOPES.faculties : (st === "SESSION" ? SCOPES.sessions : SCOPES.programmes));
         for (var i = 0; i < list.length; i++) if (String(list[i].v) === String(sv)) return list[i].t;
         return st.charAt(0) + st.substring(1).toLowerCase() + " " + sv;
     }
@@ -338,7 +340,7 @@
     }
 
     var ALL = "__ALL__";
-    function pluralOf(t) { return t === "CAMPUS" ? "campuses" : (t === "FACULTY" ? "faculties" : "programmes"); }
+    function pluralOf(t) { return t === "CAMPUS" ? "campuses" : (t === "FACULTY" ? "faculties" : (t === "SESSION" ? "study sessions" : "programmes")); }
 
     function scopeTypeChanged() {
         var t = $("scScope").value, sel = $("scValue");
@@ -349,7 +351,7 @@
             return;
         }
         sel.disabled = false;
-        var list = t === "CAMPUS" ? SCOPES.campuses : (t === "FACULTY" ? SCOPES.faculties : SCOPES.programmes);
+        var list = t === "CAMPUS" ? SCOPES.campuses : (t === "FACULTY" ? SCOPES.faculties : (t === "SESSION" ? SCOPES.sessions : SCOPES.programmes));
         sel.appendChild(opt("", "Choose one…", false));
 
         /* Applying to every faculty is NOT the same as applying university-wide.

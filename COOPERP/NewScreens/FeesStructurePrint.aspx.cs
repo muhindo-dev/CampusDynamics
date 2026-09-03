@@ -296,6 +296,10 @@ public partial class COOPERP_NewScreens_FeesStructurePrint : System.Web.UI.Page
             FROM fin_programme_fees pf
             LEFT JOIN campus_dynamics.acad_programme p ON p.progcode = pf.progcode
             LEFT JOIN campus_dynamics.acad_faculty f ON f.faculty_code = p.faculty_code
+            -- MAIN only, for the same reason as the export: one row per (programme, session)
+            -- would otherwise print each in-service programme twice, indistinguishably.
+            -- TODO: extend the printed sheet to show in-service rates as their own section.
+            WHERE pf.stud_session = 'MAIN'
             ORDER BY f.faculty_name ASC, p.progname ASC, pf.is_active DESC";
 
         DataTable dt = new DataTable();

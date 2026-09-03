@@ -373,10 +373,18 @@ public static partial class IDCardService
                 if (f.StudyYear >= 1 && f.StudyYear <= 4 && f.Semester >= 1 && f.Semester <= 3)
                 {
                     string yc = "y" + f.StudyYear + "_s" + f.Semester;
+                    // Resolved by the student's own study session (fin_ProgFeeRow): a programme
+                    // may hold both a MAIN and an INSERVICE structure, and "WHERE progcode=X
+                    // LIMIT 1" would pick an arbitrary one — measuring an in-service student's
+                    // 10% against the day rate, or the reverse.
                     using (var cmd = new MySqlCommand("SELECT IFNULL(" + yc + "_tuition,0), IFNULL(" + yc + "_functional,0)" +
-                        " FROM fin_programme_fees WHERE progcode=@p AND is_active='Yes' LIMIT 1", ac))
+                        " FROM fin_programme_fees" +
+                        " WHERE ID = fin_ProgFeeRow(@p, (SELECT s.studsesion" +
+                        "                                FROM campus_dynamics.acad_student s" +
+                        "                                WHERE s.regno=@rg LIMIT 1))", ac))
                     {
                         cmd.Parameters.AddWithValue("@p", f.Prog);
+                        cmd.Parameters.AddWithValue("@rg", regno);
                         using (var r = cmd.ExecuteReader())
                             if (r.Read()) { tuition = r[0] == DBNull.Value ? 0 : Convert.ToDouble(r[0]); functional = r[1] == DBNull.Value ? 0 : Convert.ToDouble(r[1]); }
                     }

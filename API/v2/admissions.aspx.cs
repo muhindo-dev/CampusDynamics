@@ -538,18 +538,14 @@ public partial class API_v2_admissions : System.Web.UI.Page
 
         if (!regExists && studentExists)
         {
-            DataTable sDt = ApiHelper.Query("SELECT entryyear FROM acad_student WHERE regno=@r LIMIT 1", new MySqlParameter("@r", regno));
-            if (sDt.Rows.Count > 0)
-            {
-                string entryYear = sDt.Rows[0]["entryyear"].ToString();
-                string acadYear  = entryYear + "/" + (Convert.ToInt32(entryYear) + 1);
-                ApiHelper.Execute(
-                    "INSERT IGNORE INTO acad_registration (regno, acad_year, semester, studyyear, regstatus, registeredBy) VALUES (@r, @ay, 1, 1, 'UNREGISTERED', @usr)",
-                    new MySqlParameter("@r",   regno),
-                    new MySqlParameter("@ay",  acadYear),
-                    new MySqlParameter("@usr", auth.UserId));
-                repairs.Add("acad_registration record created for " + acadYear + " Semester 1.");
-            }
+            // POLICY: repair must never manufacture a semester registration. Registration is a
+            // billed, student-initiated act performed in the eportal wizard (or individually by a
+            // named staff member on an admin screen). Creating an 'UNREGISTERED' placeholder here
+            // produced unrequested registrations that were subsequently billed. The database also
+            // rejects unattributed inserts — see
+            // sql/guardrails/acad_registration_require_attribution.sql.
+            repairs.Add("No semester registration exists. This is NOT auto-created: the student "
+                      + "must register for the semester through the eportal.");
         }
 
         if (repairs.Count == 0) repairs.Add("No repairs needed — records are intact.");

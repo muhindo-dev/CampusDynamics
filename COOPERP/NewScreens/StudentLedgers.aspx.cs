@@ -1332,12 +1332,19 @@ public partial class COOPERP_NewScreens_StudentLedgers : System.Web.UI.Page
             string colT = "y" + us.StudyYear + "_s" + us.Semester + "_tuition";
             string colF = "y" + us.StudyYear + "_s" + us.Semester + "_functional";
 
+            // Resolved by this student's own study session (fin_ProgFeeRow). A programme may
+            // hold both a MAIN and an INSERVICE structure, and "WHERE progcode=X LIMIT 1"
+            // would pick an arbitrary one — quoting an unbilled semester at the wrong rate.
             string feeSql = "SELECT COALESCE(" + colT + ",0) AS tuition, COALESCE(" + colF + ",0) AS functional " +
-                            "FROM fin_programme_fees WHERE progcode=@prog AND is_active='Yes' LIMIT 1";
+                            "FROM fin_programme_fees " +
+                            "WHERE ID = fin_ProgFeeRow(@prog, (SELECT s.studsesion " +
+                            "                                  FROM campus_dynamics.acad_student s " +
+                            "                                  WHERE s.regno=@feeReg LIMIT 1))";
 
             using (MySqlCommand cmd = tx == null ? new MySqlCommand(feeSql, conn) : new MySqlCommand(feeSql, conn, tx))
             {
                 cmd.Parameters.AddWithValue("@prog", us.ProgCode);
+                cmd.Parameters.AddWithValue("@feeReg", regno);
                 using (MySqlDataReader rdr = cmd.ExecuteReader())
                 {
                     if (rdr.Read())

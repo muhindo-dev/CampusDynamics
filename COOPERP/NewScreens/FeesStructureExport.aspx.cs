@@ -410,6 +410,11 @@ public partial class COOPERP_NewScreens_FeesStructureExport : System.Web.UI.Page
             FROM fin_programme_fees pf
             LEFT JOIN campus_dynamics.acad_programme p ON p.progcode = pf.progcode
             LEFT JOIN campus_dynamics.acad_faculty   f ON f.faculty_code = p.faculty_code
+            -- MAIN only. fin_programme_fees now holds one row per (programme, session); without
+            -- this filter every programme carrying in-service rates would export twice with no
+            -- column distinguishing the two, which is worse than omitting them.
+            -- TODO: extend this export to a session column and emit the in-service rows too.
+            WHERE pf.stud_session = 'MAIN'
             ORDER BY f.faculty_name ASC, pf.is_active DESC, p.progname ASC";
 
         var dt = new DataTable();

@@ -255,8 +255,17 @@ public partial class API_v2_finance : System.Web.UI.Page
                     "SELECT y" + yr + "_s1_tuition AS s1_tui, y" + yr + "_s1_functional AS s1_fun," +
                     "       y" + yr + "_s2_tuition AS s2_tui, y" + yr + "_s2_functional AS s2_fun," +
                     "       y" + yr + "_s3_tuition AS s3_tui, y" + yr + "_s3_functional AS s3_fun" +
-                    " FROM fin_programme_fees WHERE progcode = @prog AND is_active = 'Yes' LIMIT 1",
-                    new MySqlParameter("@prog", progcode)
+                    // Resolved by the student's own study session: a programme may hold both a
+                    // MAIN and an INSERVICE structure, and "WHERE progcode = X LIMIT 1" would
+                    // pick an arbitrary one — quoting a day student in-service fees, or vice
+                    // versa, with nothing to show it had happened. fin_ProgFeeRow applies the
+                    // precedence (own session, else MAIN) in one place.
+                    " FROM fin_programme_fees" +
+                    " WHERE ID = fin_ProgFeeRow(@prog, (SELECT s.studsesion" +
+                    "                                   FROM campus_dynamics.acad_student s" +
+                    "                                   WHERE s.regno = @reg LIMIT 1))",
+                    new MySqlParameter("@prog", progcode),
+                    new MySqlParameter("@reg", regno)
                 );
 
                 if (pfDt.Rows.Count > 0)

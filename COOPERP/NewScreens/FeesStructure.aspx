@@ -129,7 +129,39 @@
 .fs-form-input:focus { border-color: #174DA4; outline: none; box-shadow: 0 0 0 2px rgba(23,77,164,.12); }
 
 /* ---- Fee entry modal — compact grid ---- */
-.pf-top-row { display: grid; grid-template-columns: 1fr 120px; gap: 10px; margin-bottom: 12px; }
+.pf-top-row { display: grid; grid-template-columns: 1fr 120px 190px; gap: 10px; margin-bottom: 12px; }
+
+/* Which of a programme's fee structures is loaded. The two share one set of inputs, so this
+   must be impossible to miss — an admin who edits the standard rates believing they are
+   editing in-service silently reprices the wrong cohort. */
+.pf-session-banner { font-size: 11px; font-weight: 700; padding: 7px 10px; margin: 0 0 10px;
+                     border-left: 3px solid #05275C; background: #eef2f8; color: #05275C; }
+.pf-session-banner--inservice { border-left-color: #d97706; background: #fff7ed; color: #92400e; }
+.pf-session-banner span.pf-sb-note { display: block; font-weight: 400; color: #5b6472; margin-top: 2px; }
+.pf-help { cursor: help; color: #8b93a3; font-weight: 400; }
+
+/* Which fee console this URL is. Deliberately prominent: the two URLs are otherwise
+   identical, and entering in-service rates into the standard structure would reprice every
+   day student on the programme. */
+.fs-console { display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+              padding: 9px 12px; margin: 0 0 14px; background: #eef2f8;
+              border-left: 4px solid #05275C; }
+.fs-console--inservice { background: #fff7ed; border-left-color: #d97706; }
+.fs-console__tag { font-size: 10px; font-weight: 800; letter-spacing: .6px; padding: 3px 8px;
+                   background: #d97706; color: #fff; white-space: nowrap; }
+.fs-console__tag--main { background: #05275C; }
+.fs-console__txt { font-size: 11.5px; color: #44506a; flex: 1 1 320px; line-height: 1.45; }
+.fs-console__txt strong { color: #05275C; }
+.fs-console--inservice .fs-console__txt strong { color: #92400e; }
+.fs-console__switch { font-size: 11px; font-weight: 700; text-decoration: none; white-space: nowrap;
+                      padding: 6px 11px; border: 1px solid #cbd5e4; background: #fff; color: #05275C; }
+.fs-console__switch:hover { border-color: #174DA4; color: #174DA4; }
+@media (max-width: 640px) { .fs-console__txt { flex-basis: 100%; } }
+
+/* Marks a listing row as the in-service structure rather than the standard one. */
+.fs-sess-badge { display: inline-block; font-size: 9px; font-weight: 700; letter-spacing: .3px;
+                 padding: 1px 5px; margin-left: 6px; vertical-align: middle; }
+.fs-sess-badge--inservice { background: #fff7ed; color: #92400e; border: 1px solid #fed7aa; }
 .pf-year-section { border: 1px solid #e0e5ed; margin-bottom: 8px; }
 .pf-year-header {
     padding: 8px 12px; background: #f5f7fa; cursor: pointer;
@@ -534,6 +566,7 @@
     .fm-tabs .fm-tab { padding: 8px 12px; font-size: 11px; }
     .fs-modal { width: 98vw; }
     .pf-top-row { grid-template-columns: 1fr; }
+    .pf-session-banner { font-size: 10.5px; }
     .fs-batch-bar { padding: 10px 12px; }
     .fs-batch-btn { padding: 5px 9px; font-size: 10px; }
     .st-overview { grid-template-columns: 1fr 1fr; }
@@ -553,6 +586,9 @@
 <asp:HiddenField ID="hfEditId" runat="server" />
 <asp:HiddenField ID="hfEditType" runat="server" />
 <asp:HiddenField ID="hfActivePanel" runat="server" Value="prog-fees" />
+<%-- Which fee console is open (MAIN / INSERVICE). Set from the route on first load and
+     carried across postbacks, since a postback need not re-supply route values. --%>
+<asp:HiddenField ID="hfConsoleSession" runat="server" />
 
 <!-- Page Header -->
 <div class="fm-page-header">
@@ -566,6 +602,9 @@
         </div>
     </div>
 </div>
+
+<%-- Which of the two fee consoles this URL is, and a switch to the other. --%>
+<asp:Literal ID="litConsoleBanner" runat="server" />
 
 <!-- Tab Navigation -->
 <div class="fm-tabs">
@@ -968,6 +1007,23 @@
                     <asp:ListItem Text="Inactive" Value="No" />
                 </asp:DropDownList>
             </div>
+            <div class="fs-form-group">
+                <label class="fs-form-label">
+                    Fee structure for
+                    <span class="pf-help" title="In-service is a delivery mode, not a programme: every programme that runs in-service also runs day or weekend students. So in-service fees are held as a SEPARATE structure on the same programme, and each student is billed from the structure matching their own session.">&#9432;</span>
+                </label>
+                <asp:DropDownList ID="ddlPFSession" runat="server" CssClass="fs-form-input"
+                                  AutoPostBack="true" OnSelectedIndexChanged="ddlPFSession_Changed">
+                    <asp:ListItem Text="Standard (day / weekend)" Value="MAIN" />
+                    <asp:ListItem Text="In-service"                Value="INSERVICE" />
+                </asp:DropDownList>
+            </div>
+        </div>
+
+        <!-- Which structure is on screen. Stated plainly, because the two structures share
+             one set of inputs and editing the wrong one would silently reprice a cohort. -->
+        <div id="pfSessionBannerDiv" runat="server" class="pf-session-banner">
+            <asp:Literal ID="litPFSessionBanner" runat="server" />
         </div>
 
         <p style="font-size:10px;color:#888;margin:0 0 10px;font-style:italic;">

@@ -2,6 +2,60 @@
 
 <script runat="server">
 
+    /// <summary>
+    /// Two console URLs for ONE physical page.
+    ///
+    /// fin_programme_fees holds a separate fee structure per study session, so the fee
+    /// console has two contexts: the standard (day/weekend) rates and the in-service rates.
+    /// Rather than duplicate a 2,100-line screen and its 3,400-line code-behind — which would
+    /// then have to be kept in step for ever — both URLs are served by the same
+    /// FeesStructure.aspx, and the route tells it which structure it is administering.
+    ///
+    ///   COOPERP/NewScreens/FeesStructure.aspx           -> standard (unchanged, still works)
+    ///   COOPERP/NewScreens/MainFeesStructure.aspx       -> standard, explicitly
+    ///   COOPERP/NewScreens/InServiceFeesStructure.aspx  -> in-service
+    ///
+    /// The slugs deliberately sit at the SAME folder depth as the real page. That screen links
+    /// to its siblings with relative hrefs (FeesManagement.aspx, FeesRegistration.aspx, ...);
+    /// a root-level slug such as /inservice-fees would resolve those against the wrong folder
+    /// and silently break every tab on the page.
+    ///
+    /// RouteExistingFiles stays false (the default), so every physical .aspx in the
+    /// application continues to be served directly and only these two invented names are
+    /// handled by routing.
+    /// </summary>
+    void RegisterFeeStructureRoutes()
+    {
+        try
+        {
+            var routes = System.Web.Routing.RouteTable.Routes;
+            const string page = "~/COOPERP/NewScreens/FeesStructure.aspx";
+
+            if (routes["FeeStructure_InService"] == null)
+            {
+                var r = new System.Web.Routing.Route(
+                    "COOPERP/NewScreens/InServiceFeesStructure.aspx",
+                    new System.Web.Routing.RouteValueDictionary { { "mode", "INSERVICE" } },
+                    new System.Web.Routing.PageRouteHandler(page));
+                routes.Add("FeeStructure_InService", r);
+            }
+
+            if (routes["FeeStructure_Main"] == null)
+            {
+                var r = new System.Web.Routing.Route(
+                    "COOPERP/NewScreens/MainFeesStructure.aspx",
+                    new System.Web.Routing.RouteValueDictionary { { "mode", "MAIN" } },
+                    new System.Web.Routing.PageRouteHandler(page));
+                routes.Add("FeeStructure_Main", r);
+            }
+        }
+        catch
+        {
+            // A failed route registration must never stop the application starting. The
+            // physical FeesStructure.aspx keeps working and simply defaults to standard.
+        }
+    }
+
     void Application_BeginRequest(object sender, EventArgs e)
     {
         // Enforce HTTPS across the entire application
@@ -27,6 +81,8 @@
     {
         // Code that runs on application startup
         Application["UsersLoggedIn"] = new System.Collections.Generic.List<string>();
+
+        RegisterFeeStructureRoutes();
 
         // Schema migration: rename acad_applicant_choices.stud_reg_no → choice_reg_no
         // to avoid ambiguity with acad_applications.stud_reg_no in acad_GetApplicants SP.

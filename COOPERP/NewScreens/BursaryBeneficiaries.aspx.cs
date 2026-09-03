@@ -339,12 +339,19 @@ public partial class COOPERP_NewScreens_BursaryBeneficiaries : System.Web.UI.Pag
             using (MySqlConnection conn = new MySqlConnection(AcctConnStr))
             {
                 conn.Open();
+                // Resolved by the student's own study session (fin_ProgFeeRow). A programme may
+                // hold both a MAIN and an INSERVICE structure, and "WHERE progcode=X LIMIT 1"
+                // would pick an arbitrary one — sizing a bursary against the wrong fee.
                 string sql = string.Format(
-                    "SELECT `{0}`, `{1}` FROM fin_programme_fees WHERE progcode=@prog AND is_active='Yes' LIMIT 1",
+                    "SELECT `{0}`, `{1}` FROM fin_programme_fees " +
+                    "WHERE ID = fin_ProgFeeRow(@prog, (SELECT s.studsesion " +
+                    "                                  FROM campus_dynamics.acad_student s " +
+                    "                                  WHERE s.regno=@feeReg LIMIT 1))",
                     colTuition, colFunctional);
                 using (MySqlCommand cmd = new MySqlCommand(sql, conn))
                 {
                     cmd.Parameters.AddWithValue("@prog", progCode);
+                    cmd.Parameters.AddWithValue("@feeReg", regNo);
                     using (MySqlDataReader rdr = cmd.ExecuteReader())
                     {
                         if (rdr.Read())
@@ -760,14 +767,19 @@ public partial class COOPERP_NewScreens_BursaryBeneficiaries : System.Web.UI.Pag
 
                         string colT = string.Format("y{0}_s{1}_tuition", studyYear, semester);
                         string colF = string.Format("y{0}_s{1}_functional", studyYear, semester);
+                        // Resolved by the student's own study session — see fin_ProgFeeRow.
                         string feesSql = string.Format(
-                            "SELECT `{0}`, `{1}` FROM fin_programme_fees WHERE progcode=@prog AND is_active='Yes' LIMIT 1",
+                            "SELECT `{0}`, `{1}` FROM fin_programme_fees " +
+                            "WHERE ID = fin_ProgFeeRow(@prog, (SELECT s.studsesion " +
+                            "                                  FROM campus_dynamics.acad_student s " +
+                            "                                  WHERE s.regno=@feeReg LIMIT 1))",
                             colT, colF);
 
                         double tuit = 0;
                         using (MySqlCommand cmd = new MySqlCommand(feesSql, conn))
                         {
                             cmd.Parameters.AddWithValue("@prog", progCode);
+                            cmd.Parameters.AddWithValue("@feeReg", regNo);
                             using (MySqlDataReader rdr = cmd.ExecuteReader())
                             {
                                 if (rdr.Read())

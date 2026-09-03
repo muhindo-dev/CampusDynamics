@@ -751,9 +751,15 @@ public partial class API_v2_me : System.Web.UI.Page
         if (s.Rows.Count == 0) { ApiHelper.Error(Response, "No student record found.", "NOT_FOUND"); return; }
         string prog = S(s.Rows[0], "prog");
 
+        // Resolved by this student's own study session — see fin_ProgFeeRow. Without it a
+        // programme carrying both a MAIN and an INSERVICE structure would return whichever
+        // row the engine happened to pick.
         DataTable f = ApiHelper.QueryAccounts(
-            "SELECT * FROM fin_programme_fees WHERE progcode=@p AND is_active='Yes' LIMIT 1",
-            new MySqlParameter("@p", prog));
+            "SELECT * FROM fin_programme_fees" +
+            " WHERE ID = fin_ProgFeeRow(@p, (SELECT s.studsesion" +
+            "                                FROM campus_dynamics.acad_student s" +
+            "                                WHERE s.regno = @r LIMIT 1))",
+            new MySqlParameter("@p", prog), new MySqlParameter("@r", regno));
         if (f.Rows.Count == 0)
         {
             ApiHelper.Error(Response, "No active fee structure is set for your programme yet.", "NO_FEE_STRUCTURE");

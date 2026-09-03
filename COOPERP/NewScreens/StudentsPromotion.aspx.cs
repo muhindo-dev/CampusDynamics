@@ -335,6 +335,25 @@ public partial class COOPERP_NewScreens_StudentsPromotion : System.Web.UI.Page
     
     private void PromoteStudent(int regId)
     {
+        // ── POLICY: bulk promotion may no longer create semester registrations ──────
+        // This method used to INSERT INTO acad_registration with registeredBy='-', i.e.
+        // with no attribution to any person. Run over a multi-select grid
+        // (btnPromoteSelected_Click), it manufactured registrations that no student ever
+        // asked for. That is how 2026/2027 acquired ~1,430 unrequested registrations,
+        // which were then billed.
+        //
+        // A semester registration must be created ONLY by the student themselves in the
+        // eportal wizard, or individually by a named staff member on the Students
+        // Registration / Fees Registration screens (which attribute the row to that user).
+        // The database enforces this too — see
+        // sql/guardrails/acad_registration_require_attribution.sql, which rejects any
+        // insert whose registeredBy is blank, '-', or an AUTO/RECON/SYSTEM marker.
+        throw new Exception(
+            "Bulk promotion can no longer create semester registrations. " +
+            "Students must register themselves through the eportal, or a named staff member " +
+            "must add the registration individually on the Students Registration screen.");
+
+#pragma warning disable 162 // unreachable: retained for reference / future re-enable
         string newAcadYear = ddlNewAcadYear.SelectedValue;
         int newSemester = int.Parse(ddlNewSemester.SelectedValue);
         bool incrementYear = chkIncrementYear.Checked;
@@ -415,6 +434,7 @@ public partial class COOPERP_NewScreens_StudentsPromotion : System.Web.UI.Page
                 cmd.ExecuteNonQuery();
             }
         }
+#pragma warning restore 162
     }
     
     private void DeleteRegistration(int regId)

@@ -222,7 +222,7 @@ public partial class COOPERP_NewScreens_ExamConfiguration : System.Web.UI.Page
                 "SELECT id, config_key, scope_type, scope_value, acad_year, semester, config_value, " +
                 "       IFNULL(notes,''), IFNULL(updated_by,''), IFNULL(DATE_FORMAT(updated_at,'%e %b %Y'),'') " +
                 "FROM acad_exam_config WHERE is_active = 1 " +
-                "ORDER BY config_key, FIELD(scope_type,'GLOBAL','CAMPUS','FACULTY','PROGRAMME'), scope_value", c))
+                "ORDER BY config_key, FIELD(scope_type,'GLOBAL','SESSION','CAMPUS','FACULTY','PROGRAMME'), scope_value", c))
             using (var r = cmd.ExecuteReader())
                 while (r.Read())
                 {
@@ -274,6 +274,7 @@ public partial class COOPERP_NewScreens_ExamConfiguration : System.Web.UI.Page
         var campuses = new List<object>();
         var faculties = new List<object>();
         var programmes = new List<object>();
+        var sessions = new List<object>();
         var years = new List<object>();
         string currentYear = "";
         try
@@ -293,6 +294,18 @@ public partial class COOPERP_NewScreens_ExamConfiguration : System.Web.UI.Page
                 using (var cmd = new MySqlCommand("SELECT progcode, progname FROM acad_programme ORDER BY progname", c))
                 using (var r = cmd.ExecuteReader())
                     while (r.Read()) programmes.Add(new { v = r.GetString(0), t = r.GetString(1) });
+
+                // Study sessions (DAY / WEEKEND / INSERVICE / EVENING). In-service is a
+                // delivery mode rather than a programme — every programme that runs it also
+                // runs day or weekend — so it can only be targeted as a session.
+                using (var cmd = new MySqlCommand(
+                    "SELECT UPPER(TRIM(Session)) FROM acad_studysessions ORDER BY Session", c))
+                using (var r = cmd.ExecuteReader())
+                    while (r.Read())
+                    {
+                        string sv = r.GetString(0);
+                        if (!string.IsNullOrEmpty(sv)) sessions.Add(new { v = sv, t = sv });
+                    }
 
                 // semester_count travels with the year so the semester picker can offer
                 // exactly the semesters that year actually runs.
@@ -317,6 +330,7 @@ public partial class COOPERP_NewScreens_ExamConfiguration : System.Web.UI.Page
             campuses = campuses,
             faculties = faculties,
             programmes = programmes,
+            sessions = sessions,
             years = years,
             currentYear = currentYear
         };
@@ -337,7 +351,7 @@ public partial class COOPERP_NewScreens_ExamConfiguration : System.Web.UI.Page
 
         Setting def = Catalogue.Find(x => x.Key == key);
         if (def == null) return js.Serialize(new { success = false, message = "Unknown setting." });
-        if (scopeType != "GLOBAL" && scopeType != "CAMPUS" && scopeType != "FACULTY" && scopeType != "PROGRAMME")
+        if (scopeType != "GLOBAL" && scopeType != "CAMPUS" && scopeType != "FACULTY" && scopeType != "PROGRAMME" && scopeType != "SESSION")
             return js.Serialize(new { success = false, message = "Choose a valid scope." });
         if (scopeType == "GLOBAL") scopeValue = "";
         else if (scopeValue == "")
@@ -496,6 +510,7 @@ public partial class COOPERP_NewScreens_ExamConfiguration : System.Web.UI.Page
         string sql =
             scopeType == "CAMPUS" ? "SELECT ID FROM acad_campuses WHERE ID > 0 ORDER BY ID" :
             scopeType == "FACULTY" ? "SELECT faculty_code FROM acad_faculty WHERE faculty_code <> '00' ORDER BY faculty_name" :
+            scopeType == "SESSION" ? "SELECT UPPER(TRIM(Session)) FROM acad_studysessions ORDER BY Session" :
                                      "SELECT progcode FROM acad_programme ORDER BY progname";
         using (var c = new MySqlConnection(ConnStr))
         {
@@ -522,6 +537,7 @@ public partial class COOPERP_NewScreens_ExamConfiguration : System.Web.UI.Page
         switch ((scopeType ?? "").ToUpperInvariant())
         {
             case "PROGRAMME": return ExamConfig.ScopeForProgramme(scopeValue, "", acadYear, semester);
+            case "SESSION": return new ExamConfig.Scope().ForSession(scopeValue).ForPeriod(acadYear, semester);
             case "FACULTY": return new ExamConfig.Scope().ForFaculty(scopeValue).ForPeriod(acadYear, semester);
             case "CAMPUS": return new ExamConfig.Scope().ForCampus(scopeValue).ForPeriod(acadYear, semester);
             default: return new ExamConfig.Scope().ForPeriod(acadYear, semester);
@@ -548,7 +564,7 @@ public partial class COOPERP_NewScreens_ExamConfiguration : System.Web.UI.Page
         string acadYear = F("acadYear");
         int semester; if (!int.TryParse(F("semester"), out semester)) semester = 0;
 
-        if (scopeType != "GLOBAL" && scopeType != "CAMPUS" && scopeType != "FACULTY" && scopeType != "PROGRAMME")
+        if (scopeType != "GLOBAL" && scopeType != "CAMPUS" && scopeType != "FACULTY" && scopeType != "PROGRAMME" && scopeType != "SESSION")
             return js.Serialize(new { success = false, message = "Choose a valid scope." });
         if (scopeType != "GLOBAL" && scopeValue == "")
             return js.Serialize(new { success = false, message = "Choose which " + scopeType.ToLowerInvariant() + " these settings apply to." });
@@ -676,7 +692,7 @@ public partial class COOPERP_NewScreens_ExamConfiguration : System.Web.UI.Page
         string notes = F("notes");
         int semester; if (!int.TryParse(F("semester"), out semester)) semester = 0;
 
-        if (scopeType != "GLOBAL" && scopeType != "CAMPUS" && scopeType != "FACULTY" && scopeType != "PROGRAMME")
+        if (scopeType != "GLOBAL" && scopeType != "CAMPUS" && scopeType != "FACULTY" && scopeType != "PROGRAMME" && scopeType != "SESSION")
             return js.Serialize(new { success = false, message = "Choose a valid scope." });
         if (scopeType != "GLOBAL" && scopeValue == "")
             return js.Serialize(new { success = false, message = "Choose which " + scopeType.ToLowerInvariant() + " these settings apply to." });
@@ -913,7 +929,7 @@ public partial class COOPERP_NewScreens_ExamConfiguration : System.Web.UI.Page
 
         Setting def = Catalogue.Find(x => x.Key == key);
         if (def == null) return js.Serialize(new { success = false, message = "Unknown setting." });
-        if (scopeType != "GLOBAL" && scopeType != "CAMPUS" && scopeType != "FACULTY" && scopeType != "PROGRAMME")
+        if (scopeType != "GLOBAL" && scopeType != "CAMPUS" && scopeType != "FACULTY" && scopeType != "PROGRAMME" && scopeType != "SESSION")
             return js.Serialize(new { success = false, message = "Choose a valid scope." });
 
         // Same floor as HandleDelete: the university-wide row for every year and every
