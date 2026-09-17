@@ -30,6 +30,19 @@ public partial class COOPERP_NewScreens_StudentEmailController : System.Web.UI.P
     [WebMethod(EnableSession = true)]
     public static string Filters() { return NoAuth() ? DENIED : SemsAdmin.Filters(); }
 
+    /// <summary>The one stage vocabulary — filter, badges and the change-stage dropdown all read it.</summary>
+    [WebMethod(EnableSession = true)]
+    public static string StageList() { return NoAuth() ? DENIED : SemsAdmin.StageList(); }
+
+    /// <summary>Who is this student? Answered before a record is created for them.</summary>
+    [WebMethod(EnableSession = true)]
+    public static string LookupStudent(string regno) { return NoAuth() ? DENIED : SemsAdmin.LookupStudent(regno); }
+
+    /// <summary>Creates a pipeline record for any student, overriding the automatic rule.</summary>
+    [WebMethod(EnableSession = true)]
+    public static string CreateRecord(string regno, string note)
+    { return NoAuth() ? DENIED : SemsAdmin.CreateRecord(regno, note); }
+
     [WebMethod(EnableSession = true)]
     public static string CreateEmail(string regno, string email, string tempPw, string notes)
     { return NoAuth() ? DENIED : SemsAdmin.CreateEmail(regno, email, tempPw, notes); }

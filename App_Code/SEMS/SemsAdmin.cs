@@ -97,6 +97,59 @@ public static class SemsAdmin
         "  AND " + NoUniversityAddress + " " +
         "  AND " + NotInPipeline + " ";
 
+    // =================================================================
+    //  THE STAGE VOCABULARY
+    //
+    //  Three stages, and only three. They are listed here once and every screen
+    //  reads them from here, because they had drifted into four different lists
+    //  that did not agree:
+    //
+    //    * the filter offered "Email created", a stage no record has ever held;
+    //    * the change-stage prompt offered "EMAIL_CREATED" and "SUSPENDED",
+    //      neither of which exists — typing one wrote a value the badge could
+    //      not render and the filter could never find again;
+    //    * the badge map and the server's own whitelist each knew a different
+    //      set.
+    //
+    //  current_status is not a second thing to choose. It is a fixed companion
+    //  of the stage, so it is derived here rather than set by hand.
+    // =================================================================
+    public class Stage
+    {
+        public string key { get; set; }
+        public string label { get; set; }
+        /// <summary>What an admin is doing by choosing it, in the imperative.</summary>
+        public string action { get; set; }
+        public string status { get; set; }
+        public string hint { get; set; }
+    }
+
+    private static readonly Stage[] Stages = new[]
+    {
+        new Stage { key = "PENDING_CREATION",     label = "Pending creation",     action = "Send back to Pending creation",
+                    status = "PENDING",
+                    hint = "No address issued yet. The student is waiting for one and the portal does not hold them." },
+        new Stage { key = "READY_FOR_COLLECTION", label = "Ready for collection", action = "Mark Ready for collection",
+                    status = "READY",
+                    hint = "An address exists and is waiting to be collected. The portal holds the student at the email journey until they do." },
+        new Stage { key = "COMPLETED",            label = "Completed",            action = "Mark Completed",
+                    status = "COMPLETED",
+                    hint = "The student has seen their address and password. Nothing further is asked of them." }
+    };
+
+    private static Stage StageOf(string key)
+    {
+        key = (key ?? "").Trim().ToUpperInvariant();
+        foreach (var st in Stages) if (st.key == key) return st;
+        return null;
+    }
+
+    /// <summary>The stage list, for the filter, the badges and the change-stage dropdown.</summary>
+    public static string StageList()
+    {
+        return new JavaScriptSerializer().Serialize(new { success = true, stages = Stages });
+    }
+
     private static string Actor()
     {
         try { var u = HttpContext.Current.Session["username"]; return u == null ? "admin" : u.ToString(); }
@@ -180,7 +233,7 @@ public static class SemsAdmin
                 Func<string, int> cnt = w => Scalar(c, "SELECT COUNT(*) FROM campus_dynamics_portal.sems_email_creations " + w);
                 int total     = cnt("");
                 int pending   = cnt("WHERE current_stage='PENDING_CREATION'");
-                int ready     = cnt("WHERE current_stage IN ('EMAIL_CREATED','READY_FOR_COLLECTION')");
+                int ready     = cnt("WHERE current_stage = 'READY_FOR_COLLECTION'");
                 int learning  = cnt("WHERE gmail_guide_done_at IS NOT NULL");
                 int quiz      = cnt("WHERE quiz_passed_at IS NOT NULL");
                 int activated = cnt("WHERE verification_status='VERIFIED'");
@@ -196,7 +249,7 @@ public static class SemsAdmin
                 using (var cmd = new MySqlCommand(
                     "SELECT IFNULL(campus,'') campus, COUNT(*) total," +
                     " SUM(current_stage='PENDING_CREATION') pending," +
-                    " SUM(current_stage IN ('EMAIL_CREATED','READY_FOR_COLLECTION')) ready," +
+                    " SUM(current_stage = 'READY_FOR_COLLECTION') ready," +
                     " SUM(current_stage='COMPLETED') completed," +
                     " SUM(verification_status='VERIFIED') verified" +
                     " FROM campus_dynamics_portal.sems_email_creations" +
@@ -553,6 +606,131 @@ public static class SemsAdmin
         catch (Exception ex) { return js.Serialize(new { success = false, message = ex.Message }); }
     }
 
+    /// <summary>
+    /// Looks up one student by number so the admin can see who they are BEFORE creating a
+    /// record for them. Answers for any student in acad_student, whatever their year or
+    /// payment, and says what would stop a record being made.
+    /// </summary>
+    public static string LookupStudent(string regno)
+    {
+        var js = new JavaScriptSerializer();
+        regno = (regno ?? "").Trim();
+        if (regno == "") return js.Serialize(new { success = false, message = "Type a student number." });
+        try
+        {
+            using (var c = new MySqlConnection(Conn))
+            {
+                c.Open();
+                using (var cmd = new MySqlCommand(
+                    "SELECT TRIM(s.regno) regno, TRIM(CONCAT(IFNULL(s.firstname,''),' ',IFNULL(s.othername,''))) nm, " +
+                    "  IFNULL(s.progid,'') prog, IFNULL(pr.progname,'') progname, IFNULL(s.studCampus,'') campus, " +
+                    "  IFNULL(s.entryyear,'') yr, IFNULL(TRIM(s.email),'') email, IFNULL(pay.paid,0) paid, " +
+                    "  (mm.LastLoginDate > mm.CreationDate) loggedIn, " +
+                    "  EXISTS(SELECT 1 FROM campus_dynamics_portal.sems_email_creations e WHERE e.regno=TRIM(s.regno)) inPipeline " +
+                    "FROM campus_dynamics.acad_student s " + PaySub +
+                    "LEFT JOIN campus_dynamics.acad_programme pr ON pr.progcode = s.progid " +
+                    "LEFT JOIN campus_dynamics_portal.my_aspnet_users mu ON mu.name = TRIM(s.regno) " +
+                    "LEFT JOIN campus_dynamics_portal.my_aspnet_membership mm ON mm.userId = mu.id " +
+                    "WHERE TRIM(s.regno)=@r LIMIT 1", c))
+                {
+                    cmd.CommandTimeout = 60;
+                    cmd.Parameters.AddWithValue("@r", regno);
+                    using (var rd = cmd.ExecuteReader())
+                    {
+                        if (!rd.Read())
+                            return js.Serialize(new { success = false, message = "No student with the number " + regno + "." });
+
+                        string email = rd["email"].ToString();
+                        bool inPipeline = Convert.ToInt32(rd["inPipeline"]) == 1;
+                        bool hasUni = email.ToLowerInvariant().EndsWith("@" + UniversityDomain);
+                        decimal paid = rd["paid"] == DBNull.Value ? 0 : Convert.ToDecimal(rd["paid"]);
+                        bool loggedIn = rd["loggedIn"] != DBNull.Value && Convert.ToInt32(rd["loggedIn"]) == 1;
+
+                        // A blocker stops the record being made; a caution is something the
+                        // automatic rule would have refused on, which an admin may override.
+                        string blocker = inPipeline ? "This student already has a record in the pipeline."
+                                       : hasUni ? "This student already holds " + email + "." : "";
+                        var cautions = new List<string>();
+                        int yr; int.TryParse(rd["yr"].ToString(), out yr);
+                        if (yr > 0 && yr < MinEntryYear) cautions.Add("Admitted in " + yr + ", before the " + MinEntryYear + " intake.");
+                        if (paid < MinPaid) cautions.Add("Has paid " + paid.ToString("N0") + ", under the " + MinPaid.ToString("N0") + " threshold.");
+                        if (!loggedIn) cautions.Add("Has never signed in to the portal.");
+
+                        return js.Serialize(new
+                        {
+                            success = true,
+                            regno = rd["regno"].ToString(),
+                            name = rd["nm"].ToString(),
+                            programme = rd["progname"].ToString() == "" ? rd["prog"].ToString() : rd["progname"].ToString(),
+                            campus = CampusName(rd["campus"].ToString()),
+                            year = rd["yr"].ToString(),
+                            personal = email,
+                            paid,
+                            loggedIn,
+                            inPipeline,
+                            blocker,
+                            cautions
+                        });
+                    }
+                }
+            }
+        }
+        catch (Exception ex) { return js.Serialize(new { success = false, message = ex.Message }); }
+    }
+
+    /// <summary>
+    /// Creates a pipeline record for one student from scratch — any year, any payment, signed
+    /// in or not. This is the deliberate override for the cases the automatic rule cannot
+    /// cover: a continuing student who asks for an address, a late admission, a record that
+    /// was removed by mistake.
+    ///
+    /// The two guards that remain are not policy: a second record for the same student, and a
+    /// student who already holds an address on the domain. Neither is an override anyone
+    /// wants — they produce duplicates, not favours.
+    /// </summary>
+    public static string CreateRecord(string regno, string note)
+    {
+        var js = new JavaScriptSerializer();
+        regno = (regno ?? "").Trim();
+        if (regno == "") return js.Serialize(new { success = false, message = "Student number is required." });
+        try
+        {
+            using (var c = new MySqlConnection(Conn))
+            {
+                c.Open();
+                int n;
+                using (var cmd = new MySqlCommand(
+                    "INSERT INTO campus_dynamics_portal.sems_email_creations " +
+                    " (regno, entryno, admission_year, campus, programme, student_name, current_stage, current_status, " +
+                    "  creation_date, created_by, paid_amount_snapshot, notes) " +
+                    "SELECT TRIM(s.regno), s.entryno, s.entryyear, s.studCampus, s.progid, " +
+                    "  NULLIF(TRIM(CONCAT(IFNULL(s.firstname,''),' ',IFNULL(s.othername,''))),''), " +
+                    "  'PENDING_CREATION','PENDING', NOW(), @who, IFNULL(pay.paid,0), " +
+                    "  NULLIF(TRIM(CONCAT('Added by hand by ', @who, CASE WHEN @note<>'' THEN CONCAT(' — ', @note) ELSE '' END)),'') " +
+                    "FROM campus_dynamics.acad_student s " + PaySub +
+                    "WHERE TRIM(s.regno)=@r " +
+                    "  AND " + NoUniversityAddress + " " +
+                    "  AND " + NotInPipeline + " LIMIT 1", c))
+                {
+                    cmd.CommandTimeout = 60;
+                    cmd.Parameters.AddWithValue("@who", Actor());
+                    cmd.Parameters.AddWithValue("@r", regno);
+                    cmd.Parameters.AddWithValue("@note", note ?? "");
+                    n = cmd.ExecuteNonQuery();
+                }
+                if (n == 0)
+                    return js.Serialize(new { success = false, message =
+                        "Nothing created. Either " + regno + " is not a student, already has a record, or already holds an @" +
+                        UniversityDomain + " address." });
+
+                Log(c, null, 0, regno, "create_record", null, "PENDING_CREATION",
+                    "record created by hand" + (string.IsNullOrWhiteSpace(note) ? "" : " — " + note.Trim()));
+                return js.Serialize(new { success = true, regno, message = regno + " added to the pipeline at Pending creation." });
+            }
+        }
+        catch (Exception ex) { return js.Serialize(new { success = false, message = ex.Message }); }
+    }
+
     // Force-add ONE 2026+ student to the pipeline regardless of how much they've paid.
     public static string AddToPipeline(string regno, string note)
     {
@@ -594,10 +772,12 @@ public static class SemsAdmin
     public static string SetStatus(string regno, string stage, string note)
     {
         var js = new JavaScriptSerializer();
-        regno = (regno ?? "").Trim(); stage = (stage ?? "").Trim().ToUpperInvariant();
-        string[] valid = { "PENDING_CREATION", "READY_FOR_COLLECTION", "EMAIL_CREATED", "COMPLETED", "SUSPENDED" };
-        if (regno == "" || Array.IndexOf(valid, stage) < 0) return js.Serialize(new { success = false, message = "Invalid student or stage." });
-        string status = stage == "COMPLETED" ? "COMPLETED" : stage == "PENDING_CREATION" ? "PENDING" : stage == "SUSPENDED" ? "SUSPENDED" : "READY";
+        regno = (regno ?? "").Trim();
+        Stage target = StageOf(stage);
+        if (regno == "") return js.Serialize(new { success = false, message = "Student number is required." });
+        if (target == null) return js.Serialize(new { success = false, message = "\"" + stage + "\" is not a stage." });
+        string status = target.status;
+        stage = target.key;
         try
         {
             using (var c = new MySqlConnection(Conn))
@@ -617,7 +797,7 @@ public static class SemsAdmin
                     up.ExecuteNonQuery();
                 }
                 Log(c, null, id, regno, "set_status", from, stage, note);
-                return js.Serialize(new { success = true, message = "Status changed to " + stage.Replace("_", " ") + "." });
+                return js.Serialize(new { success = true, message = "Stage changed to " + target.label + "." });
             }
         }
         catch (Exception ex) { return js.Serialize(new { success = false, message = ex.Message }); }

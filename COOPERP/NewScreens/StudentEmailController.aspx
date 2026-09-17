@@ -101,6 +101,11 @@
                 <b>has signed in to the portal</b> &mdash; all three. A personal Gmail on file does not disqualify anyone;
                 already holding an <b>@mru.ac.ug</b> address does.</div>
         </div>
+        <button type="button" class="se-new" id="btnNew" onclick="openNew()"
+            title="Create a pipeline record for any student by number, whatever their year or payment.">
+            <svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><line x1="19" y1="8" x2="19" y2="14"/><line x1="22" y1="11" x2="16" y2="11"/></svg>
+            New record
+        </button>
         <button type="button" class="se-gen" id="btnGen" onclick="genEligible()"
             title="Adds every student who is admitted 2026 or later, has paid UGX 100,000 or more, and has signed in to the portal at least once — and who is not already in the pipeline or already holding an @mru.ac.ug address.">
             <svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 5v14M5 12h14"/></svg>
@@ -111,6 +116,28 @@
     <div class="se-kpis" id="kpis"></div>
 
     <style>
+.se-head > div:last-child{display:flex;gap:8px;flex-wrap:wrap;align-items:flex-start;}
+.se-new{display:inline-flex;align-items:center;gap:7px;background:#fff;color:#05275C;border:1px solid #cdd3de;
+    border-radius:0;padding:9px 14px;font-size:12.5px;font-weight:700;font-family:inherit;cursor:pointer;white-space:nowrap;}
+.se-new:hover{background:#f5f7fa;border-color:#05275C;}
+.se-new:disabled{opacity:.5;cursor:default;}
+
+/* the new-record modal */
+.se-look{border:1px solid #e0e5ed;background:#f8fafc;padding:11px 13px;margin-top:10px;font-size:12px;}
+.se-look__n{font-size:13.5px;font-weight:700;color:#05275C;}
+.se-look__m{color:#64748b;margin-top:2px;}
+.se-look__w{margin-top:8px;padding-top:8px;border-top:1px solid #e0e5ed;}
+.se-look__w b{display:block;font-size:10.5px;text-transform:uppercase;letter-spacing:.4px;color:#b45309;margin-bottom:4px;}
+.se-look__w ul{margin:0;padding-left:16px;color:#7c2d12;}
+.se-look__w li{margin-bottom:2px;}
+.se-look__x{color:#b91c1c;font-weight:700;}
+
+/* the change-stage row inside Manage */
+.g-stage{border:1px solid #e0e5ed;background:#f8fafc;padding:11px 13px;margin:12px 0;}
+.g-stage__l{display:block;font-size:10.5px;font-weight:700;text-transform:uppercase;letter-spacing:.4px;color:#64748b;margin-bottom:6px;}
+.g-stage__row{display:flex;gap:7px;flex-wrap:wrap;}
+.g-stage__row select{flex:1 1 200px;min-width:0;}
+.g-stage__hint{font-size:11.5px;color:#64748b;margin-top:7px;line-height:1.5;}
 .se-rule{margin-top:6px;font-size:11.5px;color:#5b6472;line-height:1.55;max-width:760px;}
 .se-rule b{color:#05275C;}
 .se-why{display:inline-block;font-size:10.5px;font-weight:700;letter-spacing:.3px;text-transform:uppercase;padding:2px 6px;border:1px solid #fde68a;background:#fffbeb;color:#b45309;white-space:nowrap;}
@@ -139,7 +166,6 @@
                 <option value="">All stages</option>
                 <option value="PENDING_CREATION">Pending creation</option>
                 <option value="READY_FOR_COLLECTION">Ready for collection</option>
-                <option value="EMAIL_CREATED">Email created</option>
                 <option value="COMPLETED">Completed</option>
             </select>
             <select id="fVerif" class="se-sel">
@@ -444,7 +470,18 @@ function renderCampuses(list){
 }
 function payBadge(p){p=parseInt(p,10)||0;var c=p>=100000?'full':(p>0?'part':'none');return '<span class="se-pay se-pay--'+c+'">'+(p>0?('UGX '+fmt(p)):'—')+'</span>';}
 
-function stageBadge(s){var m={PENDING_CREATION:['pending','Pending creation'],READY_FOR_COLLECTION:['ready','Ready for collection'],EMAIL_CREATED:['ready','Email created'],COMPLETED:['done','Completed']};var x=m[s]||['muted',s||'-'];return '<span class="se-badge se-b--'+x[0]+'">'+esc(x[1])+'</span>';}
+// The badge reads the same three stages the server defines; a value outside them is shown
+// raw rather than silently relabelled, because it would mean data nothing here can explain.
+var STAGE_CLASS={PENDING_CREATION:'pending',READY_FOR_COLLECTION:'ready',COMPLETED:'done'};
+var STAGES=[];   // filled from StageList()
+function stageLabel(k){for(var i=0;i<STAGES.length;i++)if(STAGES[i].key===k)return STAGES[i].label;return k||'-';}
+function stageBadge(s){return '<span class="se-badge se-b--'+(STAGE_CLASS[s]||'muted')+'" data-stage="'+esc(s||'')+'">'+esc(stageLabel(s))+'</span>';}
+// If the vocabulary lands after the first rows are drawn, relabel them in place rather than
+// re-running the search.
+function repaintStageLabels(){
+    var els=document.querySelectorAll('[data-stage]');
+    for(var i=0;i<els.length;i++) els[i].textContent=stageLabel(els[i].getAttribute('data-stage'));
+}
 
 // Reads the filter controls, then searches. Called by the Search button and the filters.
 window.doSearch=function(page){
@@ -605,7 +642,7 @@ window.openCreate=function(reg,name,year){
 };
 window.saveCreate=function(){var em=qs('mEmail').value.trim(),pw=qs('mPw').value.trim();if(!em||!pw){modMsg('mMsg','Email and temporary password are required.',false);return;}qs('mSave').disabled=true;ajax('CreateEmail',{regno:_cReg,email:em,tempPw:pw,notes:qs('mNotes').value.trim()},function(r){qs('mSave').disabled=false;if(r&&r.success){closeM();topMsg(r.message,true);loadKpis();doSearch(st.page);}else modMsg('mMsg',(r&&r.message)||'Failed',false);});};
 function modMsg(id,m,ok){var e=qs(id);e.textContent=m;e.className='se-msg '+(ok?'se-msg--ok':'se-msg--err');e.style.display='block';}
-window.closeM=function(){qs('ov').style.display='none';qs('mCreate').style.display='none';qs('mResp').style.display='none';qs('mManage').style.display='none';};
+window.closeM=function(){qs('ov').style.display='none';qs('mCreate').style.display='none';qs('mResp').style.display='none';qs('mManage').style.display='none';qs('mNew').style.display='none';};
 
 // Tabs
 window.setTab=function(t){qs('tabPipe').classList.toggle('active',t==='pipe');qs('tabCand').classList.toggle('active',t==='cand');qs('tabComp').classList.toggle('active',t==='comp');qs('tabBatch').classList.toggle('active',t==='batch');qs('paneP').style.display=t==='pipe'?'block':'none';qs('paneD').style.display=t==='cand'?'block':'none';qs('paneC').style.display=t==='comp'?'block':'none';qs('paneB').style.display=t==='batch'?'block':'none';if(t==='comp')loadComplaints();if(t==='cand')loadCand(1);if(t==='batch'&&window.bxLoadBatches)bxLoadBatches();};
@@ -642,11 +679,21 @@ function renderDetail(r){var d=r.record;var h='';
   +'</div>';
  if(d.notes)h+='<div style="font-size:12px;background:#f8fafc;border:1px solid #eef2f7;padding:8px 10px;margin-bottom:10px"><b>Notes:</b> '+esc(d.notes)+'</div>';
  h+='<div class="g-act">'
-  +(d.stage==='PENDING_CREATION'?'<button type="button" class="g-abtn g-abtn--p" onclick="closeM();openCreate(\''+_gReg+'\',\''+esc(d.name).replace(/\x27/g,"")+'\',\''+esc(d.year)+'\')">Create email</button>':'')
-  +'<button type="button" class="g-abtn" onclick="gStage()">Change stage</button>'
+  +(d.stage==='PENDING_CREATION'?'<button type="button" class="g-abtn g-abtn--p" onclick="closeM();openCreate(\''+_gReg+'\',\''+esc(d.name).replace(/\x27/g,"")+'\',\''+esc(d.year)+'\')">Issue an address</button>':'')
   +'<button type="button" class="g-abtn" onclick="gPw()">Reset password</button>'
-  +'<button type="button" class="g-abtn g-abtn--d" onclick="gDel()">Remove</button>'
+  +'<button type="button" class="g-abtn g-abtn--d" onclick="gDel()">Remove record</button>'
   +'</div>';
+
+ // Changing the stage is a choice between three named things, so it is a dropdown sitting in
+ // the panel — not a prompt asking the admin to type a constant from memory. The old one
+ // offered EMAIL_CREATED and SUSPENDED, which are not stages: typing either wrote a value the
+ // badge could not render and the filter could never find again.
+ h+='<div class="g-stage"><label class="g-stage__l" for="gStageSel">Stage</label>'
+  +'<div class="g-stage__row">'
+  +'<select id="gStageSel" class="se-sel" onchange="gStageHint()">'+stageOptions(d.stage)+'</select>'
+  +'<input type="text" id="gStageNote" class="se-fi" style="flex:2 1 200px;width:auto" placeholder="Why (kept on the record)" />'
+  +'<button type="button" class="g-abtn g-abtn--p" id="gStageBtn" onclick="gStageSave()" disabled>Apply</button>'
+  +'</div><div class="g-stage__hint" id="gStageHint"></div></div>';
  h+='<div class="g-sec">Journey timeline</div><ul class="g-tl">'
   +tl('Added to pipeline',d.t_created)+tl('Email created',d.t_email)+tl('Learn done',d.t_edu)+tl('Gmail guide done',d.t_gmail)+tl('Quiz passed',d.t_quiz)+tl('Credentials viewed',d.t_viewed)+tl('Verified (Active Student)',d.t_verified)+tl('Completed',d.t_completed)+'</ul>';
  if(r.complaints&&r.complaints.length){h+='<div class="g-sec">Complaints</div>';r.complaints.forEach(function(c){h+='<div style="font-size:12px;padding:5px 0;border-bottom:1px dashed #eef2f7"><b>'+esc(c.category)+'</b> — '+esc(c.status)+' <span style="color:#94a3b8">'+esc(c.at)+'</span>'+(c.response?'<br><span style="color:#0b5c3a">'+esc(c.response)+'</span>':'')+'</div>';});}
@@ -654,10 +701,97 @@ function renderDetail(r){var d=r.record;var h='';
  (r.activity||[]).forEach(function(a){h+='<div><b>'+esc((a.action||'').replace(/_/g,' '))+'</b>'+(a.detail?(' — '+esc(a.detail)):'')+' <span>'+esc(a.at)+' · '+esc(a.actor)+'</span></div>';});
  if(!(r.activity||[]).length)h+='<div style="color:#94a3b8">No activity yet.</div>';
  h+='</div>';
- qs('gBody').innerHTML=h;}
-window.gStage=function(){var s=prompt('Set stage to one of:\nPENDING_CREATION, READY_FOR_COLLECTION, EMAIL_CREATED, COMPLETED, SUSPENDED','READY_FOR_COLLECTION');if(!s)return;var note=prompt('Reason / note (optional):','')||'';ajax('SetStatus',{regno:_gReg,stage:s.trim().toUpperCase(),note:note},function(r){if(r&&r.success){topMsg(r.message,true);openManage(_gReg);loadKpis();doSearch(st.page);}else topMsg((r&&r.message)||'Failed',false);});};
+ qs('gBody').innerHTML=h;
+ gStageHint();}
+// Options are the server's list, with the record's own stage selected and marked so it is
+// obvious that choosing it again does nothing.
+var _gStageNow='';
+function stageOptions(current){
+    _gStageNow=current;
+    var h='';
+    for(var i=0;i<STAGES.length;i++){var st=STAGES[i];
+        h+='<option value="'+esc(st.key)+'"'+(st.key===current?' selected':'')+'>'
+          +esc(st.label)+(st.key===current?' — current':'')+'</option>';}
+    return h;}
+
+// The hint explains what the chosen stage MEANS for the student, and Apply stays disabled
+// until the choice is actually a change.
+window.gStageHint=function(){
+    var sel=qs('gStageSel'),btn=qs('gStageBtn'),hint=qs('gStageHint');
+    if(!sel)return;
+    var st=null;for(var i=0;i<STAGES.length;i++)if(STAGES[i].key===sel.value)st=STAGES[i];
+    var changed=sel.value!==_gStageNow;
+    btn.disabled=!changed;
+    btn.textContent=changed?(st?st.action:'Apply'):'Apply';
+    hint.textContent=st?st.hint:'';
+};
+
+window.gStageSave=function(){
+    var sel=qs('gStageSel');if(!sel||sel.value===_gStageNow)return;
+    var label=sel.options[sel.selectedIndex].textContent;
+    if(!confirm('Change '+_gReg+' to “'+label+'”?'))return;
+    var btn=qs('gStageBtn');btn.disabled=true;btn.textContent='Applying…';
+    ajax('SetStatus',{regno:_gReg,stage:sel.value,note:qs('gStageNote').value.trim()},function(r){
+        if(r&&r.success){topMsg(r.message,true);openManage(_gReg);loadKpis();doSearch(st.page);}
+        else{btn.disabled=false;btn.textContent='Apply';topMsg((r&&r.message)||'Could not change the stage.',false);}
+    });};
 window.gPw=function(){var p=prompt('New temporary password for this student:',DEFAULT_PW);if(!p||!p.trim())return;ajax('SetPassword',{regno:_gReg,tempPw:p.trim()},function(r){if(r&&r.success){topMsg(r.message,true);openManage(_gReg);}else topMsg((r&&r.message)||'Failed',false);});};
 window.gDel=function(){if(!confirm('Remove '+_gReg+' from the email pipeline? This deletes the record.'))return;var note=prompt('Reason (optional):','')||'';ajax('DeleteRecord',{regno:_gReg,note:note},function(r){if(r&&r.success){closeM();topMsg(r.message,true);loadKpis();doSearch(st.page);}else topMsg((r&&r.message)||'Failed',false);});};
+
+// =====================================================================
+//  New record — create a pipeline entry for any student, by hand
+// =====================================================================
+var _nLookup=null,_nTimer=null;
+
+window.openNew=function(){
+    _nLookup=null;
+    qs('nReg').value='';qs('nNote').value='';qs('nLook').innerHTML='';
+    qs('nMsg').style.display='none';qs('nSave').disabled=true;
+    qs('ov').style.display='block';qs('mNew').style.display='block';
+    qs('nReg').focus();
+};
+
+// The student is looked up as the number is typed, and shown, so a mistyped digit is caught by
+// reading the wrong name here rather than by finding the wrong person in the pipeline later.
+(function(){
+    var el=qs('nReg'); if(!el) return;
+    el.addEventListener('input',function(){
+        clearTimeout(_nTimer);_nLookup=null;qs('nSave').disabled=true;
+        var v=el.value.trim();
+        if(v.length<4){qs('nLook').innerHTML='';return;}
+        qs('nLook').innerHTML='<div class="se-look" style="color:#94a3b8">Looking up '+esc(v)+'…</div>';
+        _nTimer=setTimeout(function(){
+            ajax('LookupStudent',{regno:v},function(r){
+                if(el.value.trim()!==v)return;                 // a later keystroke already won
+                if(!r||!r.success){qs('nLook').innerHTML='<div class="se-look se-look__x">'+esc((r&&r.message)||'Not found')+'</div>';return;}
+                _nLookup=r;
+                var h='<div class="se-look"><div class="se-look__n">'+esc(r.name||r.regno)+'</div>'
+                     +'<div class="se-look__m">'+esc(r.regno)+' · '+esc(r.programme||'—')+' · '+esc(r.campus||'—')+' · '+esc(r.year||'—')+'</div>'
+                     +'<div class="se-look__m">Paid '+fmt(r.paid)+' · '+(r.loggedIn?'has signed in to the portal':'never signed in')
+                     +(r.personal?(' · '+esc(r.personal)):'')+'</div>';
+                if(r.blocker){
+                    h+='<div class="se-look__w"><span class="se-look__x">'+esc(r.blocker)+'</span></div>';
+                }else if(r.cautions&&r.cautions.length){
+                    h+='<div class="se-look__w"><b>Would not be picked up automatically</b><ul>';
+                    for(var i=0;i<r.cautions.length;i++)h+='<li>'+esc(r.cautions[i])+'</li>';
+                    h+='</ul></div>';
+                }
+                h+='</div>';
+                qs('nLook').innerHTML=h;
+                qs('nSave').disabled=!!r.blocker;
+            });
+        },350);
+    });
+})();
+
+window.saveNew=function(){
+    if(!_nLookup||_nLookup.blocker)return;
+    var b=qs('nSave');b.disabled=true;b.textContent='Creating…';
+    ajax('CreateRecord',{regno:_nLookup.regno,note:qs('nNote').value.trim()},function(r){
+        b.textContent='Create record';
+        if(r&&r.success){closeM();topMsg(r.message,true);loadKpis();doSearch(1);setTimeout(function(){openManage(r.regno);},400);}
+        else{b.disabled=false;modMsg('nMsg',(r&&r.message)||'Could not create the record.',false);}
+    });};
 
 // Complaints
 var _rId=0;
@@ -690,6 +824,15 @@ window.saveResp=function(){ajax('RespondComplaint',{id:_rId,status:qs('rStatus')
  // at this instant fProg/fCampus are still empty — reading them would wipe the programme
  // and campus that came in on the URL. runSearch works from the parsed state instead.
  runSearch(false);
+
+ // The stage vocabulary is fetched once and every label on this page comes from it. In
+ // parallel with the rest: a badge that paints a moment early shows the raw key, which is
+ // worth far less than the round trip it would cost to wait.
+ ajax('StageList',{},function(r){
+  if(!r||!r.success||!r.stages) return;
+  STAGES=r.stages;
+  repaintStageLabels();
+ });
 
  ajax('Filters',{},function(r){
   if(!r||!r.success) return;
@@ -943,6 +1086,30 @@ window.saveResp=function(){ajax('RespondComplaint',{id:_rId,status:qs('rStatus')
 .bx-plan td.p{word-break:break-all}
 .bx-plan .miss{color:#b45309;font-weight:700}
 </style>
+
+<!-- ── New record modal ── -->
+<%-- The deliberate override for what the automatic rule cannot cover: a continuing student who
+     asks for an address, a late admission, a record removed by mistake. The student is looked
+     up and shown BEFORE anything is created, so a mistyped number is caught by reading a name
+     rather than by finding the wrong person in the pipeline afterwards. --%>
+<div class="se-modal" id="mNew" role="dialog" aria-modal="true">
+    <div class="se-modal__h"><span class="se-modal__t">Create an email record</span><button type="button" class="se-modal__x" onclick="closeM()">&times;</button></div>
+    <div class="se-modal__b">
+        <div class="se-msg" id="nMsg" style="display:none"></div>
+        <p style="font-size:12px;color:#64748b;margin:0 0 10px;line-height:1.55">
+            Adds a student to the pipeline by hand, whatever their intake year or payment. Use it for a
+            continuing student who has asked for an address, or a record that needs putting back.</p>
+        <label class="se-fl">Student number</label>
+        <input type="text" id="nReg" class="se-fi" placeholder="e.g. MRU2026004512" autocomplete="off" />
+        <div id="nLook"></div>
+        <label class="se-fl" style="margin-top:10px">Why (kept on the record)</label>
+        <input type="text" id="nNote" class="se-fi" placeholder="e.g. requested at the ICT desk" autocomplete="off" />
+    </div>
+    <div class="se-modal__f">
+        <button type="button" class="se-btn" onclick="closeM()">Cancel</button>
+        <button type="button" class="se-btn se-btn--p" id="nSave" onclick="saveNew()" disabled>Create record</button>
+    </div>
+</div>
 
 <!-- ── Export modal ── -->
 <div class="bx-modal bx-modal--sm" id="bxExp" role="dialog" aria-modal="true">
