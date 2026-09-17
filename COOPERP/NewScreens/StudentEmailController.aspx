@@ -1085,7 +1085,7 @@ window.wizOpen = function () {
     qs('wizP4').innerHTML = '';
     copyFilterOptions('wCampus', 'fCampus'); copyFilterOptions('wProg', 'fProg');
     qs('wPwMode').value = 'default'; qs('wPwFixed').value = ''; wizPwMode();
-    orgLoad(function () { orgFill('w'); });
+    orgLoad(qs('wYear').value.trim(), function () { orgFill('w'); });
     wizPaint();
     show('bxWiz');
     wizEstimate();
@@ -1341,79 +1341,134 @@ window.wizCancel = function () {
 //  for an org unit that has just been created in the Admin console and has no accounts yet,
 //  and it says out loud that it is unverified.
 // =====================================================================
-var orgKnown = null;      // [{path, accounts}], loaded once
+var org = { loaded: false, list: [], suggested: '', suggestedAccounts: 0, intake: 0 };
 
 // Absolute, no doubled separators, no trailing slash — the same rule the server applies, so
-// what is shown is what the sheet will carry. "students/" → "/students".
+// what is shown is what the sheet will carry. "students/" → "/students". A backslash is a
+// separator only when there is no real one, because a genuine org unit name can contain one.
 function orgNorm(v) {
-    var t = String(v || '').trim().replace(/\\/g, '/');
+    var t = String(v || '').trim();
     if (!t) return '/';
+    if (t.indexOf('/') < 0) t = t.replace(/\\/g, '/');
     if (t.charAt(0) !== '/') t = '/' + t;
     while (t.indexOf('//') >= 0) t = t.replace('//', '/');
     if (t.length > 1 && t.charAt(t.length - 1) === '/') t = t.slice(0, -1);
     return t || '/';
 }
 
-function orgLoad(done) {
-    if (orgKnown) { done(); return; }
-    ajax('OrgUnits', {}, function (r) {
-        orgKnown = (r && r.success && r.orgUnits) ? r.orgUnits : [];
+// Loaded once per screen opening, keyed on the intake year being exported — that is what
+// decides which cohort org unit is suggested.
+function orgLoad(year, done) {
+    ajax('OrgUnits', { year: year || '' }, function (r) {
+        if (r && r.success) {
+            org.loaded = true;
+            org.list = r.orgUnits || [];
+            org.suggested = r.suggested || '';
+            org.suggestedAccounts = r.suggestedAccounts || 0;
+            org.intake = r.intake || 0;
+        } else { org.loaded = true; org.list = []; org.suggested = ''; }
         done();
     });
 }
 
-// Fills one of the two pickers. Keeps whatever was already chosen if it is still offered.
-function orgFill(which) {
-    var sel = qs(which + 'OrgPick'); if (!sel) return;
-    var keep = sel.value;
-    sel.innerHTML = '<option value="/">/ &mdash; root (always works)</option>';
-    (orgKnown || []).forEach(function (o) {
-        var opt = document.createElement('option');
-        opt.value = o.path;
-        opt.textContent = o.path + '  (' + fmt(o.accounts) + ' account' + (o.accounts === 1 ? '' : 's') + ')';
-        sel.appendChild(opt);
-    });
-    var other = document.createElement('option');
-    other.value = '__other__'; other.textContent = 'Type another path…';
-    sel.appendChild(other);
-    sel.value = keep && orgHas(keep) ? keep : '/';
-    orgPick(which);
-}
 function orgHas(p) {
     if (p === '/' || p === '__other__') return true;
-    return (orgKnown || []).some(function (o) { return o.path === p; });
+    for (var i = 0; i < org.list.length; i++) if (org.list[i].path === p) return true;
+    return false;
+}
+function orgRow(p) {
+    for (var i = 0; i < org.list.length; i++) if (org.list[i].path === p) return org.list[i];
+    return null;
+}
+function orgLabel(o) {
+    return o.path + (o.derived ? '  (empty)' : '  (' + fmt(o.accounts) + ' account' + (o.accounts === 1 ? '' : 's') + ')');
+}
+
+// Five hundred org units is not a list anyone reads, so it is grouped: the one this intake
+// belongs in first and already chosen, then the other cohorts, then everything else.
+function orgFill(which) {
+    var sel = qs(which + 'OrgPick');
+    if (!sel) return;
+    var keep = sel.getAttribute('data-chosen') || '';
+    sel.innerHTML = '';
+
+    function group(label, rows) {
+        if (!rows.length) return;
+        var g = document.createElement('optgroup');
+        g.label = label;
+        rows.forEach(function (o) {
+            var opt = document.createElement('option');
+            opt.value = o.path; opt.textContent = orgLabel(o);
+            g.appendChild(opt);
+        });
+        sel.appendChild(g);
+    }
+
+    var sug = orgRow(org.suggested);
+    if (sug) group('For the ' + org.intake + ' intake', [sug]);
+    group('Other student year groups', org.list.filter(function (o) {
+        return o.students && o.yearGroup && o.path !== org.suggested;
+    }));
+    group('Other student org units', org.list.filter(function (o) {
+        return o.students && !o.yearGroup && o.path !== org.suggested;
+    }));
+    group('Outside /Students', org.list.filter(function (o) { return !o.students; }));
+
+    var g = document.createElement('optgroup');
+    g.label = 'Fallbacks';
+    [['/', '/ \u2014 root (always exists)'], ['__other__', 'Type another path\u2026']].forEach(function (pair) {
+        var opt = document.createElement('option');
+        opt.value = pair[0]; opt.textContent = pair[1];
+        g.appendChild(opt);
+    });
+    sel.appendChild(g);
+
+    // Keep an earlier choice if it is still offered; otherwise the intake's own org unit, and
+    // only the root if this Google domain has told us nothing at all.
+    sel.value = (keep && orgHas(keep)) ? keep : (org.suggested || '/');
+    orgPick(which);
+    if (!org.suggested && org.loaded)
+        qs(which + 'OrgHint').innerHTML += ' <b style="color:#b45309">No org unit for the ' + org.intake +
+            ' intake was found in Google</b> \u2014 create it in the Admin console, or the accounts land in the root.';
 }
 
 window.orgPick = function (which) {
     var sel = qs(which + 'OrgPick'), box = qs(which + 'Org'), hint = qs(which + 'OrgHint');
     if (!sel || !box) return;
+    sel.setAttribute('data-chosen', sel.value);
     if (sel.value === '__other__') {
         box.style.display = 'block';
-        if (!box.value) box.value = '';
         box.focus();
         orgWarn(which);
-    } else {
-        box.style.display = 'none';
-        box.value = sel.value;
-        var n = (orgKnown || []).filter(function (o) { return o.path === sel.value; })[0];
-        hint.innerHTML = sel.value === '/'
-            ? 'The root org unit. It always exists, so this can never fail with <code>OU_INVALID</code>.'
-            : 'Google has already accepted this path for <b>' + fmt(n ? n.accounts : 0) + '</b> account(s).';
+        return;
     }
+    box.style.display = 'none';
+    box.value = sel.value;
+    if (sel.value === '/') {
+        hint.innerHTML = 'The root org unit. It always exists, so this can never fail with <code>OU_INVALID</code> \u2014 ' +
+            'but the accounts land outside <b>/Students</b> and have to be moved by hand afterwards.';
+        return;
+    }
+    var o = orgRow(sel.value);
+    hint.innerHTML = (sel.value === org.suggested
+        ? 'The org unit for the <b>' + org.intake + '</b> intake. '
+        : '') + (o && o.derived
+            ? 'It exists in Google \u2014 a sub-unit of it holds accounts \u2014 but nothing is filed directly in it yet.'
+            : 'Google already holds <b>' + fmt(o ? o.accounts : 0) + '</b> account(s) here.');
 };
 
-// Free text is allowed but never silently trusted — the path is normalised as it is typed and
-// labelled unverified unless it matches one Google has accepted.
+// Free text is allowed but never silently trusted — normalised as it is typed, and labelled
+// unverified unless it is a path Google has been seen to hold.
 window.orgWarn = function (which) {
     var box = qs(which + 'Org'), hint = qs(which + 'OrgHint');
     if (!box || !hint) return;
-    var p = orgNorm(box.value);
     if (!box.value.trim()) { hint.innerHTML = 'Leave blank for <b>/</b>, the root org unit.'; return; }
+    var p = orgNorm(box.value);
     hint.innerHTML = orgHas(p)
-        ? 'Will be sent as <b>' + esc(p) + '</b> — Google has accepted this path before.'
+        ? 'Will be sent as <b>' + esc(p) + '</b> \u2014 Google holds this path.'
         : 'Will be sent as <b>' + esc(p) + '</b>. <b style="color:#b45309">This org unit has never been seen in Google.</b> ' +
-          'If it does not already exist in <b>Admin console &rarr; Directory &rarr; Organisational units</b>, every row of the ' +
-          'upload fails with <code>OU_INVALID</code> — an upload never creates one.';
+          'Unless it already exists under <b>Admin console &rarr; Directory &rarr; Organisational units</b>, every row of the ' +
+          'upload fails with <code>OU_INVALID</code> \u2014 an upload never creates one.';
 };
 
 // The value actually sent: normalised, whichever way it was chosen.
@@ -1434,7 +1489,7 @@ window.expOpen = function () {
     qs('expFoot').textContent = 'Counting…';
     qs('expBtn').disabled = true;
     show('bxExp');
-    orgLoad(function () { orgFill('e'); });
+    orgLoad(qs('eYear').value.trim(), function () { orgFill('e'); });
     ajax('ExportCount', { scope: '{}' }, function (r) {
         if (!r || !r.success) { qs('expFoot').textContent = ''; msg('expMsg', (r && r.message) || 'Could not read the pipeline.', 'err'); return; }
         expCounts = r;

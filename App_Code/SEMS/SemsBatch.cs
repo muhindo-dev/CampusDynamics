@@ -354,7 +354,12 @@ public static partial class SemsBatch
     {
         string t = (path ?? "").Trim();
         if (t.Length == 0) return "/";
-        t = t.Replace('\\', '/');
+        // Backslashes are separators only when the value has no real separator in it — someone
+        // typing a Windows-style "Students\2026". A path that already has forward slashes is
+        // left alone, because a genuine Google org unit name may CONTAIN a backslash:
+        // "/Students/ALL MRU STUDENTS/2015 - 2016/.../BED\P - Bachelor of Education (Primary)"
+        // is a real one, and rewriting it would invent an org unit that does not exist.
+        if (t.IndexOf('/') < 0) t = t.Replace('\\', '/');
         if (!t.StartsWith("/")) t = "/" + t;
         while (t.Contains("//")) t = t.Replace("//", "/");
         if (t.Length > 1 && t.EndsWith("/")) t = t.Substring(0, t.Length - 1);

@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Globalization;
 using System.Linq;
 using System.Text;
 using System.Web.Script.Serialization;
@@ -394,37 +395,164 @@ public static partial class SemsBatch
         return sb.ToString();
     }
 
+    /// <summary>One org unit Google is known to hold.</summary>
+    private class OrgUnitRow
+    {
+        public string path { get; set; }
+        public int accounts { get; set; }
+        /// <summary>An intake cohort ("2026 - 2027") rather than a faculty or a programme.</summary>
+        public bool yearGroup { get; set; }
+        public bool students { get; set; }
+        /// <summary>Known only as a parent of something else — real, but with no account filed directly in it.</summary>
+        public bool derived { get; set; }
+    }
+
+    /// <summary>The last segment of a path — the org unit's own name.</summary>
+    private static string LeafOf(string path)
+    {
+        path = path ?? "";
+        int i = path.LastIndexOf('/');
+        return i < 0 ? path : path.Substring(i + 1);
+    }
+
+    /// <summary>Does this org unit name carry both halves of the <paramref name="year"/> academic year?</summary>
+    /// <remarks>
+    /// MRU's year org units were spelled by hand and no two generations agree: "2026 - 2027",
+    /// "2025 -2026", "2019-2020", "2022-2023 student", "2024-2025 Students". A template that
+    /// BUILDS the name is wrong for most of them, so the name is always matched, never made.
+    /// </remarks>
+    private static bool IsYearGroupFor(string leaf, int year)
+    {
+        if (string.IsNullOrEmpty(leaf)) return false;
+        string a = year.ToString(CultureInfo.InvariantCulture);
+        string b = (year + 1).ToString(CultureInfo.InvariantCulture);
+        int i = leaf.IndexOf(a, StringComparison.Ordinal);
+        return i >= 0 && leaf.IndexOf(b, i + a.Length, StringComparison.Ordinal) > 0;
+    }
+
+    /// <summary>Any four-digit year in the name marks a cohort rather than a faculty.</summary>
+    private static bool LooksLikeYearGroup(string leaf)
+    {
+        if (string.IsNullOrEmpty(leaf)) return false;
+        for (int i = 0; i + 4 <= leaf.Length; i++)
+        {
+            if (leaf[i] != '1' && leaf[i] != '2') continue;
+            if (char.IsDigit(leaf[i + 1]) && char.IsDigit(leaf[i + 2]) && char.IsDigit(leaf[i + 3])) return true;
+        }
+        return false;
+    }
+
+    /// <summary>The intake the caller named, else the one the waiting students actually belong to.</summary>
+    private static int IntakeYear(MySqlConnection c, string year)
+    {
+        int n;
+        if (int.TryParse((year ?? "").Trim(), out n) && n >= 2000 && n <= 2100) return n;
+        using (var q = new MySqlCommand(
+            "SELECT admission_year FROM campus_dynamics_portal.sems_email_creations " +
+            "WHERE current_stage='PENDING_CREATION' AND IFNULL(admission_year,0)>0 " +
+            "GROUP BY admission_year ORDER BY COUNT(*) DESC LIMIT 1", c))
+        {
+            var v = q.ExecuteScalar();
+            if (v != null && v != DBNull.Value && int.TryParse(v.ToString(), out n)) return n;
+        }
+        // An academic year starts in August, so before then "this intake" is still last year's.
+        return DateTime.Now.Month >= 8 ? DateTime.Now.Year : DateTime.Now.Year - 1;
+    }
+
     /// <summary>
-    /// The org unit paths Google is known to accept, newest use first — read back from the
-    /// accounts Google itself confirmed, so it is evidence rather than a guess. The export
-    /// screen offers these instead of a free-text box, because a path that does not resolve
-    /// fails every row of an upload with OU_INVALID and an upload never creates one.
+    /// Every org unit path Google is known to hold, and which one this intake belongs in.
+    ///
+    /// Two sources, both evidence rather than guesswork: the accounts Google confirmed for our
+    /// own students, and the org unit column of any Google directory export that has been
+    /// imported — that second one is Google's own view of the whole tree, irregular names and
+    /// all. The export screen offers these instead of a free-text box, because a path that does
+    /// not resolve fails EVERY row of an upload with OU_INVALID, and an upload never creates one.
     /// </summary>
-    public static string OrgUnits()
+    public static string OrgUnits(string year)
     {
         try
         {
             using (var c = new MySqlConnection(Conn))
             {
                 c.Open();
-                var list = new List<object>();
-                var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "/" };
-                using (var cmd = new MySqlCommand(
-                    "SELECT google_org_unit ou, COUNT(*) n, MAX(google_synced_at) last_used " +
-                    "FROM campus_dynamics_portal.sems_email_creations " +
-                    "WHERE google_status IN ('IN_GOOGLE','SUSPENDED') AND IFNULL(google_org_unit,'')<>'' " +
-                    "GROUP BY 1 ORDER BY n DESC, ou LIMIT 60", c))
+                int intake = IntakeYear(c, year);
+
+                var counts = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+                Action<string, int> add = (raw, n) =>
                 {
-                    cmd.CommandTimeout = 60;
-                    using (var rd = cmd.ExecuteReader())
-                        while (rd.Read())
-                        {
-                            string ou = NormaliseOrgUnit(S(rd["ou"]));
-                            if (ou == "/" || !seen.Add(ou)) continue;
-                            list.Add(new { path = ou, accounts = Convert.ToInt32(rd["n"]) });
-                        }
+                    string ou = NormaliseOrgUnit(raw);
+                    if (ou == "/") return;                       // the root is always offered separately
+                    int cur;
+                    counts[ou] = counts.TryGetValue(ou, out cur) ? cur + n : n;
+                };
+
+                // 1. accounts Google confirmed for our own pipeline
+                using (var cmd = new MySqlCommand(
+                    "SELECT google_org_unit ou, COUNT(*) n FROM campus_dynamics_portal.sems_email_creations " +
+                    "WHERE google_status IN ('IN_GOOGLE','SUSPENDED') AND IFNULL(google_org_unit,'')<>'' GROUP BY 1", c))
+                {
+                    cmd.CommandTimeout = 90;
+                    using (var rd = cmd.ExecuteReader()) while (rd.Read()) add(S(rd["ou"]), Convert.ToInt32(rd["n"]));
                 }
-                return Js().Serialize(new { success = true, orgUnits = list });
+
+                // 2. Google's own directory export, as imported — the whole tree, irregular names and all
+                using (var cmd = new MySqlCommand(
+                    "SELECT org_unit ou, COUNT(*) n FROM campus_dynamics_portal.sems_import_staging " +
+                    "WHERE IFNULL(org_unit,'')<>'' GROUP BY 1 ORDER BY n DESC LIMIT 800", c))
+                {
+                    cmd.CommandTimeout = 90;
+                    using (var rd = cmd.ExecuteReader()) while (rd.Read()) add(S(rd["ou"]), Convert.ToInt32(rd["n"]));
+                }
+
+                // Every ancestor of a known path is itself a real org unit — Google cannot hold
+                // "/Students/ALL MRU STUDENTS/2019-2020/Faculty of Education/..." unless each step
+                // of it exists. Without this the cohort org units are invisible whenever nobody
+                // happens to be filed directly in them, and the intake would be suggested a
+                // programme-level org unit four levels too deep.
+                foreach (var known in new List<string>(counts.Keys))
+                {
+                    int cut = known.LastIndexOf('/');
+                    while (cut > 0)
+                    {
+                        string parent = known.Substring(0, cut);
+                        if (counts.ContainsKey(parent)) break;      // and so is everything above it
+                        counts[parent] = 0;
+                        cut = parent.LastIndexOf('/');
+                    }
+                }
+
+                var list = new List<OrgUnitRow>();
+                foreach (var kv in counts)
+                    list.Add(new OrgUnitRow
+                    {
+                        path = kv.Key,
+                        accounts = kv.Value,
+                        derived = kv.Value == 0,
+                        yearGroup = LooksLikeYearGroup(LeafOf(kv.Key)),
+                        students = kv.Key.StartsWith("/Students", StringComparison.OrdinalIgnoreCase)
+                    });
+                list.Sort((x, y) => string.Compare(x.path, y.path, StringComparison.OrdinalIgnoreCase));
+
+                // The home for this intake: a cohort org unit whose name carries both years,
+                // shallowest first so ".../2026 - 2027" wins over ".../2026 - 2027/FSTEAD/BIT".
+                OrgUnitRow best = null;
+                int bestDepth = int.MaxValue;
+                foreach (var r in list)
+                {
+                    if (!r.students || !IsYearGroupFor(LeafOf(r.path), intake)) continue;
+                    int depth = r.path.Split('/').Length;
+                    if (depth < bestDepth || (depth == bestDepth && r.accounts > best.accounts))
+                    { best = r; bestDepth = depth; }
+                }
+
+                return Js().Serialize(new
+                {
+                    success = true,
+                    intake,
+                    suggested = best == null ? "" : best.path,
+                    suggestedAccounts = best == null ? 0 : best.accounts,
+                    orgUnits = list
+                });
             }
         }
         catch (Exception ex) { return Fail(ex.Message); }
