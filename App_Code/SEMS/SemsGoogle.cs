@@ -1274,7 +1274,7 @@ public static partial class SemsBatch
         { q.Parameters.AddWithValue("@r", regno); return S(q.ExecuteScalar()); }
     }
 
-    private static void UpsertDirectory(MySqlConnection c, MySqlTransaction tx, string email, string source,
+    public static void UpsertDirectory(MySqlConnection c, MySqlTransaction tx, string email, string source,
                                         string ownerType, string ownerRef, string name, string status, string note)
     {
         email = (email ?? "").Trim().ToLowerInvariant();

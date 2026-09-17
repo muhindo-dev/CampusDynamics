@@ -131,6 +131,9 @@
 .se-look__w ul{margin:0;padding-left:16px;color:#7c2d12;}
 .se-look__w li{margin-bottom:2px;}
 .se-look__x{color:#b91c1c;font-weight:700;}
+.se-chk{font-size:11.5px;margin-top:4px;min-height:15px;}
+.se-chk--ok{color:#0b5c3a;}
+.se-chk--bad{color:#b91c1c;}
 
 /* the change-stage row inside Manage */
 .g-stage{border:1px solid #e0e5ed;background:#f8fafc;padding:11px 13px;margin:12px 0;}
@@ -746,17 +749,92 @@ var _nLookup=null,_nTimer=null;
 window.openNew=function(){
     _nLookup=null;
     qs('nReg').value='';qs('nNote').value='';qs('nLook').innerHTML='';
+    qs('nEmail').value='';qs('nPw').value=DEFAULT_PW;qs('nChk').innerHTML='';qs('nStageHint').textContent='';
+    qs('nsug1').textContent='—';qs('nsug2').textContent='—';qs('nSugNote').textContent='';
+    qs('ncp1').innerHTML=ICON_COPY;qs('ncp2').innerHTML=ICON_COPY;qs('ncpPw').innerHTML=ICON_COPY;
+    qs('ncp1').classList.remove('ok');qs('ncp2').classList.remove('ok');qs('ncpPw').classList.remove('ok');
+    qs('nRest').style.display='none';
     qs('nMsg').style.display='none';qs('nSave').disabled=true;
     qs('ov').style.display='block';qs('mNew').style.display='block';
     qs('nReg').focus();
 };
 
+// Addresses come from the SERVER's suggestion, not a guess made here: it applies the house
+// rule (surname + three letters of the other name + intake year) and checks the result against
+// every address on the domain. The page used to build its own, in a different format.
+function nLoadSuggestions(reg,year){
+    qs('nSugNote').textContent='(checking…)';
+    ajax('SuggestFor',{regno:reg,otherLen:3},function(r){
+        if(!r||!r.success){qs('nSugNote').textContent='(none available)';return;}
+        var a=(r.suggestions||[]);
+        qs('nsug1').textContent=a[0]||'—';
+        qs('nsug2').textContent=a[1]||'—';
+        qs('nSugNote').textContent=a.length?'(free to use)':'(none available)';
+        if(r.password) qs('nPw').value=r.password;
+        // Pre-fill the first suggestion. It is the address the batch would have given them,
+        // and an admin who wants a different one is one click from replacing it.
+        if(a[0]&&!qs('nEmail').value){qs('nEmail').value=a[0];nCheck();}
+    });}
+
+window.nUseSug=function(n){
+    var v=qs('nsug'+n).textContent.trim();
+    if(v&&v!=='—'){qs('nEmail').value=v;nCheck();qs('nEmail').focus();}
+};
+
+// Live "is this free?" against the same directory the allocator uses.
+var _nChkTimer=null;
+function nCheck(){
+    clearTimeout(_nChkTimer);
+    var v=(qs('nEmail').value||'').trim().toLowerCase(),box=qs('nChk');
+    nSync();
+    if(!v){box.innerHTML='';box.className='se-chk';return;}
+    box.textContent='Checking…';box.className='se-chk';
+    _nChkTimer=setTimeout(function(){
+        ajax('CheckAddress',{email:v,regno:_nLookup?_nLookup.regno:''},function(r){
+            if((qs('nEmail').value||'').trim().toLowerCase()!==v)return;
+            if(!r||!r.success){box.textContent='';return;}
+            box.textContent=r.reason||'';
+            box.className='se-chk '+(r.available?'se-chk--ok':'se-chk--bad');
+            _nFree=!!r.available;nSync();
+        });
+    },300);}
+var _nFree=false;
+
+// The stage list is the same three the rest of the page uses. Without an address only Pending
+// creation makes sense, so the others are disabled rather than silently refused by the server.
+function nFillStages(){
+    var sel=qs('nStage');sel.innerHTML='';
+    for(var i=0;i<STAGES.length;i++){
+        var o=document.createElement('option');
+        o.value=STAGES[i].key;o.textContent=STAGES[i].label;
+        sel.appendChild(o);}
+    sel.value='READY_FOR_COLLECTION';
+}
+
+// Keeps the dialog honest: what is allowed, what Save will do, and whether it can be pressed.
+window.nSync=function(){
+    var hasEmail=((qs('nEmail').value||'').trim()!=='');
+    var sel=qs('nStage');
+    for(var i=0;i<sel.options.length;i++)
+        sel.options[i].disabled=(!hasEmail && sel.options[i].value!=='PENDING_CREATION');
+    if(!hasEmail) sel.value='PENDING_CREATION';
+    var st=null;for(var k=0;k<STAGES.length;k++)if(STAGES[k].key===sel.value)st=STAGES[k];
+    qs('nStageHint').textContent = hasEmail ? (st?st.hint:'')
+        : 'No address yet — the record waits at Pending creation for a batch, or for you to come back.';
+    var blocked=!_nLookup||!!_nLookup.blocker;
+    var badAddr=hasEmail&&!_nFree;
+    qs('nSave').disabled=blocked||badAddr;
+    qs('nSave').textContent=hasEmail?'Create and issue address':'Create record';
+};
+
 // The student is looked up as the number is typed, and shown, so a mistyped digit is caught by
 // reading the wrong name here rather than by finding the wrong person in the pipeline later.
 (function(){
+    var em=qs('nEmail'); if(em) em.addEventListener('input',nCheck);
     var el=qs('nReg'); if(!el) return;
     el.addEventListener('input',function(){
         clearTimeout(_nTimer);_nLookup=null;qs('nSave').disabled=true;
+        qs('nRest').style.display='none';qs('nEmail').value='';qs('nChk').innerHTML='';_nFree=false;
         var v=el.value.trim();
         if(v.length<4){qs('nLook').innerHTML='';return;}
         qs('nLook').innerHTML='<div class="se-look" style="color:#94a3b8">Looking up '+esc(v)+'…</div>';
@@ -778,7 +856,11 @@ window.openNew=function(){
                 }
                 h+='</div>';
                 qs('nLook').innerHTML=h;
-                qs('nSave').disabled=!!r.blocker;
+                if(r.blocker){qs('nRest').style.display='none';qs('nSave').disabled=true;return;}
+                qs('nRest').style.display='block';
+                nFillStages();
+                nLoadSuggestions(r.regno,r.year);
+                nSync();
             });
         },350);
     });
@@ -786,9 +868,13 @@ window.openNew=function(){
 
 window.saveNew=function(){
     if(!_nLookup||_nLookup.blocker)return;
-    var b=qs('nSave');b.disabled=true;b.textContent='Creating…';
-    ajax('CreateRecord',{regno:_nLookup.regno,note:qs('nNote').value.trim()},function(r){
-        b.textContent='Create record';
+    var em=(qs('nEmail').value||'').trim().toLowerCase();
+    var pw=(qs('nPw').value||'').trim();
+    if(em&&pw.length<8){modMsg('nMsg','The temporary password must be at least 8 characters — Google rejects anything shorter.',false);return;}
+    var b=qs('nSave'),was=b.textContent;
+    b.disabled=true;b.textContent='Creating…';
+    ajax('CreateRecord',{regno:_nLookup.regno,email:em,tempPw:em?pw:'',stage:qs('nStage').value,note:qs('nNote').value.trim()},function(r){
+        b.textContent=was;
         if(r&&r.success){closeM();topMsg(r.message,true);loadKpis();doSearch(1);setTimeout(function(){openManage(r.regno);},400);}
         else{b.disabled=false;modMsg('nMsg',(r&&r.message)||'Could not create the record.',false);}
     });};
@@ -1102,8 +1188,41 @@ window.saveResp=function(){ajax('RespondComplaint',{id:_rId,status:qs('rStatus')
         <label class="se-fl">Student number</label>
         <input type="text" id="nReg" class="se-fi" placeholder="e.g. MRU2026004512" autocomplete="off" />
         <div id="nLook"></div>
-        <label class="se-fl" style="margin-top:10px">Why (kept on the record)</label>
-        <input type="text" id="nNote" class="se-fi" placeholder="e.g. requested at the ICT desk" autocomplete="off" />
+
+        <%-- Everything else only appears once a real student is on screen. Asking for an address
+             before anyone knows whose it is invites the wrong one. --%>
+        <div id="nRest" style="display:none">
+            <div class="se-sug" id="nSug">
+                <div class="se-sug__h">Suggested addresses <span id="nSugNote" style="font-weight:400;color:#94a3b8"></span></div>
+                <div class="se-sug__r">
+                    <span class="se-sug__v" id="nsug1" title="Click to use this address" onclick="nUseSug(1)">&mdash;</span>
+                    <button type="button" class="se-use" onclick="nUseSug(1)">Use</button>
+                    <button type="button" class="se-cp" id="ncp1" title="Copy" onclick="copyVal('nsug1','ncp1')"></button>
+                </div>
+                <div class="se-sug__r">
+                    <span class="se-sug__v" id="nsug2" title="Click to use this address" onclick="nUseSug(2)">&mdash;</span>
+                    <button type="button" class="se-use" onclick="nUseSug(2)">Use</button>
+                    <button type="button" class="se-cp" id="ncp2" title="Copy" onclick="copyVal('nsug2','ncp2')"></button>
+                </div>
+            </div>
+
+            <label class="se-fl">University email address</label>
+            <input type="text" id="nEmail" class="se-fi" placeholder="leave blank to decide later" autocomplete="off" />
+            <div class="se-chk" id="nChk"></div>
+
+            <label class="se-fl">Temporary password</label>
+            <div class="se-fi--row">
+                <input type="text" id="nPw" class="se-fi" autocomplete="off" />
+                <button type="button" class="se-cp" id="ncpPw" title="Copy password" onclick="copyVal('nPw','ncpPw')"></button>
+            </div>
+
+            <label class="se-fl">Stage</label>
+            <select id="nStage" class="se-sel" style="width:100%" onchange="nSync()"></select>
+            <div class="se-chk" id="nStageHint" style="color:#64748b"></div>
+
+            <label class="se-fl">Why (kept on the record)</label>
+            <input type="text" id="nNote" class="se-fi" placeholder="e.g. requested at the ICT desk" autocomplete="off" />
+        </div>
     </div>
     <div class="se-modal__f">
         <button type="button" class="se-btn" onclick="closeM()">Cancel</button>

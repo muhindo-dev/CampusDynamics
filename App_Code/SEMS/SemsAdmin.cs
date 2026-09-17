@@ -688,45 +688,123 @@ public static class SemsAdmin
     /// student who already holds an address on the domain. Neither is an override anyone
     /// wants — they produce duplicates, not favours.
     /// </summary>
-    public static string CreateRecord(string regno, string note)
+    public static string CreateRecord(string regno, string email, string tempPw, string stage, string note)
     {
         var js = new JavaScriptSerializer();
         regno = (regno ?? "").Trim();
+        email = (email ?? "").Trim().ToLowerInvariant();
+        tempPw = (tempPw ?? "").Trim();
         if (regno == "") return js.Serialize(new { success = false, message = "Student number is required." });
+
+        // An address is optional. With one, the record is created and issued in a single step;
+        // without one, it is parked at Pending creation for a batch to pick up later.
+        bool issuing = email != "";
+        Stage target = StageOf(stage) ?? StageOf(issuing ? "READY_FOR_COLLECTION" : "PENDING_CREATION");
+
+        if (issuing)
+        {
+            if (!SemsBatch.IsValidEmail(email))
+                return js.Serialize(new { success = false, message = "\"" + email + "\" is not a valid address. Letters, digits and dots only, starting with a letter." });
+            if (!email.EndsWith("@" + UniversityDomain, StringComparison.OrdinalIgnoreCase))
+                return js.Serialize(new { success = false, message = "The address must be on @" + UniversityDomain + "." });
+            if (tempPw == "") tempPw = SemsBatch.DefaultPassword;
+            if (!SemsBatch.IsUsablePassword(tempPw, email))
+                return js.Serialize(new { success = false, message = "The temporary password must be at least " +
+                    SemsBatch.MinPasswordLength + " characters and cannot be the address itself — Google rejects both." });
+        }
+        else if (target.key != "PENDING_CREATION")
+        {
+            return js.Serialize(new { success = false, message = "Give the student an address before setting the stage to " + target.label + "." });
+        }
+
         try
         {
             using (var c = new MySqlConnection(Conn))
             {
                 c.Open();
-                int n;
-                using (var cmd = new MySqlCommand(
-                    "INSERT INTO campus_dynamics_portal.sems_email_creations " +
-                    " (regno, entryno, admission_year, campus, programme, student_name, current_stage, current_status, " +
-                    "  creation_date, created_by, paid_amount_snapshot, notes) " +
-                    "SELECT TRIM(s.regno), s.entryno, s.entryyear, s.studCampus, s.progid, " +
-                    "  NULLIF(TRIM(CONCAT(IFNULL(s.firstname,''),' ',IFNULL(s.othername,''))),''), " +
-                    "  'PENDING_CREATION','PENDING', NOW(), @who, IFNULL(pay.paid,0), " +
-                    "  NULLIF(TRIM(CONCAT('Added by hand by ', @who, CASE WHEN @note<>'' THEN CONCAT(' — ', @note) ELSE '' END)),'') " +
-                    "FROM campus_dynamics.acad_student s " + PaySub +
-                    "WHERE TRIM(s.regno)=@r " +
-                    "  AND " + NoUniversityAddress + " " +
-                    "  AND " + NotInPipeline + " LIMIT 1", c))
-                {
-                    cmd.CommandTimeout = 60;
-                    cmd.Parameters.AddWithValue("@who", Actor());
-                    cmd.Parameters.AddWithValue("@r", regno);
-                    cmd.Parameters.AddWithValue("@note", note ?? "");
-                    n = cmd.ExecuteNonQuery();
-                }
-                if (n == 0)
-                    return js.Serialize(new { success = false, message =
-                        "Nothing created. Either " + regno + " is not a student, already has a record, or already holds an @" +
-                        UniversityDomain + " address." });
 
-                Log(c, null, 0, regno, "create_record", null, "PENDING_CREATION",
-                    "record created by hand" + (string.IsNullOrWhiteSpace(note) ? "" : " — " + note.Trim()));
-                return js.Serialize(new { success = true, regno, message = regno + " added to the pipeline at Pending creation." });
+                // Asked before the insert so the refusal can name WHO holds the address, which a
+                // duplicate-key error cannot.
+                if (issuing)
+                {
+                    using (var q = new MySqlCommand(
+                        "SELECT IFNULL(owner_ref,''), source FROM campus_dynamics_portal.sems_email_directory " +
+                        "WHERE email=@e AND status<>'RELEASED' LIMIT 1", c))
+                    {
+                        q.Parameters.AddWithValue("@e", email);
+                        using (var rd = q.ExecuteReader())
+                            if (rd.Read() && !rd[0].ToString().Equals(regno, StringComparison.OrdinalIgnoreCase))
+                                return js.Serialize(new { success = false, message = email + " is already held by " +
+                                    rd[1].ToString().ToLowerInvariant() + " record " +
+                                    (rd[0].ToString() == "" ? "(reserved)" : rd[0].ToString()) + "." });
+                    }
+                }
+
+                using (var tx = c.BeginTransaction())
+                {
+                    int n;
+                    using (var cmd = new MySqlCommand(
+                        "INSERT INTO campus_dynamics_portal.sems_email_creations " +
+                        " (regno, entryno, admission_year, campus, programme, student_name, current_stage, current_status, " +
+                        "  creation_date, created_by, paid_amount_snapshot, email_address, temp_password, email_created_at, notes) " +
+                        "SELECT TRIM(s.regno), s.entryno, s.entryyear, s.studCampus, s.progid, " +
+                        "  NULLIF(TRIM(CONCAT(IFNULL(s.firstname,''),' ',IFNULL(s.othername,''))),''), " +
+                        "  @stg, @sts, NOW(), @who, IFNULL(pay.paid,0), NULLIF(@em,''), NULLIF(@pw,''), " +
+                        "  CASE WHEN @em<>'' THEN NOW() ELSE NULL END, " +
+                        "  NULLIF(TRIM(CONCAT('Added by hand by ', @who, CASE WHEN @note<>'' THEN CONCAT(' — ', @note) ELSE '' END)),'') " +
+                        "FROM campus_dynamics.acad_student s " + PaySub +
+                        "WHERE TRIM(s.regno)=@r " +
+                        "  AND " + NoUniversityAddress + " " +
+                        "  AND " + NotInPipeline + " LIMIT 1", c, tx))
+                    {
+                        cmd.CommandTimeout = 60;
+                        cmd.Parameters.AddWithValue("@stg", target.key);
+                        cmd.Parameters.AddWithValue("@sts", target.status);
+                        cmd.Parameters.AddWithValue("@who", Actor());
+                        cmd.Parameters.AddWithValue("@r", regno);
+                        cmd.Parameters.AddWithValue("@em", issuing ? email : "");
+                        cmd.Parameters.AddWithValue("@pw", issuing ? tempPw : "");
+                        cmd.Parameters.AddWithValue("@note", note ?? "");
+                        n = cmd.ExecuteNonQuery();
+                    }
+                    if (n == 0)
+                    {
+                        tx.Rollback();
+                        return js.Serialize(new { success = false, message =
+                            "Nothing created. Either " + regno + " is not a student, already has a record, or already holds an @" +
+                            UniversityDomain + " address." });
+                    }
+                    int id = (int)0;
+                    using (var q = new MySqlCommand("SELECT id FROM campus_dynamics_portal.sems_email_creations WHERE regno=@r LIMIT 1", c, tx))
+                    { q.Parameters.AddWithValue("@r", regno); var v = q.ExecuteScalar(); if (v != null && v != DBNull.Value) id = Convert.ToInt32(v); }
+
+                    if (issuing)
+                    {
+                        // The address is registered the same way a batch registers one, or the
+                        // allocator could hand the same name to somebody else tomorrow.
+                        SemsBatch.UpsertDirectory(c, tx, email, "PIPELINE", "STUDENT", regno, "", "ACTIVE",
+                                                  "issued by hand by " + Actor());
+                    }
+
+                    Log(c, tx, id, regno, "create_record", null, target.key,
+                        (issuing ? email + " issued by hand" : "record created by hand") +
+                        (string.IsNullOrWhiteSpace(note) ? "" : " — " + note.Trim()));
+
+                    if (issuing && target.key == "READY_FOR_COLLECTION")
+                        Notify(c, tx, regno, "Your university email address is ready",
+                               "Open the portal to collect your @mru.ac.ug address and its password. It takes about five minutes.", "mail");
+
+                    tx.Commit();
+                    return js.Serialize(new { success = true, regno, message =
+                        issuing ? (regno + " created with " + email + ", at " + target.label + ".")
+                                : (regno + " added to the pipeline at " + target.label + ".") });
+                }
             }
+        }
+        catch (MySqlException mex)
+        {
+            if (mex.Number == 1062) return js.Serialize(new { success = false, message = "That address is already assigned to another student." });
+            return js.Serialize(new { success = false, message = mex.Message });
         }
         catch (Exception ex) { return js.Serialize(new { success = false, message = ex.Message }); }
     }
@@ -839,12 +917,35 @@ public static class SemsAdmin
             using (var c = new MySqlConnection(Conn))
             {
                 c.Open();
-                Log(c, null, 0, regno, "delete_record", null, null, note);   // log BEFORE the row is gone
+
+                // Read the address before the row goes, so it can be handed back and so the log
+                // still says what was surrendered.
+                string email = "";
+                using (var q = new MySqlCommand(
+                    "SELECT IFNULL(email_address,'') FROM campus_dynamics_portal.sems_email_creations WHERE regno=@r LIMIT 1", c))
+                { q.Parameters.AddWithValue("@r", regno); var v = q.ExecuteScalar(); email = v == null || v == DBNull.Value ? "" : v.ToString().Trim(); }
+
+                Log(c, null, 0, regno, "delete_record", null, null,
+                    (email == "" ? "" : email + " released — ") + (note ?? ""));   // log BEFORE the row is gone
+
                 int n;
                 using (var d = new MySqlCommand("DELETE FROM campus_dynamics_portal.sems_email_creations WHERE regno=@r", c))
                 { d.Parameters.AddWithValue("@r", regno); n = d.ExecuteNonQuery(); }
                 if (n == 0) return js.Serialize(new { success = false, message = "No pipeline record for that student." });
-                return js.Serialize(new { success = true, message = "Removed from the pipeline." });
+
+                // The address goes back to the pool. Without this, removing a record left its
+                // name reserved to a student who no longer has a record — unissuable to anyone,
+                // including the same student if they were added again.
+                if (email != "")
+                {
+                    using (var d = new MySqlCommand(
+                        "DELETE FROM campus_dynamics_portal.sems_email_directory " +
+                        "WHERE email=@e AND owner_ref=@r AND source='PIPELINE'", c))
+                    { d.Parameters.AddWithValue("@e", email.ToLowerInvariant()); d.Parameters.AddWithValue("@r", regno); d.ExecuteNonQuery(); }
+                }
+
+                return js.Serialize(new { success = true, message =
+                    "Removed from the pipeline." + (email == "" ? "" : " " + email + " is free again.") });
             }
         }
         catch (Exception ex) { return js.Serialize(new { success = false, message = ex.Message }); }

@@ -38,10 +38,13 @@ public partial class COOPERP_NewScreens_StudentEmailController : System.Web.UI.P
     [WebMethod(EnableSession = true)]
     public static string LookupStudent(string regno) { return NoAuth() ? DENIED : SemsAdmin.LookupStudent(regno); }
 
-    /// <summary>Creates a pipeline record for any student, overriding the automatic rule.</summary>
+    /// <summary>
+    /// Creates a pipeline record for any student, overriding the automatic rule — optionally
+    /// issuing the address and password in the same step.
+    /// </summary>
     [WebMethod(EnableSession = true)]
-    public static string CreateRecord(string regno, string note)
-    { return NoAuth() ? DENIED : SemsAdmin.CreateRecord(regno, note); }
+    public static string CreateRecord(string regno, string email, string tempPw, string stage, string note)
+    { return NoAuth() ? DENIED : SemsAdmin.CreateRecord(regno, email, tempPw, stage, note); }
 
     [WebMethod(EnableSession = true)]
     public static string CreateEmail(string regno, string email, string tempPw, string notes)
