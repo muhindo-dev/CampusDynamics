@@ -1186,8 +1186,8 @@ public static partial class SemsBatch
                                 {
                                     LogTx(c, tx, 0, regno, "google_confirm_email", wasStage, "READY_FOR_COLLECTION",
                                           effective + " confirmed live (import " + importRef + ")");
-                                    NotifyTx(c, tx, regno, "Your University Email is Ready",
-                                             "Open the portal and complete a short guide to access it.", "mail");
+                                    NotifyTx(c, tx, regno, "Your university email address is ready",
+                                             "Open the portal to collect your @mru.ac.ug address and its password. It takes about five minutes.", "mail");
                                 }
                                 if (action == "SUSPEND") suspended++; else confirmed++;
                             }
@@ -1219,8 +1219,8 @@ public static partial class SemsBatch
                                 LogTx(c, tx, 0, regno, action == "ADOPT" ? "google_adopt_email" : "google_change_email", wasStage,
                                       promote ? "READY_FOR_COLLECTION" : wasStage, effective + " (import " + importRef + ")");
                                 if (promote)
-                                    NotifyTx(c, tx, regno, "Your University Email is Ready",
-                                             "Open the portal and complete a short guide to access it.", "mail");
+                                    NotifyTx(c, tx, regno, "Your university email address is ready",
+                                             "Open the portal to collect your @mru.ac.ug address and its password. It takes about five minutes.", "mail");
                                 if (action == "ADOPT") adopted++; else changed++;
                             }
 

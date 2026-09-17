@@ -296,7 +296,7 @@ public static class SemsAdmin
                         up.ExecuteNonQuery();
                     }
                     Log(c, tx, id, regno, "create_email", stage, "READY_FOR_COLLECTION", email);
-                    Notify(c, tx, regno, "Your University Email is Ready", "Open the portal and complete a short guide to access it.", "mail");
+                    Notify(c, tx, regno, "Your university email address is ready", "Open the portal to collect your @mru.ac.ug address and its password. It takes about five minutes.", "mail");
                     tx.Commit();
                     return js.Serialize(new { success = true, message = "Email created. Student can now start onboarding." });
                 }
