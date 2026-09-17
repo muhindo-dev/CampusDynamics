@@ -97,8 +97,12 @@
         <div>
             <h1 class="se-title">Student Email Controller</h1>
             <div class="se-sub">Automated university-email lifecycle for the 2026 intake and beyond — no ICT-office visit required.</div>
+            <div class="se-rule">Qualifies for an email: <b>admitted 2026 or later</b> &middot; <b>paid UGX 100,000+</b> &middot;
+                <b>has signed in to the portal</b> &mdash; all three. A personal Gmail on file does not disqualify anyone;
+                already holding an <b>@mru.ac.ug</b> address does.</div>
         </div>
-        <button type="button" class="se-gen" id="btnGen" onclick="genEligible()">
+        <button type="button" class="se-gen" id="btnGen" onclick="genEligible()"
+            title="Adds every student who is admitted 2026 or later, has paid UGX 100,000 or more, and has signed in to the portal at least once — and who is not already in the pipeline or already holding an @mru.ac.ug address.">
             <svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 5v14M5 12h14"/></svg>
             Generate Eligible Students
         </button>
@@ -106,7 +110,15 @@
 
     <div class="se-kpis" id="kpis"></div>
 
-    <!-- Per-campus breakdown. Clicking a card filters the pipeline to that campus, so the
+    <style>
+.se-rule{margin-top:6px;font-size:11.5px;color:#5b6472;line-height:1.55;max-width:760px;}
+.se-rule b{color:#05275C;}
+.se-why{display:inline-block;font-size:10.5px;font-weight:700;letter-spacing:.3px;text-transform:uppercase;padding:2px 6px;border:1px solid #fde68a;background:#fffbeb;color:#b45309;white-space:nowrap;}
+.se-why--ok{border-color:#b5dcc5;background:#e6f4ec;color:#0b5c3a;}
+.se-pers{display:block;font-size:10.5px;color:#94a3b8;margin-top:2px;}
+</style>
+
+<!-- Per-campus breakdown. Clicking a card filters the pipeline to that campus, so the
          numbers are a way in rather than just a readout. -->
     <div class="se-camps" id="camps"></div>
 
@@ -163,8 +175,9 @@
             <select id="dPay" class="se-sel" onchange="loadCand(1)">
                 <option value="paid">Paid something (any amount)</option>
                 <option value="partial">Partial payers &mdash; under UGX 100,000</option>
-                <option value="eligible">Fully eligible &mdash; UGX 100,000+</option>
+                <option value="eligible">Fully eligible &mdash; meets all three rules</option>
                 <option value="none">No payment yet</option>
+                <option value="neverloggedin">Never signed in to the portal</option>
                 <option value="">All 2026+ not in pipeline</option>
             </select>
             <button type="button" class="se-btn se-btn--p" onclick="loadCand(1)">Search</button>
@@ -172,7 +185,7 @@
         </div>
         <div class="se-meta" id="dMeta">Loading&hellip;</div>
         <div class="se-tblwrap">
-            <table class="se-tbl"><thead><tr><th>Student</th><th>Student No.</th><th>Programme</th><th>Campus</th><th>Year</th><th>Paid</th><th></th></tr></thead><tbody id="dBody"></tbody></table>
+            <table class="se-tbl"><thead><tr><th>Student</th><th>Student No.</th><th>Programme</th><th>Campus</th><th>Year</th><th>Paid</th><th>Portal sign-in</th><th></th></tr></thead><tbody id="dBody"></tbody></table>
         </div>
         <div class="se-empty" id="dEmpty" style="display:none;">No students match this filter.</div>
         <div class="se-pager" id="dPager"></div>
@@ -605,7 +618,10 @@ window.loadCand=function(page){_dPage=page||1;qs('dMeta').textContent='Loading�
   qs('dMeta').textContent=fmt(r.total)+' student'+(r.total===1?'':'s')+(r.pageCount>1?(' · page '+r.page+' of '+r.pageCount):'');
   var b=qs('dBody');b.innerHTML='';qs('dEmpty').style.display=r.rows.length?'none':'block';
   r.rows.forEach(function(x){var rg=x.regno.replace(/'/g,"");var nm=esc(x.name).replace(/'/g,"");var tr=document.createElement('tr');
-   tr.innerHTML='<td><strong>'+esc(x.name||'-')+'</strong></td><td>'+esc(x.regno)+'</td><td>'+esc(x.programme||'-')+'</td><td>'+esc(x.campus)+'</td><td>'+esc(x.year)+'</td><td>'+payBadge(x.paid)+'</td><td style="white-space:nowrap"><span class="se-act" onclick="addCand(\''+rg+'\',\''+nm+'\')">+ Add to pipeline</span></td>';
+   // The personal address is shown because it used to be the silent reason a student was
+   // skipped; now it is just information, and seeing it makes that change legible.
+   var signin=x.loggedIn?'<span class="se-why se-why--ok">Signed in</span>':'<span class="se-why">Never signed in</span>';
+   tr.innerHTML='<td><strong>'+esc(x.name||'-')+'</strong>'+(x.personal?'<span class="se-pers">'+esc(x.personal)+'</span>':'')+'</td><td>'+esc(x.regno)+'</td><td>'+esc(x.programme||'-')+'</td><td>'+esc(x.campus)+'</td><td>'+esc(x.year)+'</td><td>'+payBadge(x.paid)+'</td><td>'+signin+'</td><td style="white-space:nowrap"><span class="se-act" onclick="addCand(\''+rg+'\',\''+nm+'\')">+ Add to pipeline</span></td>';
    b.appendChild(tr);});
   var el=qs('dPager');el.innerHTML='';if(r.pageCount>1){function bb(t,pg,dis,act){var y=document.createElement('button');y.textContent=t;if(act)y.className='active';if(dis)y.disabled=true;else y.onclick=function(){loadCand(pg);};el.appendChild(y);}bb('‹',r.page-1,r.page<=1);var f=Math.max(1,r.page-2),tt=Math.min(r.pageCount,r.page+2);for(var i=f;i<=tt;i++)bb(String(i),i,false,i===r.page);bb('›',r.page+1,r.page>=r.pageCount);}
  });};
