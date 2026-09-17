@@ -77,7 +77,7 @@ public static partial class SemsBatch
         o.NameOrder = GetS(d, "nameOrder", o.NameOrder).ToUpperInvariant();
         o.PwMode = GetS(d, "pwMode", o.PwMode).ToLowerInvariant();
         o.PwFixed = GetS(d, "pwFixed", "");
-        o.OrgUnit = GetS(d, "orgUnit", o.OrgUnit);
+        o.OrgUnit = NormaliseOrgUnit(GetS(d, "orgUnit", o.OrgUnit));
         o.ChangePwNext = GetB(d, "changePwNext", o.ChangePwNext);
         o.TargetStage = GetS(d, "targetStage", o.TargetStage).ToUpperInvariant();
         o.Notify = GetB(d, "notify", o.Notify);
@@ -131,15 +131,12 @@ public static partial class SemsBatch
         public string strategy { get; set; }
     }
 
-    /// <summary>Org unit path with {year} / {campus} / {prog} filled in.</summary>
+    /// <summary>Org unit path with {year} / {campus} / {prog} filled in, then normalised.</summary>
     private static string OrgUnitFor(string template, Cand c)
     {
         string t = string.IsNullOrWhiteSpace(template) ? "/Students" : template.Trim();
         t = t.Replace("{year}", c.Year ?? "").Replace("{campus}", CampusName(c.Campus)).Replace("{prog}", c.Prog ?? "");
-        if (!t.StartsWith("/")) t = "/" + t;
-        while (t.Contains("//")) t = t.Replace("//", "/");
-        if (t.Length > 1 && t.EndsWith("/")) t = t.Substring(0, t.Length - 1);
-        return t;
+        return NormaliseOrgUnit(t);
     }
 
     public static string CampusName(string c)

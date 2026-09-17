@@ -103,6 +103,10 @@ public partial class COOPERP_NewScreens_StudentEmailController : System.Web.UI.P
     [WebMethod(EnableSession = true)]
     public static string ExportCount(string scope) { return NoAuth() ? DENIED : SemsBatch.ExportCount(scope); }
 
+    /// <summary>Org unit paths Google has already accepted — the export screen offers these.</summary>
+    [WebMethod(EnableSession = true)]
+    public static string OrgUnits() { return NoAuth() ? DENIED : SemsBatch.OrgUnits(); }
+
     [WebMethod(EnableSession = true)]
     public static string ImportRows(string importRef, string action, int page, int pageSize)
     { return NoAuth() ? DENIED : SemsBatch.ImportRows(importRef, action, page, pageSize); }

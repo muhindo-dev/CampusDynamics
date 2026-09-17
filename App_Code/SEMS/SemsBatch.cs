@@ -338,6 +338,30 @@ public static partial class SemsBatch
     }
 
     // =================================================================
+    //  3b. ORG UNIT — the one shape Google will accept
+    // =================================================================
+
+    /// <summary>
+    /// An org unit path Google can resolve: absolute, no doubled separators, no trailing
+    /// slash. "students/" — which is what one export actually carried — becomes "/students",
+    /// and "/Students/" becomes "/Students". A blank one is the root, which always exists.
+    ///
+    /// This has to be applied on the way INTO the sheet, not just on the way into our own
+    /// records: an upload whose Org Unit Path does not resolve fails every single row with
+    /// OU_INVALID, and Google will not create the org unit for you.
+    /// </summary>
+    public static string NormaliseOrgUnit(string path)
+    {
+        string t = (path ?? "").Trim();
+        if (t.Length == 0) return "/";
+        t = t.Replace('\\', '/');
+        if (!t.StartsWith("/")) t = "/" + t;
+        while (t.Contains("//")) t = t.Replace("//", "/");
+        if (t.Length > 1 && t.EndsWith("/")) t = t.Substring(0, t.Length - 1);
+        return t.Length == 0 ? "/" : t;
+    }
+
+    // =================================================================
     //  4. PHONE — E.164 (Google rejects anything else)
     // =================================================================
     /// <summary>

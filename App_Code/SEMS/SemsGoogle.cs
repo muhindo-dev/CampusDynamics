@@ -56,7 +56,7 @@ public static partial class SemsBatch
         s.GoogleStatus = GetS(d, "googleStatus", "");
         s.ChangePwNext = GetB(d, "changePwNext", true);
         s.Domain = GetS(d, "domain", s.Domain).ToLowerInvariant().TrimStart('@');
-        s.OrgUnit = GetS(d, "orgUnit", s.OrgUnit);
+        s.OrgUnit = NormaliseOrgUnit(GetS(d, "orgUnit", s.OrgUnit));
         s.Limit = Math.Max(1, Math.Min(HardBatchCap * 5, GetI(d, "limit", s.Limit)));
         object rr;
         if (d != null && d.TryGetValue("regnos", out rr) && rr is System.Collections.IEnumerable && !(rr is string))
@@ -159,8 +159,12 @@ public static partial class SemsBatch
                         // Org unit must ALREADY EXIST in Google — it will not be created by an
                         // upload, and a missing one fails every row with OU_INVALID. "/" is the
                         // root org unit, which always exists.
-                        string org = sc.OrgUnit;
-                        if (org.Trim().Length == 0) org = "/";
+                        //
+                        // Normalised on the way into the sheet, not just on the way into our own
+                        // records. An export once carried "students/" exactly as it was typed and
+                        // Google refused all 320 rows; the wizard had been normalising the same
+                        // string to "/students" for its own copy, so the fault was invisible here.
+                        string org = NormaliseOrgUnit(sc.OrgUnit);
                         string email = S(rd["email_address"]);
                         string pw = S(rd["pw"]);
                         // Only a CONFIRMED Google account suppresses the password. A proposed or
@@ -388,6 +392,42 @@ public static partial class SemsBatch
             }
         }
         return sb.ToString();
+    }
+
+    /// <summary>
+    /// The org unit paths Google is known to accept, newest use first — read back from the
+    /// accounts Google itself confirmed, so it is evidence rather than a guess. The export
+    /// screen offers these instead of a free-text box, because a path that does not resolve
+    /// fails every row of an upload with OU_INVALID and an upload never creates one.
+    /// </summary>
+    public static string OrgUnits()
+    {
+        try
+        {
+            using (var c = new MySqlConnection(Conn))
+            {
+                c.Open();
+                var list = new List<object>();
+                var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "/" };
+                using (var cmd = new MySqlCommand(
+                    "SELECT google_org_unit ou, COUNT(*) n, MAX(google_synced_at) last_used " +
+                    "FROM campus_dynamics_portal.sems_email_creations " +
+                    "WHERE google_status IN ('IN_GOOGLE','SUSPENDED') AND IFNULL(google_org_unit,'')<>'' " +
+                    "GROUP BY 1 ORDER BY n DESC, ou LIMIT 60", c))
+                {
+                    cmd.CommandTimeout = 60;
+                    using (var rd = cmd.ExecuteReader())
+                        while (rd.Read())
+                        {
+                            string ou = NormaliseOrgUnit(S(rd["ou"]));
+                            if (ou == "/" || !seen.Add(ou)) continue;
+                            list.Add(new { path = ou, accounts = Convert.ToInt32(rd["n"]) });
+                        }
+                }
+                return Js().Serialize(new { success = true, orgUnits = list });
+            }
+        }
+        catch (Exception ex) { return Fail(ex.Message); }
     }
 
     /// <summary>How many rows each export mode would produce — shown before the download.</summary>

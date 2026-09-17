@@ -101,8 +101,7 @@ public class NewScreens_SemsFile : IHttpHandler, IRequiresSessionState
             opts["limit"] = ToInt(ctx.Request["limit"], 2000);
             opts["otherLen"] = ToInt(ctx.Request["otherLen"], 3);
             opts["changePwNext"] = (ctx.Request["changePwNext"] ?? "true").Trim().ToLowerInvariant() != "false";
-            string ouP = (ctx.Request["orgUnit"] ?? "").Trim();
-            opts["orgUnit"] = ouP.Length > 0 ? ouP : "/";
+            opts["orgUnit"] = SemsBatch.NormaliseOrgUnit(ctx.Request["orgUnit"]);
             opts["notify"] = false;
 
             int nRows; string bref, message;
@@ -130,8 +129,9 @@ public class NewScreens_SemsFile : IHttpHandler, IRequiresSessionState
         sc.Year = (ctx.Request["year"] ?? "").Trim();
         sc.GoogleStatus = (ctx.Request["googleStatus"] ?? "").Trim();
         sc.ChangePwNext = (ctx.Request["changePwNext"] ?? "true").Trim().ToLowerInvariant() != "false";
-        string ou = (ctx.Request["orgUnit"] ?? "").Trim();
-        sc.OrgUnit = ou.Length > 0 ? ou : "/";
+        // Normalised here too: this handler builds its own scope rather than going through
+        // ReadScope, so it would otherwise be the one door a raw "students/" could still enter by.
+        sc.OrgUnit = SemsBatch.NormaliseOrgUnit(ctx.Request["orgUnit"]);
 
         int rows; string batchRef;
         string csv = SemsBatch.BuildExportCsv(sc, out rows, out batchRef);

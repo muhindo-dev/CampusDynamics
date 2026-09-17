@@ -856,8 +856,11 @@ window.saveResp=function(){ajax('RespondComplaint',{id:_rId,status:qs('rStatus')
                 </div>
                 <div class="bx-fld">
                     <label class="bx-fl">Google org unit path</label>
-                    <input type="text" id="wOrg" class="bx-in" value="/" />
-                    <div class="bx-hint">Must already exist in Google. <b>/</b> is the root and always works.</div>
+                    <select id="wOrgPick" class="bx-sel" onchange="orgPick('w')">
+                        <option value="/">/ &mdash; root (always works)</option>
+                    </select>
+                    <input type="text" id="wOrg" class="bx-in" style="display:none;margin-top:6px" placeholder="/Students/2026" oninput="orgWarn('w')" />
+                    <div class="bx-hint" id="wOrgHint"></div>
                 </div>
                 <div class="bx-fld">
                     <label class="bx-fl">Temporary password</label>
@@ -932,9 +935,11 @@ window.saveResp=function(){ajax('RespondComplaint',{id:_rId,status:qs('rStatus')
             <div class="bx-fld"><label class="bx-fl">Intake year</label><input type="text" id="eYear" class="bx-in" placeholder="all" /></div>
             <div class="bx-fld">
                 <label class="bx-fl">Org unit path</label>
-                <input type="text" id="eOrg" class="bx-in" value="/" />
-                <div class="bx-hint">Must <b>already exist</b> in Google &mdash; an upload never creates one, and a missing
-                    org unit fails every row with <code>OU_INVALID</code>. <b>/</b> is the root and always works.</div>
+                <select id="eOrgPick" class="bx-sel" onchange="orgPick('e')">
+                    <option value="/">/ &mdash; root (always works)</option>
+                </select>
+                <input type="text" id="eOrg" class="bx-in" style="display:none;margin-top:6px" placeholder="/Students/2026" oninput="orgWarn('e')" />
+                <div class="bx-hint" id="eOrgHint"></div>
             </div>
         </div>
         <div class="bx-hint" id="expReview" style="margin:-4px 0 10px">
@@ -1080,6 +1085,7 @@ window.wizOpen = function () {
     qs('wizP4').innerHTML = '';
     copyFilterOptions('wCampus', 'fCampus'); copyFilterOptions('wProg', 'fProg');
     qs('wPwMode').value = 'default'; qs('wPwFixed').value = ''; wizPwMode();
+    orgLoad(function () { orgFill('w'); });
     wizPaint();
     show('bxWiz');
     wizEstimate();
@@ -1121,7 +1127,7 @@ function wizOptions() {
         otherLen: parseInt(qs('wOther').value, 10) || 3,
         domain: qs('wDomain').value.trim() || 'mru.ac.ug',
         nameOrder: qs('wOrder').value,
-        orgUnit: qs('wOrg').value.trim() || '/Students/{year}',
+        orgUnit: orgValue('w'),
         pwMode: qs('wPwMode').value,
         pwFixed: qs('wPwFixed').value,
         changePwNext: qs('wChangePw').checked,
@@ -1327,6 +1333,96 @@ window.wizCancel = function () {
 };
 
 // =====================================================================
+//  Org units
+//
+//  A path that does not resolve fails EVERY row of an upload with OU_INVALID, and an upload
+//  never creates one. So the list is not typed — it is read back from the accounts Google
+//  itself confirmed, which makes it evidence rather than a guess. "Type another path" stays,
+//  for an org unit that has just been created in the Admin console and has no accounts yet,
+//  and it says out loud that it is unverified.
+// =====================================================================
+var orgKnown = null;      // [{path, accounts}], loaded once
+
+// Absolute, no doubled separators, no trailing slash — the same rule the server applies, so
+// what is shown is what the sheet will carry. "students/" → "/students".
+function orgNorm(v) {
+    var t = String(v || '').trim().replace(/\\/g, '/');
+    if (!t) return '/';
+    if (t.charAt(0) !== '/') t = '/' + t;
+    while (t.indexOf('//') >= 0) t = t.replace('//', '/');
+    if (t.length > 1 && t.charAt(t.length - 1) === '/') t = t.slice(0, -1);
+    return t || '/';
+}
+
+function orgLoad(done) {
+    if (orgKnown) { done(); return; }
+    ajax('OrgUnits', {}, function (r) {
+        orgKnown = (r && r.success && r.orgUnits) ? r.orgUnits : [];
+        done();
+    });
+}
+
+// Fills one of the two pickers. Keeps whatever was already chosen if it is still offered.
+function orgFill(which) {
+    var sel = qs(which + 'OrgPick'); if (!sel) return;
+    var keep = sel.value;
+    sel.innerHTML = '<option value="/">/ &mdash; root (always works)</option>';
+    (orgKnown || []).forEach(function (o) {
+        var opt = document.createElement('option');
+        opt.value = o.path;
+        opt.textContent = o.path + '  (' + fmt(o.accounts) + ' account' + (o.accounts === 1 ? '' : 's') + ')';
+        sel.appendChild(opt);
+    });
+    var other = document.createElement('option');
+    other.value = '__other__'; other.textContent = 'Type another path…';
+    sel.appendChild(other);
+    sel.value = keep && orgHas(keep) ? keep : '/';
+    orgPick(which);
+}
+function orgHas(p) {
+    if (p === '/' || p === '__other__') return true;
+    return (orgKnown || []).some(function (o) { return o.path === p; });
+}
+
+window.orgPick = function (which) {
+    var sel = qs(which + 'OrgPick'), box = qs(which + 'Org'), hint = qs(which + 'OrgHint');
+    if (!sel || !box) return;
+    if (sel.value === '__other__') {
+        box.style.display = 'block';
+        if (!box.value) box.value = '';
+        box.focus();
+        orgWarn(which);
+    } else {
+        box.style.display = 'none';
+        box.value = sel.value;
+        var n = (orgKnown || []).filter(function (o) { return o.path === sel.value; })[0];
+        hint.innerHTML = sel.value === '/'
+            ? 'The root org unit. It always exists, so this can never fail with <code>OU_INVALID</code>.'
+            : 'Google has already accepted this path for <b>' + fmt(n ? n.accounts : 0) + '</b> account(s).';
+    }
+};
+
+// Free text is allowed but never silently trusted — the path is normalised as it is typed and
+// labelled unverified unless it matches one Google has accepted.
+window.orgWarn = function (which) {
+    var box = qs(which + 'Org'), hint = qs(which + 'OrgHint');
+    if (!box || !hint) return;
+    var p = orgNorm(box.value);
+    if (!box.value.trim()) { hint.innerHTML = 'Leave blank for <b>/</b>, the root org unit.'; return; }
+    hint.innerHTML = orgHas(p)
+        ? 'Will be sent as <b>' + esc(p) + '</b> — Google has accepted this path before.'
+        : 'Will be sent as <b>' + esc(p) + '</b>. <b style="color:#b45309">This org unit has never been seen in Google.</b> ' +
+          'If it does not already exist in <b>Admin console &rarr; Directory &rarr; Organisational units</b>, every row of the ' +
+          'upload fails with <code>OU_INVALID</code> — an upload never creates one.';
+};
+
+// The value actually sent: normalised, whichever way it was chosen.
+function orgValue(which) {
+    var sel = qs(which + 'OrgPick'), box = qs(which + 'Org');
+    return orgNorm(sel && sel.value !== '__other__' ? sel.value : (box ? box.value : '/'));
+}
+
+// =====================================================================
 //  Export
 // =====================================================================
 var expCounts = null;
@@ -1338,6 +1434,7 @@ window.expOpen = function () {
     qs('expFoot').textContent = 'Counting…';
     qs('expBtn').disabled = true;
     show('bxExp');
+    orgLoad(function () { orgFill('e'); });
     ajax('ExportCount', { scope: '{}' }, function (r) {
         if (!r || !r.success) { qs('expFoot').textContent = ''; msg('expMsg', (r && r.message) || 'Could not read the pipeline.', 'err'); return; }
         expCounts = r;
@@ -1391,7 +1488,7 @@ window.expDownload = function () {
     var m = expMode();
     if (m === 'pending' && !confirm('Allocate addresses for ' + fmt(expCounts.pending) + ' pending student(s) and download the Google sheet?\n\nThe addresses are reserved so nobody else can be given them. No student is told anything until you import the Google export back.')) return;
     dl('export', { mode: m, campus: qs('eCampus').value, year: qs('eYear').value.trim(),
-                   orgUnit: qs('eOrg').value.trim() || '/', changePwNext: qs('eChangePw').checked }, 'expMsg');
+                   orgUnit: orgValue('e'), changePwNext: qs('eChangePw').checked }, 'expMsg');
     if (m === 'pending') setTimeout(bxLoadBatches, 2500);
 };
 
