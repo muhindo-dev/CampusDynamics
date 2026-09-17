@@ -38,7 +38,13 @@ public static partial class SemsBatch
         public List<string> Regnos = new List<string>();
         public bool ChangePwNext = true;
         public string Domain = DefaultDomain;
-        /// <summary>Must already exist in Google. "/" is the root and always does.</summary>
+        /// <summary>
+        /// intake = file each student in their OWN admission year's org unit; fixed = one org
+        /// unit for the whole sheet. A single batch routinely spans four intakes, so "intake"
+        /// is the default — one path for all of them files a 2023 finalist in the 2026 cohort.
+        /// </summary>
+        public string OrgUnitMode = "intake";        // intake | fixed
+        /// <summary>The single org unit, or the fallback when an intake has none. Must already exist in Google.</summary>
         public string OrgUnit = "/";
         public int Limit = HardBatchCap;
     }
@@ -58,6 +64,7 @@ public static partial class SemsBatch
         s.ChangePwNext = GetB(d, "changePwNext", true);
         s.Domain = GetS(d, "domain", s.Domain).ToLowerInvariant().TrimStart('@');
         s.OrgUnit = NormaliseOrgUnit(GetS(d, "orgUnit", s.OrgUnit));
+        s.OrgUnitMode = GetS(d, "orgUnitMode", s.OrgUnitMode).ToLowerInvariant();
         s.Limit = Math.Max(1, Math.Min(HardBatchCap * 5, GetI(d, "limit", s.Limit)));
         object rr;
         if (d != null && d.TryGetValue("regnos", out rr) && rr is System.Collections.IEnumerable && !(rr is string))
@@ -125,6 +132,17 @@ public static partial class SemsBatch
         using (var c = new MySqlConnection(Conn))
         {
             c.Open();
+
+            // A batch routinely spans several admission years — the last one covered 2023 to
+            // 2026 — and the Google sheet carries an org unit PER ROW, so each student can be
+            // filed in their own cohort instead of all of them landing in one place.
+            Dictionary<int, string> byIntake = null;
+            if (sc.OrgUnitMode != "fixed")
+            {
+                Dictionary<string, int> discovered;
+                byIntake = IntakeOrgUnits(c, out discovered);
+            }
+
             var regnos = new List<string>();
             var pwFixups = new List<string>();      // regnos whose stored password the sheet has just set
             using (var cmd = new MySqlCommand(
@@ -166,6 +184,12 @@ public static partial class SemsBatch
                         // Google refused all 320 rows; the wizard had been normalising the same
                         // string to "/students" for its own copy, so the fault was invisible here.
                         string org = NormaliseOrgUnit(sc.OrgUnit);
+                        if (byIntake != null)
+                        {
+                            int yr; string cohort;
+                            if (int.TryParse(S(rd["admission_year"]), out yr) && byIntake.TryGetValue(yr, out cohort))
+                                org = cohort;            // else the chosen path stands as the fallback
+                        }
                         string email = S(rd["email_address"]);
                         string pw = S(rd["pw"]);
                         // Only a CONFIRMED Google account suppresses the password. A proposed or
@@ -339,7 +363,8 @@ public static partial class SemsBatch
                 BatchRef = batchRef,
                 Domain = o.Domain,
                 ChangePwNext = o.ChangePwNext,
-                OrgUnit = o.OrgUnit
+                OrgUnit = o.OrgUnit,
+                OrgUnitMode = o.OrgUnitMode
             };
             string bref2;
             string csv = BuildExportCsv(sc, out rowCount, out bref2);
@@ -460,6 +485,102 @@ public static partial class SemsBatch
     }
 
     /// <summary>
+    /// Every org unit path Google is known to hold, with the number of accounts filed directly
+    /// in each (0 for one known only as somebody's parent).
+    ///
+    /// Two sources, both evidence rather than guesswork: the accounts Google confirmed for our
+    /// own students, and the org unit column of any Google directory export that has been
+    /// imported — that second one is Google's own view of the whole tree, irregular names and
+    /// all. Every ancestor is added too, because Google cannot hold ".../2019-2020/Faculty of
+    /// Education/..." unless each step of it exists; without that the cohort org units are
+    /// invisible whenever nobody is filed directly in them.
+    /// </summary>
+    private static Dictionary<string, int> DiscoverOrgUnits(MySqlConnection c)
+    {
+        var counts = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+        Action<string, int> add = (raw, n) =>
+        {
+            string ou = NormaliseOrgUnit(raw);
+            if (ou == "/") return;                       // the root is always offered separately
+            int cur;
+            counts[ou] = counts.TryGetValue(ou, out cur) ? cur + n : n;
+        };
+
+        using (var cmd = new MySqlCommand(
+            "SELECT google_org_unit ou, COUNT(*) n FROM campus_dynamics_portal.sems_email_creations " +
+            "WHERE google_status IN ('IN_GOOGLE','SUSPENDED') AND IFNULL(google_org_unit,'')<>'' GROUP BY 1", c))
+        {
+            cmd.CommandTimeout = 90;
+            using (var rd = cmd.ExecuteReader()) while (rd.Read()) add(S(rd["ou"]), Convert.ToInt32(rd["n"]));
+        }
+
+        using (var cmd = new MySqlCommand(
+            "SELECT org_unit ou, COUNT(*) n FROM campus_dynamics_portal.sems_import_staging " +
+            "WHERE IFNULL(org_unit,'')<>'' GROUP BY 1 ORDER BY n DESC LIMIT 800", c))
+        {
+            cmd.CommandTimeout = 90;
+            using (var rd = cmd.ExecuteReader()) while (rd.Read()) add(S(rd["ou"]), Convert.ToInt32(rd["n"]));
+        }
+
+        foreach (var known in new List<string>(counts.Keys))
+        {
+            int cut = known.LastIndexOf('/');
+            while (cut > 0)
+            {
+                string parent = known.Substring(0, cut);
+                if (counts.ContainsKey(parent)) break;   // and so is everything above it
+                counts[parent] = 0;
+                cut = parent.LastIndexOf('/');
+            }
+        }
+        return counts;
+    }
+
+    /// <summary>
+    /// The org unit an intake belongs in: the shallowest student cohort whose name carries both
+    /// halves of the academic year. "" when Google holds no such org unit.
+    /// </summary>
+    private static string CohortOrgUnit(Dictionary<string, int> known, int intake)
+    {
+        string best = "";
+        int bestDepth = int.MaxValue, bestAccounts = -1;
+        foreach (var kv in known)
+        {
+            if (!kv.Key.StartsWith("/Students", StringComparison.OrdinalIgnoreCase)) continue;
+            if (!IsYearGroupFor(LeafOf(kv.Key), intake)) continue;
+            int depth = kv.Key.Split('/').Length;
+            if (depth < bestDepth || (depth == bestDepth && kv.Value > bestAccounts))
+            { best = kv.Key; bestDepth = depth; bestAccounts = kv.Value; }
+        }
+        return best;
+    }
+
+    /// <summary>
+    /// Every intake in the pipeline mapped to the org unit it belongs in. Built once per sheet:
+    /// the Google CSV carries an org unit PER ROW, so a batch spanning four admission years can
+    /// file each student in their own cohort instead of dropping all of them in one place.
+    /// </summary>
+    private static Dictionary<int, string> IntakeOrgUnits(MySqlConnection c, out Dictionary<string, int> known)
+    {
+        known = DiscoverOrgUnits(c);
+        var map = new Dictionary<int, string>();
+        using (var cmd = new MySqlCommand(
+            "SELECT DISTINCT admission_year FROM campus_dynamics_portal.sems_email_creations " +
+            "WHERE IFNULL(admission_year,0) BETWEEN 2000 AND 2100", c))
+        {
+            cmd.CommandTimeout = 60;
+            using (var rd = cmd.ExecuteReader())
+                while (rd.Read())
+                {
+                    int y = Convert.ToInt32(rd[0]);
+                    string ou = CohortOrgUnit(known, y);
+                    if (ou != "") map[y] = ou;
+                }
+        }
+        return map;
+    }
+
+    /// <summary>
     /// Every org unit path Google is known to hold, and which one this intake belongs in.
     ///
     /// Two sources, both evidence rather than guesswork: the accounts Google confirmed for our
@@ -477,49 +598,8 @@ public static partial class SemsBatch
                 c.Open();
                 int intake = IntakeYear(c, year);
 
-                var counts = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
-                Action<string, int> add = (raw, n) =>
-                {
-                    string ou = NormaliseOrgUnit(raw);
-                    if (ou == "/") return;                       // the root is always offered separately
-                    int cur;
-                    counts[ou] = counts.TryGetValue(ou, out cur) ? cur + n : n;
-                };
-
-                // 1. accounts Google confirmed for our own pipeline
-                using (var cmd = new MySqlCommand(
-                    "SELECT google_org_unit ou, COUNT(*) n FROM campus_dynamics_portal.sems_email_creations " +
-                    "WHERE google_status IN ('IN_GOOGLE','SUSPENDED') AND IFNULL(google_org_unit,'')<>'' GROUP BY 1", c))
-                {
-                    cmd.CommandTimeout = 90;
-                    using (var rd = cmd.ExecuteReader()) while (rd.Read()) add(S(rd["ou"]), Convert.ToInt32(rd["n"]));
-                }
-
-                // 2. Google's own directory export, as imported — the whole tree, irregular names and all
-                using (var cmd = new MySqlCommand(
-                    "SELECT org_unit ou, COUNT(*) n FROM campus_dynamics_portal.sems_import_staging " +
-                    "WHERE IFNULL(org_unit,'')<>'' GROUP BY 1 ORDER BY n DESC LIMIT 800", c))
-                {
-                    cmd.CommandTimeout = 90;
-                    using (var rd = cmd.ExecuteReader()) while (rd.Read()) add(S(rd["ou"]), Convert.ToInt32(rd["n"]));
-                }
-
-                // Every ancestor of a known path is itself a real org unit — Google cannot hold
-                // "/Students/ALL MRU STUDENTS/2019-2020/Faculty of Education/..." unless each step
-                // of it exists. Without this the cohort org units are invisible whenever nobody
-                // happens to be filed directly in them, and the intake would be suggested a
-                // programme-level org unit four levels too deep.
-                foreach (var known in new List<string>(counts.Keys))
-                {
-                    int cut = known.LastIndexOf('/');
-                    while (cut > 0)
-                    {
-                        string parent = known.Substring(0, cut);
-                        if (counts.ContainsKey(parent)) break;      // and so is everything above it
-                        counts[parent] = 0;
-                        cut = parent.LastIndexOf('/');
-                    }
-                }
+                Dictionary<string, int> counts;
+                var byIntake = IntakeOrgUnits(c, out counts);
 
                 var list = new List<OrgUnitRow>();
                 foreach (var kv in counts)
@@ -533,24 +613,40 @@ public static partial class SemsBatch
                     });
                 list.Sort((x, y) => string.Compare(x.path, y.path, StringComparison.OrdinalIgnoreCase));
 
-                // The home for this intake: a cohort org unit whose name carries both years,
-                // shallowest first so ".../2026 - 2027" wins over ".../2026 - 2027/FSTEAD/BIT".
-                OrgUnitRow best = null;
-                int bestDepth = int.MaxValue;
-                foreach (var r in list)
+                string suggested = CohortOrgUnit(counts, intake);
+                int suggestedAccounts;
+                if (!counts.TryGetValue(suggested ?? "", out suggestedAccounts)) suggestedAccounts = 0;
+
+                // What "file each student in their own intake" would actually do, per year, so
+                // the screen can show it before the sheet is built rather than after Google says no.
+                var plan = new List<object>();
+                using (var cmd = new MySqlCommand(
+                    "SELECT admission_year yr, COUNT(*) n FROM campus_dynamics_portal.sems_email_creations " +
+                    "WHERE current_stage='PENDING_CREATION' AND IFNULL(admission_year,0)>0 " +
+                    "GROUP BY 1 ORDER BY 1 DESC", c))
                 {
-                    if (!r.students || !IsYearGroupFor(LeafOf(r.path), intake)) continue;
-                    int depth = r.path.Split('/').Length;
-                    if (depth < bestDepth || (depth == bestDepth && r.accounts > best.accounts))
-                    { best = r; bestDepth = depth; }
+                    cmd.CommandTimeout = 60;
+                    using (var rd = cmd.ExecuteReader())
+                        while (rd.Read())
+                        {
+                            int y = Convert.ToInt32(rd["yr"]);
+                            string ou;
+                            plan.Add(new
+                            {
+                                year = y,
+                                students = Convert.ToInt32(rd["n"]),
+                                path = byIntake.TryGetValue(y, out ou) ? ou : ""
+                            });
+                        }
                 }
 
                 return Js().Serialize(new
                 {
                     success = true,
                     intake,
-                    suggested = best == null ? "" : best.path,
-                    suggestedAccounts = best == null ? 0 : best.accounts,
+                    suggested,
+                    suggestedAccounts,
+                    intakePlan = plan,
                     orgUnits = list
                 });
             }

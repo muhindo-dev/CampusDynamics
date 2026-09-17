@@ -855,7 +855,13 @@ window.saveResp=function(){ajax('RespondComplaint',{id:_rId,status:qs('rStatus')
                     <input type="text" id="wDomain" class="bx-in" value="mru.ac.ug" />
                 </div>
                 <div class="bx-fld">
-                    <label class="bx-fl">Google org unit path</label>
+                    <label class="bx-fl">Where the accounts are filed</label>
+                    <select id="wOrgMode" class="bx-sel" onchange="orgMode('w')">
+                        <option value="intake">Each student&rsquo;s own intake year (recommended)</option>
+                        <option value="fixed">One org unit for everyone</option>
+                    </select>
+                    <div class="bx-plan" id="wOrgPlan"></div>
+                    <label class="bx-fl" id="wOrgPickLbl" style="margin-top:8px">If an intake has no org unit, use</label>
                     <select id="wOrgPick" class="bx-sel" onchange="orgPick('w')">
                         <option value="/">/ &mdash; root (always works)</option>
                     </select>
@@ -912,6 +918,16 @@ window.saveResp=function(){ajax('RespondComplaint',{id:_rId,status:qs('rStatus')
     </div>
 </div>
 
+<style>
+.bx-plan{margin-top:7px;font-size:11.5px;color:#334155}
+.bx-plan table{width:100%;border-collapse:collapse}
+.bx-plan td{padding:2px 6px 2px 0;vertical-align:top}
+.bx-plan td.y{font-weight:700;white-space:nowrap;color:#05275C}
+.bx-plan td.n{white-space:nowrap;color:#64748b;text-align:right}
+.bx-plan td.p{word-break:break-all}
+.bx-plan .miss{color:#b45309;font-weight:700}
+</style>
+
 <!-- ── Export modal ── -->
 <div class="bx-modal bx-modal--sm" id="bxExp" role="dialog" aria-modal="true">
     <div class="bx-h"><span class="bx-h__t">Export to Google Workspace</span><button type="button" class="bx-h__x" onclick="bxClose()">&times;</button></div>
@@ -934,7 +950,13 @@ window.saveResp=function(){ajax('RespondComplaint',{id:_rId,status:qs('rStatus')
             <div class="bx-fld"><label class="bx-fl">Campus</label><select id="eCampus" class="bx-sel"><option value="">All</option></select></div>
             <div class="bx-fld"><label class="bx-fl">Intake year</label><input type="text" id="eYear" class="bx-in" placeholder="all" /></div>
             <div class="bx-fld">
-                <label class="bx-fl">Org unit path</label>
+                <label class="bx-fl">Where the accounts are filed</label>
+                <select id="eOrgMode" class="bx-sel" onchange="orgMode('e')">
+                    <option value="intake">Each student&rsquo;s own intake year (recommended)</option>
+                    <option value="fixed">One org unit for everyone</option>
+                </select>
+                <div class="bx-plan" id="eOrgPlan"></div>
+                <label class="bx-fl" id="eOrgPickLbl" style="margin-top:8px">If an intake has no org unit, use</label>
                 <select id="eOrgPick" class="bx-sel" onchange="orgPick('e')">
                     <option value="/">/ &mdash; root (always works)</option>
                 </select>
@@ -1085,7 +1107,7 @@ window.wizOpen = function () {
     qs('wizP4').innerHTML = '';
     copyFilterOptions('wCampus', 'fCampus'); copyFilterOptions('wProg', 'fProg');
     qs('wPwMode').value = 'default'; qs('wPwFixed').value = ''; wizPwMode();
-    orgLoad(qs('wYear').value.trim(), function () { orgFill('w'); });
+    orgLoad(qs('wYear').value.trim(), function () { orgFill('w'); orgMode('w'); });
     wizPaint();
     show('bxWiz');
     wizEstimate();
@@ -1128,6 +1150,7 @@ function wizOptions() {
         domain: qs('wDomain').value.trim() || 'mru.ac.ug',
         nameOrder: qs('wOrder').value,
         orgUnit: orgValue('w'),
+        orgUnitMode: qs('wOrgMode').value,
         pwMode: qs('wPwMode').value,
         pwFixed: qs('wPwFixed').value,
         changePwNext: qs('wChangePw').checked,
@@ -1341,7 +1364,7 @@ window.wizCancel = function () {
 //  for an org unit that has just been created in the Admin console and has no accounts yet,
 //  and it says out loud that it is unverified.
 // =====================================================================
-var org = { loaded: false, list: [], suggested: '', suggestedAccounts: 0, intake: 0 };
+var org = { loaded: false, list: [], suggested: '', suggestedAccounts: 0, intake: 0, plan: [] };
 
 // Absolute, no doubled separators, no trailing slash — the same rule the server applies, so
 // what is shown is what the sheet will carry. "students/" → "/students". A backslash is a
@@ -1366,10 +1389,36 @@ function orgLoad(year, done) {
             org.suggested = r.suggested || '';
             org.suggestedAccounts = r.suggestedAccounts || 0;
             org.intake = r.intake || 0;
-        } else { org.loaded = true; org.list = []; org.suggested = ''; }
+            org.plan = r.intakePlan || [];
+        } else { org.loaded = true; org.list = []; org.suggested = ''; org.plan = []; }
         done();
     });
 }
+
+// A batch routinely spans several admission years, and the Google sheet carries an org unit per
+// ROW — so the honest default is to file each student in their own cohort. This shows exactly
+// where each year lands before the sheet is built, rather than after Google says no.
+window.orgMode = function (which) {
+    var mode = qs(which + 'OrgMode').value;
+    var plan = qs(which + 'OrgPlan'), lbl = qs(which + 'OrgPickLbl');
+    lbl.textContent = mode === 'intake' ? 'If an intake has no org unit, use' : 'Org unit for every account in the sheet';
+    if (mode !== 'intake') { plan.innerHTML = ''; orgPick(which); return; }
+
+    if (!org.plan.length) {
+        plan.innerHTML = '<span class="bx-hint">No students are waiting, so there is nothing to file.</span>';
+    } else {
+        var missing = 0;
+        var rows = org.plan.map(function (r) {
+            if (!r.path) missing++;
+            return '<tr><td class="y">' + r.year + '</td><td class="n">' + fmt(r.students) + '</td><td class="p">' +
+                (r.path ? esc(r.path) : '<span class="miss">no org unit in Google — uses the fallback below</span>') +
+                '</td></tr>';
+        }).join('');
+        plan.innerHTML = '<table>' + rows + '</table>' +
+            (missing ? '' : '<div class="bx-hint" style="margin-top:4px">Every waiting intake has its own org unit.</div>');
+    }
+    orgPick(which);
+};
 
 function orgHas(p) {
     if (p === '/' || p === '__other__') return true;
@@ -1416,7 +1465,7 @@ function orgFill(which) {
 
     var g = document.createElement('optgroup');
     g.label = 'Fallbacks';
-    [['/', '/ \u2014 root (always exists)'], ['__other__', 'Type another path\u2026']].forEach(function (pair) {
+    [['/', '/ — root (always exists)'], ['__other__', 'Type another path…']].forEach(function (pair) {
         var opt = document.createElement('option');
         opt.value = pair[0]; opt.textContent = pair[1];
         g.appendChild(opt);
@@ -1425,11 +1474,14 @@ function orgFill(which) {
 
     // Keep an earlier choice if it is still offered; otherwise the intake's own org unit, and
     // only the root if this Google domain has told us nothing at all.
-    sel.value = (keep && orgHas(keep)) ? keep : (org.suggested || '/');
+    var modeEl = qs(which + 'OrgMode');
+    var dflt = (modeEl && modeEl.value === 'intake') ? '/Students' : (org.suggested || '/');
+    if (!orgHas(dflt)) dflt = org.suggested || '/';
+    sel.value = (keep && orgHas(keep)) ? keep : dflt;
     orgPick(which);
-    if (!org.suggested && org.loaded)
+    if (!org.suggested && org.loaded && modeEl && modeEl.value !== 'intake')
         qs(which + 'OrgHint').innerHTML += ' <b style="color:#b45309">No org unit for the ' + org.intake +
-            ' intake was found in Google</b> \u2014 create it in the Admin console, or the accounts land in the root.';
+            ' intake was found in Google</b> — create it in the Admin console, or the accounts land in the root.';
 }
 
 window.orgPick = function (which) {
@@ -1445,7 +1497,7 @@ window.orgPick = function (which) {
     box.style.display = 'none';
     box.value = sel.value;
     if (sel.value === '/') {
-        hint.innerHTML = 'The root org unit. It always exists, so this can never fail with <code>OU_INVALID</code> \u2014 ' +
+        hint.innerHTML = 'The root org unit. It always exists, so this can never fail with <code>OU_INVALID</code> — ' +
             'but the accounts land outside <b>/Students</b> and have to be moved by hand afterwards.';
         return;
     }
@@ -1453,7 +1505,7 @@ window.orgPick = function (which) {
     hint.innerHTML = (sel.value === org.suggested
         ? 'The org unit for the <b>' + org.intake + '</b> intake. '
         : '') + (o && o.derived
-            ? 'It exists in Google \u2014 a sub-unit of it holds accounts \u2014 but nothing is filed directly in it yet.'
+            ? 'It exists in Google — a sub-unit of it holds accounts — but nothing is filed directly in it yet.'
             : 'Google already holds <b>' + fmt(o ? o.accounts : 0) + '</b> account(s) here.');
 };
 
@@ -1465,10 +1517,10 @@ window.orgWarn = function (which) {
     if (!box.value.trim()) { hint.innerHTML = 'Leave blank for <b>/</b>, the root org unit.'; return; }
     var p = orgNorm(box.value);
     hint.innerHTML = orgHas(p)
-        ? 'Will be sent as <b>' + esc(p) + '</b> \u2014 Google holds this path.'
+        ? 'Will be sent as <b>' + esc(p) + '</b> — Google holds this path.'
         : 'Will be sent as <b>' + esc(p) + '</b>. <b style="color:#b45309">This org unit has never been seen in Google.</b> ' +
           'Unless it already exists under <b>Admin console &rarr; Directory &rarr; Organisational units</b>, every row of the ' +
-          'upload fails with <code>OU_INVALID</code> \u2014 an upload never creates one.';
+          'upload fails with <code>OU_INVALID</code> — an upload never creates one.';
 };
 
 // The value actually sent: normalised, whichever way it was chosen.
@@ -1489,7 +1541,7 @@ window.expOpen = function () {
     qs('expFoot').textContent = 'Counting…';
     qs('expBtn').disabled = true;
     show('bxExp');
-    orgLoad(qs('eYear').value.trim(), function () { orgFill('e'); });
+    orgLoad(qs('eYear').value.trim(), function () { orgFill('e'); orgMode('e'); });
     ajax('ExportCount', { scope: '{}' }, function (r) {
         if (!r || !r.success) { qs('expFoot').textContent = ''; msg('expMsg', (r && r.message) || 'Could not read the pipeline.', 'err'); return; }
         expCounts = r;
@@ -1543,7 +1595,8 @@ window.expDownload = function () {
     var m = expMode();
     if (m === 'pending' && !confirm('Allocate addresses for ' + fmt(expCounts.pending) + ' pending student(s) and download the Google sheet?\n\nThe addresses are reserved so nobody else can be given them. No student is told anything until you import the Google export back.')) return;
     dl('export', { mode: m, campus: qs('eCampus').value, year: qs('eYear').value.trim(),
-                   orgUnit: orgValue('e'), changePwNext: qs('eChangePw').checked }, 'expMsg');
+                   orgUnit: orgValue('e'), orgUnitMode: qs('eOrgMode').value,
+                   changePwNext: qs('eChangePw').checked }, 'expMsg');
     if (m === 'pending') setTimeout(bxLoadBatches, 2500);
 };
 

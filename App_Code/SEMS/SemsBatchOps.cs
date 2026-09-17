@@ -38,7 +38,9 @@ public static partial class SemsBatch
         /// <summary>default = the house password every student gets; unique = one each; fixed = a shared one this batch only.</summary>
         public string PwMode = "default";               // default | unique | fixed
         public string PwFixed = "";
-        /// <summary>Must already exist in Google — "/" is the root and always does.</summary>
+        /// <summary>intake = each student's own admission year's org unit; fixed = one for everyone.</summary>
+        public string OrgUnitMode = "intake";           // intake | fixed
+        /// <summary>The single org unit, or the fallback when an intake has none. Must already exist in Google.</summary>
         public string OrgUnit = "/";
         public bool ChangePwNext = true;
         public string TargetStage = "READY_FOR_COLLECTION";
@@ -78,6 +80,7 @@ public static partial class SemsBatch
         o.PwMode = GetS(d, "pwMode", o.PwMode).ToLowerInvariant();
         o.PwFixed = GetS(d, "pwFixed", "");
         o.OrgUnit = NormaliseOrgUnit(GetS(d, "orgUnit", o.OrgUnit));
+        o.OrgUnitMode = GetS(d, "orgUnitMode", o.OrgUnitMode).ToLowerInvariant();
         o.ChangePwNext = GetB(d, "changePwNext", o.ChangePwNext);
         o.TargetStage = GetS(d, "targetStage", o.TargetStage).ToUpperInvariant();
         o.Notify = GetB(d, "notify", o.Notify);
@@ -131,10 +134,19 @@ public static partial class SemsBatch
         public string strategy { get; set; }
     }
 
-    /// <summary>Org unit path with {year} / {campus} / {prog} filled in, then normalised.</summary>
-    private static string OrgUnitFor(string template, Cand c)
+    /// <summary>
+    /// Where this student is filed. In intake mode that is their own admission year's cohort org
+    /// unit, falling back to the chosen path when Google holds none — the same resolution the
+    /// sheet uses, so what the review screen shows is what Google is asked for.
+    /// </summary>
+    private static string OrgUnitFor(Options o, Dictionary<int, string> byIntake, Cand c)
     {
-        string t = string.IsNullOrWhiteSpace(template) ? "/Students" : template.Trim();
+        if (byIntake != null)
+        {
+            int yr; string cohort;
+            if (int.TryParse((c.Year ?? "").Trim(), out yr) && byIntake.TryGetValue(yr, out cohort)) return cohort;
+        }
+        string t = string.IsNullOrWhiteSpace(o.OrgUnit) ? "/Students" : o.OrgUnit.Trim();
         t = t.Replace("{year}", c.Year ?? "").Replace("{campus}", CampusName(c.Campus)).Replace("{prog}", c.Prog ?? "");
         return NormaliseOrgUnit(t);
     }
@@ -167,6 +179,13 @@ public static partial class SemsBatch
                 ReleaseStaleReservations(c);
                 SyncDirectory(c, o.Domain);
                 var taken = LoadTaken(c, o.Domain);
+
+                Dictionary<int, string> byIntake = null;
+                if (o.OrgUnitMode != "fixed")
+                {
+                    Dictionary<string, int> discovered;
+                    byIntake = IntakeOrgUnits(c, out discovered);
+                }
 
                 var cands = LoadCandidates(c, o);
                 if (cands.Count == 0)
@@ -234,7 +253,7 @@ public static partial class SemsBatch
                         programme = string.IsNullOrEmpty(cd.ProgName) ? cd.Prog : cd.ProgName,
                         email = email,
                         password = pw,
-                        orgUnit = OrgUnitFor(o.OrgUnit, cd),
+                        orgUnit = OrgUnitFor(o, byIntake, cd),
                         recovery = rec,
                         phone = phone,
                         severity = severity,

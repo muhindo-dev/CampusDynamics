@@ -102,6 +102,7 @@ public class NewScreens_SemsFile : IHttpHandler, IRequiresSessionState
             opts["otherLen"] = ToInt(ctx.Request["otherLen"], 3);
             opts["changePwNext"] = (ctx.Request["changePwNext"] ?? "true").Trim().ToLowerInvariant() != "false";
             opts["orgUnit"] = SemsBatch.NormaliseOrgUnit(ctx.Request["orgUnit"]);
+            opts["orgUnitMode"] = (ctx.Request["orgUnitMode"] ?? "intake").Trim().ToLowerInvariant();
             opts["notify"] = false;
 
             int nRows; string bref, message;
@@ -132,6 +133,7 @@ public class NewScreens_SemsFile : IHttpHandler, IRequiresSessionState
         // Normalised here too: this handler builds its own scope rather than going through
         // ReadScope, so it would otherwise be the one door a raw "students/" could still enter by.
         sc.OrgUnit = SemsBatch.NormaliseOrgUnit(ctx.Request["orgUnit"]);
+        sc.OrgUnitMode = (ctx.Request["orgUnitMode"] ?? "intake").Trim().ToLowerInvariant();
 
         int rows; string batchRef;
         string csv = SemsBatch.BuildExportCsv(sc, out rows, out batchRef);
