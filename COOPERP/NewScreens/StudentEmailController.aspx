@@ -519,7 +519,10 @@ window.genEligible=function(){var btn=qs('btnGen');btn.disabled=true;btn.textCon
 
 // ── Create modal ────────────────────────────────────────────────────────────
 var _cReg='';
-var DEFAULT_PW='mru123456';   // house default; the field is pre-filled with it and editable
+// The one password every student account is created with. Google is told to force a change
+// at first sign-in, so it survives exactly one login — which is what makes it safe to print
+// on the notice board and say out loud at the ICT desk.
+var DEFAULT_PW='mru12345';
 
 // Strip anything that can't live in the local part of an address, and lowercase it.
 function slug(s){return String(s||'').toLowerCase().replace(/[^a-z]/g,'');}
@@ -859,14 +862,15 @@ window.saveResp=function(){ajax('RespondComplaint',{id:_rId,status:qs('rStatus')
                 <div class="bx-fld">
                     <label class="bx-fl">Temporary password</label>
                     <select id="wPwMode" class="bx-sel" onchange="wizPwMode()">
-                        <option value="unique">Unique per student (recommended)</option>
-                        <option value="fixed">One shared password</option>
+                        <option value="default">House default &mdash; mru12345 (recommended)</option>
+                        <option value="fixed">A different shared password</option>
+                        <option value="unique">Unique per student</option>
                     </select>
                     <input type="text" id="wPwFixed" class="bx-in" style="display:none;margin-top:6px" placeholder="at least 8 characters" />
-                    <div class="bx-hint">Google rejects anything under 8 characters.</div>
+                    <div class="bx-hint" id="wPwHint"></div>
                 </div>
             </div>
-            <label class="bx-chk"><input type="checkbox" id="wChangePw" checked /> <span>Force a password change at first sign-in (written into the Google sheet).</span></label>
+            <label class="bx-chk"><input type="checkbox" id="wChangePw" checked /> <span>Force a password change at first sign-in (written into the Google sheet). <b>Leave this on</b> &mdash; it is what makes a shared password safe.</span></label>
             <div class="bx-msg bx-msg--info" style="display:block">
                 These addresses are <b>reserved, not issued</b>. Students stay Pending and are told nothing until the Google
                 export is imported back and the accounts are confirmed to exist.
@@ -937,13 +941,16 @@ window.saveResp=function(){ajax('RespondComplaint',{id:_rId,status:qs('rStatus')
             Allocation is automatic and collision-checked. If you would rather see the addresses and correct any before they
             go to Google, <a href="javascript:void(0)" onclick="expToWizard()" style="color:#174DA4;font-weight:700">review them first</a>.
         </div>
-        <label class="bx-chk"><input type="checkbox" id="eChangePw" checked /> <span>Set “Change Password at Next Sign-In” for new accounts.</span></label>
+        <label class="bx-chk"><input type="checkbox" id="eChangePw" checked /> <span>Set “Change Password at Next Sign-In” for new accounts. <b>Leave this on</b> &mdash; it is what makes a shared password safe.</span></label>
 
         <div class="bx-msg bx-msg--info" style="display:block">
             The sheet carries only what Google needs to create the account &mdash; <b>first name, last name, address,
             password, org unit</b> &mdash; plus the student number in Employee ID, which is how the file is matched back on
             import. Every other column is left blank on purpose: each one was a way for the upload to fail on data the
             university already holds.
+            <div style="margin-top:7px">Every new account is created with the house password <b>mru12345</b>, and Google is
+            told to force a change at first sign-in. Students who have already been handed credentials keep the password
+            they were given &mdash; theirs is not overwritten.</div>
         </div>
         <div class="bx-msg bx-msg--info" style="display:block;margin-top:10px">
             <b>What happens next.</b> Upload this file in the Google Admin console
@@ -1072,6 +1079,7 @@ window.wizOpen = function () {
     msg('wizMsg', '');
     qs('wizP4').innerHTML = '';
     copyFilterOptions('wCampus', 'fCampus'); copyFilterOptions('wProg', 'fProg');
+    qs('wPwMode').value = 'default'; qs('wPwFixed').value = ''; wizPwMode();
     wizPaint();
     show('bxWiz');
     wizEstimate();
@@ -1122,7 +1130,13 @@ function wizOptions() {
 }
 
 window.wizPwMode = function () {
-    qs('wPwFixed').style.display = qs('wPwMode').value === 'fixed' ? 'block' : 'none';
+    var m = qs('wPwMode').value;
+    qs('wPwFixed').style.display = m === 'fixed' ? 'block' : 'none';
+    qs('wPwHint').innerHTML = m === 'default'
+        ? 'Every account in this batch is created with <b>' + DEFAULT_PW + '</b> — the password the onboarding guide and the ICT desk already give out. Students change it the first time they sign in.'
+        : (m === 'fixed'
+            ? 'At least 8 characters — Google rejects anything shorter. Anyone handing out addresses has to be told this password separately.'
+            : 'A different password for each student. Nobody can hand one out from memory — every student needs their own slip, or the credentials sheet.');
 };
 
 // Step 1 shows how many students the scope actually covers, using the same search the
@@ -1174,7 +1188,7 @@ window.wizGo = function (dir) {
 
 function wizBuild() {
     var o = wizOptions();
-    if (o.pwMode === 'fixed' && (o.pwFixed || '').length < 8) { msg('wizMsg', 'A shared password must be at least 8 characters.', 'err'); return; }
+    if (o.pwMode === 'fixed' && (o.pwFixed || '').trim().length < 8) { msg('wizMsg', 'A shared password must be at least 8 characters — Google rejects anything shorter.', 'err'); return; }
     wz.busy = true; msg('wizMsg', '');
     var n = qs('wizNext'); n.disabled = true; n.innerHTML = '<span class="bx-spin"></span>Allocating addresses…';
     ajax('BatchPreview', { options: JSON.stringify(o) }, function (r) {

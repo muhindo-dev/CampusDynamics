@@ -189,9 +189,18 @@ public static class SemsAdmin
     public static string CreateEmail(string regno, string email, string tempPw, string notes)
     {
         var js = new JavaScriptSerializer();
-        regno = (regno ?? "").Trim(); email = (email ?? "").Trim();
-        if (regno == "" || email == "" || string.IsNullOrWhiteSpace(tempPw))
+        regno = (regno ?? "").Trim();
+        // Normalised the way the directory and the UNIQUE index store it, so "J.Doe26@MRU.ac.ug "
+        // and "jdoe26@mru.ac.ug" can never end up as two records for one mailbox.
+        email = (email ?? "").Trim().ToLowerInvariant();
+        tempPw = (tempPw ?? "").Trim();
+        if (regno == "" || email == "" || tempPw == "")
             return js.Serialize(new { success = false, message = "Email address and temporary password are required." });
+        if (!SemsBatch.IsValidEmail(email))
+            return js.Serialize(new { success = false, message = "\"" + email + "\" is not a valid address. Use letters, digits and dots only, starting with a letter." });
+        if (!SemsBatch.IsUsablePassword(tempPw, email))
+            return js.Serialize(new { success = false, message = "The temporary password must be at least " + SemsBatch.MinPasswordLength +
+                                                                " characters and cannot be the address itself — Google rejects both." });
         try
         {
             using (var c = new MySqlConnection(Conn))
@@ -541,7 +550,11 @@ public static class SemsAdmin
     public static string SetPassword(string regno, string tempPw)
     {
         var js = new JavaScriptSerializer(); regno = (regno ?? "").Trim();
-        if (regno == "" || string.IsNullOrWhiteSpace(tempPw)) return js.Serialize(new { success = false, message = "Student and a new temporary password are required." });
+        tempPw = (tempPw ?? "").Trim();
+        if (regno == "" || tempPw == "") return js.Serialize(new { success = false, message = "Student and a new temporary password are required." });
+        if (!SemsBatch.IsUsablePassword(tempPw, null))
+            return js.Serialize(new { success = false, message = "A temporary password must be at least " + SemsBatch.MinPasswordLength +
+                                                                " characters — Google rejects anything shorter." });
         try
         {
             using (var c = new MySqlConnection(Conn))

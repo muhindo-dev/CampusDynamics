@@ -188,9 +188,22 @@ public static partial class SemsBatch
         return n;
     }
 
-    /// <summary>Frees reservations left behind by drafts nobody committed.</summary>
+    /// <summary>
+    /// Frees reservations left behind by drafts nobody committed — and closes those drafts.
+    ///
+    /// Releasing the address while leaving the draft open was a hole: the draft could still be
+    /// committed a week later and would write an address the directory no longer knew was
+    /// taken, so the same name could reach two students. A draft and its reservations now
+    /// expire together.
+    /// </summary>
     private static void ReleaseStaleReservations(MySqlConnection c)
     {
+        using (var cmd = new MySqlCommand(
+            "UPDATE campus_dynamics_portal.sems_email_batches SET status='EXPIRED', completed_at=NOW(), " +
+            " notes=LEFT(CONCAT(IFNULL(notes,''),' — expired unapplied after ',@h,'h'),255) " +
+            "WHERE batch_type='CREATE' AND status='DRAFT' AND created_at < DATE_SUB(NOW(), INTERVAL @h HOUR)", c))
+        { cmd.Parameters.AddWithValue("@h", DraftExpiryHours); cmd.ExecuteNonQuery(); }
+
         using (var cmd = new MySqlCommand(
             "DELETE d FROM campus_dynamics_portal.sems_email_directory d " +
             "WHERE d.status='RESERVED' AND d.first_seen_at < DATE_SUB(NOW(), INTERVAL @h HOUR)", c))
@@ -273,14 +286,31 @@ public static partial class SemsBatch
     // =================================================================
     //  3. PASSWORDS
     // =================================================================
+
+    /// <summary>
+    /// The house default every new student account is created with.
+    ///
+    /// One password for the whole intake is deliberate: it is the thing the onboarding guide,
+    /// the notice board and the ICT desk can all say out loud, so a student who never receives
+    /// a slip of paper can still sign in. It is safe to say out loud because the Google sheet
+    /// sets "Change Password at Next Sign-In", so it survives exactly one login.
+    ///
+    /// Exactly 8 characters — Google's floor. It may not be shortened.
+    /// </summary>
+    public const string DefaultPassword = "mru12345";
+
+    /// <summary>Google refuses to create an account with a password shorter than this.</summary>
+    public const int MinPasswordLength = 8;
+
     private static readonly char[] PwLetters = "abcdefghjkmnpqrstuvwxyz".ToCharArray(); // no i/l/o
     private static readonly char[] PwDigits = "23456789".ToCharArray();                 // no 0/1
 
     /// <summary>
-    /// Google requires 8+ characters. Generated as Mru + letters + digits + a symbol so it is
-    /// speakable over a counter yet not guessable from the student's name.
+    /// A per-student password, for the rare batch an admin chooses to issue that way.
+    /// Mru + letters + digits + a symbol: speakable over a counter, not guessable from the
+    /// student's name. Not the default — <see cref="DefaultPassword"/> is.
     /// </summary>
-    public static string NewPassword()
+    public static string RandomPassword()
     {
         var bytes = new byte[16];
         using (var rng = new RNGCryptoServiceProvider()) rng.GetBytes(bytes);
@@ -289,6 +319,22 @@ public static partial class SemsBatch
         for (int i = 4; i < 7; i++) sb.Append(PwDigits[bytes[i] % PwDigits.Length]);
         sb.Append('#');
         return sb.ToString();                       // e.g. Mruqzkt472#  (11 chars)
+    }
+
+    /// <summary>
+    /// Would Google accept this as the password for <paramref name="email"/>? A blank one, one
+    /// under the floor, or the address used as its own password (a legacy import did exactly
+    /// that) has to be replaced before the sheet leaves the building.
+    /// </summary>
+    public static bool IsUsablePassword(string pw, string email)
+    {
+        pw = (pw ?? "").Trim();
+        if (pw.Length < MinPasswordLength) return false;
+        email = (email ?? "").Trim();
+        if (email.Length == 0) return true;
+        if (pw.Equals(email, StringComparison.OrdinalIgnoreCase)) return false;
+        int at = email.IndexOf('@');
+        return !(at > 0 && pw.Equals(email.Substring(0, at), StringComparison.OrdinalIgnoreCase));
     }
 
     // =================================================================

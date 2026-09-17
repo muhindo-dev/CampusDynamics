@@ -35,7 +35,8 @@ public static partial class SemsBatch
         public int OtherLen = 3;
         public string Domain = DefaultDomain;
         public string NameOrder = "OTHER_IS_SURNAME";   // or FIRST_IS_SURNAME
-        public string PwMode = "unique";                // unique | fixed
+        /// <summary>default = the house password every student gets; unique = one each; fixed = a shared one this batch only.</summary>
+        public string PwMode = "default";               // default | unique | fixed
         public string PwFixed = "";
         /// <summary>Must already exist in Google — "/" is the root and always does.</summary>
         public string OrgUnit = "/";
@@ -85,6 +86,18 @@ public static partial class SemsBatch
             foreach (var x in (System.Collections.IEnumerable)rr)
                 if (x != null && x.ToString().Trim() != "") o.Regnos.Add(x.ToString().Trim());
         return o;
+    }
+
+    /// <summary>
+    /// The password a row in this batch is issued with. The house default is the answer
+    /// unless the operator deliberately asked for something else, so an intake ends up with
+    /// one password the ICT desk can say out loud rather than 500 nobody can look up.
+    /// </summary>
+    private static string PasswordFor(Options o)
+    {
+        if (o.PwMode == "fixed") return (o.PwFixed ?? "").Trim();
+        if (o.PwMode == "unique") return RandomPassword();
+        return DefaultPassword;
     }
 
     // ── one candidate student, as the wizard shows them ───────────────
@@ -141,8 +154,9 @@ public static partial class SemsBatch
         try { o = ReadOptions(optionsJson); }
         catch (Exception ex) { return Fail("Could not read the wizard options: " + ex.Message); }
 
-        if (o.PwMode == "fixed" && (o.PwFixed ?? "").Trim().Length < 8)
-            return Fail("A shared password must be at least 8 characters — Google rejects anything shorter.");
+        if (o.PwMode == "fixed" && !IsUsablePassword(o.PwFixed, ""))
+            return Fail("A shared password must be at least " + MinPasswordLength +
+                        " characters — Google rejects anything shorter.");
         if (o.Domain.Length < 3 || !o.Domain.Contains("."))
             return Fail("The domain looks wrong: " + o.Domain);
 
@@ -202,8 +216,7 @@ public static partial class SemsBatch
                         }
                     }
 
-                    string pw = (severity == "ERROR" || severity == "SKIP") ? ""
-                              : (o.PwMode == "fixed" ? o.PwFixed.Trim() : NewPassword());
+                    string pw = (severity == "ERROR" || severity == "SKIP") ? "" : PasswordFor(o);
                     string rec = RecoveryEmailFor(cd, o.Domain);
                     string phone = ToE164(cd.Phone);
 
@@ -409,11 +422,21 @@ public static partial class SemsBatch
             using (var c = new MySqlConnection(Conn))
             {
                 c.Open();
-                int batchId = BatchIdOf(c, batchRef, "DRAFT");
-                if (batchId == 0) return Fail("That draft is no longer open.");
+                string batchStatus;
+                int batchId = BatchIdOf(c, batchRef, "DRAFT", out batchStatus);
+                if (batchId == 0) return Fail(DraftClosedMessage(batchRef, batchStatus));
 
                 string local = newEmail.Substring(0, newEmail.IndexOf('@'));
                 string domain = newEmail.Substring(newEmail.IndexOf('@') + 1);
+
+                // The address has to be on the batch's own domain. An off-domain one used to be
+                // accepted, reserved and then silently dropped from the Google sheet (which only
+                // ever carries its own domain) — the student ended up with nothing and no error.
+                string wantDomain = ReadOptions(ParamsOf(c, batchId)).Domain;
+                if (!string.Equals(domain, wantDomain, StringComparison.OrdinalIgnoreCase))
+                    return Fail("This batch creates addresses on @" + wantDomain + ". \"" + newEmail +
+                                "\" is on @" + domain + ", which a Google Workspace sheet for @" + wantDomain +
+                                " cannot carry.");
 
                 // Taken by anybody other than this student?
                 using (var q = new MySqlCommand(
@@ -468,15 +491,49 @@ public static partial class SemsBatch
 
     private static int BatchIdOf(MySqlConnection c, string batchRef, string requiredStatus)
     {
+        string ignored;
+        return BatchIdOf(c, batchRef, requiredStatus, out ignored);
+    }
+
+    /// <summary>
+    /// The batch id, or 0 — with <paramref name="actualStatus"/> set to what the batch really
+    /// is (or "" when there is no such reference), so a refusal can name the reason instead of
+    /// guessing at one.
+    /// </summary>
+    private static int BatchIdOf(MySqlConnection c, string batchRef, string requiredStatus, out string actualStatus)
+    {
+        actualStatus = "";
+        int id = 0;
         using (var q = new MySqlCommand(
-            "SELECT id FROM campus_dynamics_portal.sems_email_batches WHERE batch_ref=@r" +
-            (requiredStatus == null ? "" : " AND status=@s") + " LIMIT 1", c))
+            "SELECT id, status FROM campus_dynamics_portal.sems_email_batches WHERE batch_ref=@r LIMIT 1", c))
         {
             q.Parameters.AddWithValue("@r", batchRef);
-            if (requiredStatus != null) q.Parameters.AddWithValue("@s", requiredStatus);
-            var v = q.ExecuteScalar();
-            return v == null || v == DBNull.Value ? 0 : Convert.ToInt32(v);
+            using (var rd = q.ExecuteReader())
+                if (rd.Read()) { id = Convert.ToInt32(rd[0]); actualStatus = S(rd[1]); }
         }
+        if (id == 0) return 0;
+        return (requiredStatus == null || actualStatus == requiredStatus) ? id : 0;
+    }
+
+    /// <summary>Plain-English reason a draft is not open for editing or committing.</summary>
+    private static string DraftClosedMessage(string batchRef, string actualStatus)
+    {
+        switch (actualStatus)
+        {
+            case "": return "Draft " + batchRef + " no longer exists.";
+            case "EXPIRED": return "Draft " + batchRef + " expired after " + DraftExpiryHours +
+                                   " hours and released the addresses it was holding. Build it again.";
+            case "CANCELLED": return "Draft " + batchRef + " was cancelled.";
+            case "APPLIED":
+            case "PARTIAL": return "Draft " + batchRef + " has already been applied.";
+            default: return "Draft " + batchRef + " is " + actualStatus.ToLowerInvariant() + ", not open.";
+        }
+    }
+
+    private static string ParamsOf(MySqlConnection c, int batchId)
+    {
+        using (var q = new MySqlCommand("SELECT IFNULL(params_json,'') FROM campus_dynamics_portal.sems_email_batches WHERE id=@b", c))
+        { q.Parameters.AddWithValue("@b", batchId); return S(q.ExecuteScalar()); }
     }
 
     // =================================================================
@@ -499,13 +556,11 @@ public static partial class SemsBatch
             using (var c = new MySqlConnection(Conn))
             {
                 c.Open();
-                int batchId = BatchIdOf(c, batchRef, "DRAFT");
-                if (batchId == 0) return Fail("That draft has already been applied or cancelled.");
+                string batchStatus;
+                int batchId = BatchIdOf(c, batchRef, "DRAFT", out batchStatus);
+                if (batchId == 0) return Fail(DraftClosedMessage(batchRef, batchStatus));
 
-                string paramsJson = "";
-                using (var q = new MySqlCommand("SELECT IFNULL(params_json,'') FROM campus_dynamics_portal.sems_email_batches WHERE id=@b", c))
-                { q.Parameters.AddWithValue("@b", batchId); paramsJson = S(q.ExecuteScalar()); }
-                var o = ReadOptions(paramsJson);
+                var o = ReadOptions(ParamsOf(c, batchId));
 
                 var rows = new List<string[]>();     // regno, email, pw, payload
                 using (var q = new MySqlCommand(
@@ -534,6 +589,15 @@ public static partial class SemsBatch
                     if (email == "" || pw == "")
                     {
                         MarkItem(c, itemId, "SKIPPED", "no address or password on the draft row");
+                        skipped++; continue;
+                    }
+                    if (!email.EndsWith("@" + o.Domain, StringComparison.OrdinalIgnoreCase))
+                    {
+                        // A Google sheet only ever carries its own domain, so an off-domain
+                        // address would be reserved here and then never exported — the student
+                        // would sit waiting for an account nobody was ever asked to create.
+                        MarkItem(c, itemId, "SKIPPED", "not on @" + o.Domain + " — cannot be created by this sheet");
+                        ReleaseReservation(c, email);
                         skipped++; continue;
                     }
 
@@ -569,6 +633,23 @@ public static partial class SemsBatch
                             if (curEmail.Equals(email, StringComparison.OrdinalIgnoreCase))
                             { tx.Rollback(); MarkItem(c, itemId, "OK", "already applied"); ok++; continue; }
 
+                            // Is the address still ours? The UNIQUE index would catch a collision
+                            // anyway, but it reports a duplicate-key number; the directory knows
+                            // WHO holds it, and a draft can lose its reservation to the 24-hour
+                            // sweep, so the answer is worth asking for out loud.
+                            string heldBy;
+                            using (var q = new MySqlCommand(
+                                "SELECT IFNULL(owner_ref,'') FROM campus_dynamics_portal.sems_email_directory " +
+                                "WHERE email=@e AND status<>'RELEASED' LIMIT 1", c, tx))
+                            { q.Parameters.AddWithValue("@e", email); heldBy = S(q.ExecuteScalar()); }
+                            if (heldBy != "" && !heldBy.Equals(regno, StringComparison.OrdinalIgnoreCase))
+                            {
+                                tx.Rollback();
+                                MarkItem(c, itemId, "FAILED", email + " is now held by " + heldBy);
+                                failed++; failures.Add(new { regno, message = email + " is now held by " + heldBy });
+                                continue;
+                            }
+
                             // PROPOSED, not issued. The address and password are recorded and
                             // reserved so the Google sheet can carry them, but the student's
                             // stage does not move and they are told nothing: the mailbox does
@@ -591,15 +672,11 @@ public static partial class SemsBatch
                                 up.ExecuteNonQuery();
                             }
 
-                            using (var d = new MySqlCommand(
-                                "UPDATE campus_dynamics_portal.sems_email_directory SET status='ACTIVE', source='PIPELINE', " +
-                                "owner_type='STUDENT', owner_ref=@o, last_seen_at=NOW(), notes=@nt WHERE email=@e", c, tx))
-                            {
-                                d.Parameters.AddWithValue("@o", regno);
-                                d.Parameters.AddWithValue("@nt", "issued by batch " + batchRef);
-                                d.Parameters.AddWithValue("@e", email);
-                                d.ExecuteNonQuery();
-                            }
+                            // Upsert, not UPDATE: the reservation row may have been swept away
+                            // by the 24-hour expiry, and an UPDATE that matches nothing would
+                            // leave the directory blind to an address the pipeline has issued.
+                            UpsertDirectory(c, tx, email, "PIPELINE", "STUDENT", regno, "", "ACTIVE",
+                                            "issued by batch " + batchRef);
 
                             LogTx(c, tx, pipeId, regno, "propose_email", stage, stage,
                                   email + " proposed (batch " + batchRef + ") — awaiting Google");
@@ -1020,8 +1097,7 @@ public static partial class SemsBatch
                 string strat;
                 string house = Allocate(taken, other, first, year, otherLen, out strat);      // surname = othername
                 var alt = new List<string>();
-                if (house != "") alt.Add(house + "@" + DefaultDomain);
-                taken.Add(house);
+                if (house != "") { alt.Add(house + "@" + DefaultDomain); taken.Add(house); }
                 string swapped = Allocate(taken, first, other, year, otherLen, out strat);    // names the other way round
                 if (swapped != "" && swapped != house) alt.Add(swapped + "@" + DefaultDomain);
                 return Js().Serialize(new
@@ -1032,7 +1108,7 @@ public static partial class SemsBatch
                     given = first,
                     year,
                     suggestions = alt,
-                    password = NewPassword()
+                    password = DefaultPassword
                 });
             }
         }

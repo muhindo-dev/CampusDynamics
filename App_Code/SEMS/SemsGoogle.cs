@@ -125,11 +125,11 @@ public static partial class SemsBatch
         {
             c.Open();
             var regnos = new List<string>();
-            var fixedPasswords = new List<string[]>();
+            var pwFixups = new List<string>();      // regnos whose stored password the sheet has just set
             using (var cmd = new MySqlCommand(
                 "SELECT p.regno, IFNULL(p.student_name,'') nm, p.email_address, IFNULL(p.temp_password,'') pw, " +
                 "  IFNULL(p.google_org_unit,'') ou, IFNULL(p.recovery_email,'') rec, IFNULL(p.recovery_phone,'') ph, " +
-                "  p.admission_year, IFNULL(p.campus,'') campus, IFNULL(p.programme,'') prog, p.google_status, " +
+                "  p.admission_year, IFNULL(p.campus,'') campus, IFNULL(p.programme,'') prog, p.google_status, p.current_stage, " +
                 "  IFNULL(s.firstname,'') firstname, IFNULL(s.othername,'') othername, IFNULL(s.studPhone,'') sphone, " +
                 "  IFNULL(s.email,'') personal, IFNULL(s.home_dist,'') dist, IFNULL(pr.progname,'') progname " +
                 "FROM campus_dynamics_portal.sems_email_creations p " +
@@ -156,8 +156,6 @@ public static partial class SemsBatch
                         if (given.Trim() == "") given = surname.Trim() == "" ? "Student" : surname;
                         if (surname.Trim() == "") surname = given;
 
-                        string personal = S(rd["personal"]).ToLowerInvariant();
-                        if (personal.EndsWith("@" + DefaultDomain)) personal = "";
                         // Org unit must ALREADY EXIST in Google — it will not be created by an
                         // upload, and a missing one fails every row with OU_INVALID. "/" is the
                         // root org unit, which always exists.
@@ -170,14 +168,25 @@ public static partial class SemsBatch
                         string gst = S(rd["google_status"]);
                         bool inGoogle = (gst == "IN_GOOGLE" || gst == "SUSPENDED");
 
-                        // A new account needs a usable password. Some legacy rows have none, or
-                        // have the address itself stored as the password — Google would take
-                        // that literally. Issue a proper one and keep it, so the sheet and the
-                        // record agree about what the student was given.
-                        if (!inGoogle && (pw.Length < 8 || pw.Equals(email, StringComparison.OrdinalIgnoreCase)))
+                        // Every account this sheet CREATES carries the one house password, and
+                        // the sheet tells Google to force a change at first sign-in. A single
+                        // known password is what lets a student who never received a slip of
+                        // paper still sign in on day one.
+                        //
+                        // Only students still WAITING for an account are normalised. Anyone
+                        // already past Pending was handed credentials at some point — theirs may
+                        // already be live in Google under a result we never imported — so their
+                        // password is only replaced when it is one Google would reject outright
+                        // (blank, too short, or the address used as its own password: a legacy
+                        // import did exactly that).
+                        if (!inGoogle)
                         {
-                            pw = NewPassword();
-                            fixedPasswords.Add(new[] { regno, pw });
+                            bool waiting = S(rd["current_stage"]) == "PENDING_CREATION";
+                            if (waiting ? pw != DefaultPassword : !IsUsablePassword(pw, email))
+                            {
+                                pw = DefaultPassword;
+                                pwFixups.Add(regno);
+                            }
                         }
 
                         // Deliberately minimal: the five fields Google REQUIRES to create an
@@ -224,11 +233,25 @@ public static partial class SemsBatch
                     }
             }
 
-            // Persist any password the sheet had to invent, before the sheet leaves.
-            foreach (var f in fixedPasswords)
+            // Persist the passwords the sheet just set, BEFORE the sheet leaves, so the record
+            // and the file can never disagree about what a student was given. One statement per
+            // 400 students rather than one per student: they all carry the same value.
+            for (int i = 0; i < pwFixups.Count; i += 400)
+            {
+                var chunk = pwFixups.Skip(i).Take(400).ToList();
+                var names = new List<string>();
+                var chunkPs = new List<MySqlParameter>();
+                for (int k = 0; k < chunk.Count; k++)
+                { names.Add("@f" + k); chunkPs.Add(new MySqlParameter("@f" + k, chunk[k])); }
                 using (var up = new MySqlCommand(
-                    "UPDATE campus_dynamics_portal.sems_email_creations SET temp_password=@p, last_updated_at=NOW() WHERE regno=@r", c))
-                { up.Parameters.AddWithValue("@p", f[1]); up.Parameters.AddWithValue("@r", f[0]); up.ExecuteNonQuery(); }
+                    "UPDATE campus_dynamics_portal.sems_email_creations SET temp_password=@p, last_updated_at=NOW() " +
+                    "WHERE regno IN (" + string.Join(",", names.ToArray()) + ")", c))
+                {
+                    up.Parameters.AddWithValue("@p", DefaultPassword);
+                    foreach (var pp in chunkPs) up.Parameters.Add(pp);
+                    up.ExecuteNonQuery();
+                }
+            }
 
             if (rowCount > 0)
             {
