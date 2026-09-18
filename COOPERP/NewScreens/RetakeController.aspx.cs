@@ -344,6 +344,8 @@ public partial class COOPERP_NewScreens_RetakeController : System.Web.UI.Page
                         // period, marks and stage from the snapshot, and clear the RT flags.
                         if (courseRegId > 0)
                         {
+                            MarkAuditContext.Set(conn, tx, "RetakeController:rollback",
+                                "Retake rolled back - original marks restored from the snapshot");
                             using (var d = new MySqlCommand(
                                 @"UPDATE campus_dynamics_portal.acad_course_registration SET
                                     acad_year=@ay, semester=@sem, course_status='REGULAR', registration_type='NORMAL',

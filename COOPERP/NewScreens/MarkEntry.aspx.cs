@@ -616,7 +616,7 @@ public partial class COOPERP_NewScreens_MarkEntry : System.Web.UI.Page
             courseId, progId, acadyear, semester, studyYear, campusId, studSession, force);
 
         // F-04: Notify approvers (Dean/Admin) of the new submission
-        if (wr.Ok)
+        if (wr.Success)
         {
             string user = MarksAuthorizationService.GetCurrentUser();
             MarksNotificationService.NotifySubmission(courseId, progId, acadyear, semester, user);
@@ -1045,6 +1045,8 @@ public partial class COOPERP_NewScreens_MarkEntry : System.Web.UI.Page
             {
                 return; // No usable course column on target table
             }
+
+            MarkAuditContext.Set(conn, null, "MarkEntry:sheet", "Marks entered on the mark-entry sheet");
 
             string updateSql = @"
                 UPDATE campus_dynamics_portal.acad_course_registration

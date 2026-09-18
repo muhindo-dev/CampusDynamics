@@ -461,7 +461,7 @@ public partial class COOPERP_NewScreens_DeanApproval : System.Web.UI.Page
             courseId, progId, acadyear, semester, studyYear, campusId, studSession);
 
         // F-04: Notify the submitting teacher of approval
-        if (wr.Ok)
+        if (wr.Success)
         {
             string approver = MarksAuthorizationService.GetCurrentUser();
             MarksNotificationService.NotifyApproval(courseId, progId, acadyear, semester, approver);
@@ -510,7 +510,7 @@ public partial class COOPERP_NewScreens_DeanApproval : System.Web.UI.Page
             courseId, progId, acadyear, semester, studyYear, campusId, studSession, reason);
 
         // F-04: Notify the submitting teacher of rejection with reason
-        if (wr.Ok)
+        if (wr.Success)
         {
             string rejector = MarksAuthorizationService.GetCurrentUser();
             MarksNotificationService.NotifyRejection(courseId, progId, acadyear, semester, rejector, reason);
@@ -656,7 +656,7 @@ public partial class COOPERP_NewScreens_DeanApproval : System.Web.UI.Page
                 MarksWorkflowService.WorkflowResult wr = MarksWorkflowService.ApproveSheet(
                     courseId, progId, acadyear, semester, studyYear, campusId, studSession);
 
-                if (wr.Ok)
+                if (wr.Success)
                 {
                     approvedCount++;
                     MarksNotificationService.NotifyApproval(courseId, progId, acadyear, semester, approver);

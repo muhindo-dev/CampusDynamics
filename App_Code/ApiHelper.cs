@@ -276,11 +276,35 @@ public static class ApiHelper
     }
 
     /// <summary>Executes a non-query (INSERT/UPDATE/DELETE) against the PORTAL database.</summary>
+    /// <summary>
+    /// True when this statement touches the provisional coursework or exam marks, which the
+    /// database triggers audit. Checked so that only mark writes pay for the extra round trip.
+    /// </summary>
+    private static bool TouchesMarks(string sql)
+    {
+        if (string.IsNullOrEmpty(sql)) return false;
+        return sql.IndexOf("provisional_course_work_marks", StringComparison.OrdinalIgnoreCase) >= 0
+            || sql.IndexOf("provisional_exam_marks", StringComparison.OrdinalIgnoreCase) >= 0;
+    }
+
+    /// <summary>
+    /// Names the caller for the audit trigger, on the connection the write is about to use.
+    /// Without this the change is still recorded — the trigger cannot be bypassed — but it is
+    /// recorded as 'system', which is a fact about the audit rather than about the marks.
+    /// </summary>
+    private static void NameTheActor(MySqlConnection conn, string sql, string source)
+    {
+        if (!TouchesMarks(sql)) return;
+        try { MarkAuditContext.Set(conn, null, source, "Mark written through the staff API"); }
+        catch { }
+    }
+
     public static int ExecutePortal(string sql, params MySqlParameter[] parameters)
     {
         using (var conn = GetPortalConnection())
         {
             conn.Open();
+            NameTheActor(conn, sql, "API/v2:ExecutePortal");
             using (var cmd = new MySqlCommand(sql, conn))
             {
                 cmd.CommandTimeout = 60;
@@ -297,6 +321,7 @@ public static class ApiHelper
         using (var conn = GetPortalConnection())
         {
             conn.Open();
+            NameTheActor(conn, sql, "API/v2:ExecuteInsertPortal");
             using (var cmd = new MySqlCommand(sql, conn))
             {
                 cmd.CommandTimeout = 60;
@@ -379,6 +404,7 @@ public static class ApiHelper
         using (var conn = GetConnection())
         {
             conn.Open();
+            NameTheActor(conn, sql, "API/v2:Execute");
             using (var cmd = new MySqlCommand(sql, conn))
             {
                 cmd.CommandTimeout = 60;
@@ -398,6 +424,7 @@ public static class ApiHelper
         using (var conn = GetConnection())
         {
             conn.Open();
+            NameTheActor(conn, sql, "API/v2:ExecuteInsert");
             using (var cmd = new MySqlCommand(sql, conn))
             {
                 cmd.CommandTimeout = 60;

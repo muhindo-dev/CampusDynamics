@@ -634,6 +634,7 @@ public partial class COOPERP_NewScreens_ProvisionalMarksController : System.Web.
             using (MySqlConnection conn = new MySqlConnection(connStr))
             {
                 conn.Open();
+                MarkAuditContext.Set(conn, null, actor, "ProvisionalMarks:admin-override", reviewComment);
                 string sql = @"UPDATE campus_dynamics_portal.acad_course_registration
                                SET provisional_course_work_marks = @cw,
                                    provisional_exam_marks        = @exam,

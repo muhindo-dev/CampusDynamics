@@ -4608,6 +4608,10 @@ public partial class API_v2_staff : System.Web.UI.Page
                     try
                     {
                         int regTotal = proposedCw.Value + (proposedExam.HasValue ? proposedExam.Value : 0);
+                        // The one mark write in this file that does not go through ApiHelper,
+                        // so it names the actor for itself.
+                        MarkAuditContext.Set(conn, tx, "API/v2:missing-mark-mirror",
+                            "Missing-mark request mirrored onto the course registration");
                         using (var cmd = new MySqlCommand(@"
                             UPDATE campus_dynamics_portal.acad_course_registration
                             SET provisional_course_work_marks = @cw,
