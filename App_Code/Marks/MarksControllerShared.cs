@@ -1992,25 +1992,33 @@ public static class MarksControllerShared
         }
 
         // ── Step 1b: Refuse to publish one term's mark on top of another ─────────────
-        // acad_results is UNIQUE on (regno, courseid) alone — a student can hold only one
-        // result per course code for their whole time here. So when the same course is taken
-        // again in a later term, the UPSERT below lands on the EARLIER term's row: the older
-        // mark is overwritten and the term being published shows the student nothing. It has
-        // happened to 113 registrations since 2023/2024.
+        // acad_results is UNIQUE on (regno, courseid) alone: one result per course code per
+        // student, carrying the latest grade. That is deliberate — it is what lets a retake
+        // show the course once with its new mark (see RetakeService, which snapshots the
+        // original into acad_retake_registrations and republishes into this same row).
         //
-        // Until the key carries the term, refuse loudly. A blocked publish with an explanation
-        // is recoverable; a silent overwrite destroys one mark and hides another, and the
-        // student is the one who finds out.
+        // The hole is that a SECOND ORDINARY REGISTRATION of the same course gets the same
+        // treatment without any of the safeguards: no snapshot, no notice. The UPSERT lands on
+        // the earlier term's row, the older mark is overwritten with nowhere to recover it
+        // from, and the term being published shows the student nothing. 113 registrations
+        // since 2023/2024 are in that state, and only 9 of 246 repeats are flagged as retakes,
+        // so this is mostly ordinary repeat registrations, not the retake feature.
+        //
+        // Refuse loudly. A blocked publish with an explanation is recoverable; a silent
+        // overwrite destroys one mark and hides another, and the student is the one who
+        // finds out.
         if (priorScore.HasValue
             && (!string.Equals((effectiveAcad ?? "").Trim(), (requestedAcad ?? "").Trim(), StringComparison.OrdinalIgnoreCase)
                 || effectiveSemester != requestedSemester))
         {
             result.Message = string.Format(
                 "Cannot publish: {0} already has a published result for {1} under {2} semester {3} " +
-                "(score {4}{5}). Publishing this {6} semester {7} mark would overwrite it, and this " +
-                "term would still show nothing, because a result is stored once per course code. " +
-                "Correct the registration's academic year or semester, or unpublish the existing " +
-                "result first, then publish again.",
+                "(score {4}{5}). A result is stored once per course code, so publishing this {6} " +
+                "semester {7} mark would overwrite that one and this term would still show the " +
+                "student nothing. Choose the right route: if the student is genuinely sitting {1} " +
+                "again, register it through Retake Registration, which keeps the original mark and " +
+                "replaces the grade properly. If this registration is in the wrong term or is a " +
+                "duplicate, fix it in the Course Correction Centre. Only then publish.",
                 regno, courseId,
                 string.IsNullOrEmpty(effectiveAcad) ? "?" : effectiveAcad, effectiveSemester,
                 priorScore.Value, string.IsNullOrEmpty(priorGrade) ? "" : " / " + priorGrade,

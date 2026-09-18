@@ -22,6 +22,13 @@ USE campus_dynamics;
 --  No academic year. No semester. One result per course code per student for
 --  their entire time at the university.
 --
+--  That is DELIBERATE, and widening it would be wrong. It is what lets a retake
+--  show the course once carrying its new grade: RetakeService snapshots the
+--  original marks into acad_retake_registrations, blanks the row, and the later
+--  publish refills the SAME result row. Add acad + semester to the key and every
+--  repeated course starts printing twice on the transcript and counting twice in
+--  the CGPA, which is summed over acad_results.
+--
 --  So when a student takes the same course code again — a repeat, a carry-over,
 --  a retake, or simply a second registration — the publish UPSERT lands on the
 --  EARLIER term's row:
@@ -31,10 +38,17 @@ USE campus_dynamics;
 --
 --  This is 113 of the 142 invisible marks since 2023/2024 — about 80%.
 --
---  Guarded in code on 2026-09-18: ProcessProvisionalAction now refuses to
---  publish one term's mark on top of another's and says exactly why. That stops
---  new losses; it does not repair the old ones, and it does not let a repeated
---  course be published at all until the key below is widened.
+--  The hole is that a SECOND ORDINARY REGISTRATION of the same course gets the
+--  retake treatment with none of the safeguards: no snapshot, no notice. Only 9
+--  of 246 repeat registrations are flagged RETAKE — the other 237 are ordinary
+--  repeats, carry-overs and mis-registrations that the results table has no way
+--  to represent.
+--
+--  Guarded in code on 2026-09-18: ProcessProvisionalAction refuses to publish one
+--  term's mark on top of another's and names the route out — Retake Registration
+--  if the student really is sitting it again, the Course Correction Centre if the
+--  registration is in the wrong term or is a duplicate. 125 registrations are
+--  blocked by it; 643,241 publish exactly as before.
 
 -- Every student whose marks are colliding on this key:
 SELECT cr.regno, cr.courseID,
@@ -56,7 +70,14 @@ ORDER BY cr.regno;
 -- ┌──────────────────────────────────────────────────────────────────────────┐
 -- │ THE HEADLINE CHECK — marks the student cannot see                        │
 -- └──────────────────────────────────────────────────────────────────────────┘
---  Run this regularly. Anything it returns is a student who will complain.
+--  This is now a screen: COOPERP/NewScreens/MissingMarks.aspx, under
+--  Academics -> Exam in the sidebar. It classifies every gap and says what closes
+--  it, so nobody has to run SQL to find out which students will complain.
+--  The query below is the same reconciliation, kept here for ad-hoc use.
+--
+--  Supporting index added 2026-09-18:
+--    ALTER TABLE campus_dynamics_portal.acad_course_registration
+--      ADD INDEX idx_acr_pubstatus_term (provisional_marks_status, acad_year, semester);
 
 SELECT cr.regno, cr.courseID, cr.acad_year, cr.semester, cr.prog_id,
        cr.provisional_course_work_marks AS cw,
@@ -81,12 +102,23 @@ ORDER BY cr.provisional_published_date DESC;
 
 
 -- ┌──────────────────────────────────────────────────────────────────────────┐
--- │ CAUSE 2 — marks deleted and never put back                               │
+-- │ CAUSE 2 — a mark was removed on purpose and nobody closed the loop        │
 -- └──────────────────────────────────────────────────────────────────────────┘
---  Every one of these is recoverable: the audit kept the score, the grade and
---  the term. The largest source is the course-deletion approval, which removes
---  the published result along with the registration; the rest are unpublishes
---  that were never followed by a publish.
+--  CORRECTION to the first draft of this file, which claimed 236 marks had been
+--  deleted and were recoverable. They had not been lost. Of those 236, 221 had
+--  their course registration deleted as well and 15 did not — so the deletions
+--  were consistent with the record, which is what a course deletion is supposed
+--  to do. Restoring them would have been wrong.
+--
+--  What IS open is the handful where the registration is still there and the
+--  mark never came back:
+--    * a MARKS_RESET ("wrong marks") that nobody re-entered — SWA3208B, eight
+--      students holding 62 to 78, cleared 2026-08-17 and still blank a month on;
+--    * an unpublish where the mark was then revised and never re-published —
+--      three students, one of whom went from 33 to 66.
+--  Nothing here can be repaired by a script: the marks have to be entered again.
+--  What matters is that somebody sees them, which is what MissingMarks.aspx is
+--  for (class D).
 
 SELECT a.regno, a.course_id, a.acad_year, a.semester,
        a.old_total, a.old_grade, a.performed_by, a.source_page, a.created_at
@@ -96,7 +128,9 @@ WHERE a.action_type = 'DELETE'
   AND NOT EXISTS (SELECT 1 FROM acad_results r
                    WHERE r.regno = a.regno AND r.courseid = a.course_id)
 ORDER BY a.created_at DESC;
--- 2026-09-18: 236 marks, 109 students, all with enough detail to restore.
+-- 2026-09-18: 236 rows, of which 221 also lost their registration (correct) and
+-- 15 did not (open). Join to acad_course_registration to tell them apart, which
+-- is what the Missing Marks screen does.
 
 
 -- ┌──────────────────────────────────────────────────────────────────────────┐
@@ -152,33 +186,26 @@ GROUP BY source_page, action_type ORDER BY n DESC;
 
 
 -- ============================================================================
---  THE PERMANENT FIX — needs a decision before it is applied
+--  WHAT ACTUALLY PREVENTS THIS
 -- ============================================================================
 --
---  The key has to carry the term:
+--  1. The publish guard, in place since 2026-09-18. A mark can no longer be
+--     written silently on top of another term's.
 --
---      ALTER TABLE acad_results DROP INDEX Index_UNQ,
---                               ADD UNIQUE INDEX Index_UNQ (regno, courseid, acad, semester);
+--  2. MissingMarks.aspx. Every class above became visible only when a student
+--     complained; now it is a standing list with a named remedy per row.
 --
---  That is the only thing that lets a student hold a mark for the same course
---  in two terms, and without it the new publish guard simply refuses those
---  publishes rather than corrupting them.
+--  3. Attribution. A write that does not set mark_audit_context first is
+--     recorded as "system", and about a tenth of the trail is. Each remaining
+--     offender needs one line before the statement:
+--         MarkAuditContext.Set(conn, tx, "Screen:what-it-did", "why");
+--     AcademicResults.aspx was the worst of them and is done.
 --
---  It cannot just be run, because GPA and CGPA are computed as
---      SUM(gradept * CreditUnits) / SUM(CreditUnits)
---  over acad_results (MarksControllerShared, ~line 2275). A second row for a
---  repeated course would be counted a second time, changing the CGPA of every
---  affected student. So the academic policy has to be settled first:
---
---      Does a repeat REPLACE the earlier grade, or does it stand alongside it?
---
---  If it replaces  -> widen the key, then make the GPA queries count only the
---                     latest attempt per course (acad_results.is_retake already
---                     exists for this and is set on 193 rows).
---  If it stands    -> widen the key and leave the GPA as it is; CGPAs will move
---                     for the 86 students concerned, and that movement is the
---                     correct figure rather than the current one.
---
---  Either way the transcript templates need checking: today they can only ever
---  print one line per course code.
+--  DO NOT widen Index_UNQ to (regno, courseid, acad, semester). It looks like the
+--  fix and it is not: the single row per course is what the retake design depends
+--  on, and CGPA is summed over this table, so a second row for a repeated course
+--  would both print twice on the transcript and count twice in the award.
+--  If the university ever rules that a repeat should stand alongside the original
+--  rather than replace it, that is a change to the transcript and GPA rules first,
+--  and only then to this key.
 -- ============================================================================
