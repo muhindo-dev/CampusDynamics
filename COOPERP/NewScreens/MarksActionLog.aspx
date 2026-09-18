@@ -1,265 +1,454 @@
-<%@ Page Language="C#" MasterPageFile="~/COOPERP/NewScreens/SidebarMaster.master" AutoEventWireup="true" CodeFile="MarksActionLog.aspx.cs" Inherits="COOPERP_NewScreens_MarksActionLog" Title="Admin Action Log" %>
+<%@ Page Language="C#" MasterPageFile="~/COOPERP/NewScreens/SidebarMaster.master" AutoEventWireup="true" CodeFile="MarksActionLog.aspx.cs" Inherits="COOPERP_NewScreens_MarksActionLog" Title="Admin Action Log - Campus Dynamics" %>
 
 <asp:Content ID="HeadContent" ContentPlaceHolderID="HeadContent" runat="server">
 <style>
-.mal-wrap{padding:16px;max-width:1500px;margin:0 auto;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;color:#1a1a2e;}
-.mal-hd{display:flex;align-items:flex-start;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-bottom:14px;}
-.mal-hd h1{margin:0;font-size:17px;font-weight:800;color:#05275C;}
-.mal-hd p{margin:3px 0 0;font-size:12px;color:#64748b;}
-.mal-win{display:flex;align-items:center;gap:6px;font-size:11px;color:#475569;white-space:nowrap;}
-.mal-sel,.mal-inp{padding:7px 9px;font-size:12px;border:1px solid #cdd5e1;background:#fff;border-radius:0;color:#1a1a2e;}
-.mal-kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px;margin-bottom:12px;}
-.mal-kpi{border:1px solid #e0e5ed;background:#fff;padding:12px 14px;border-left:3px solid #05275C;}
-.mal-kpi .v{font-size:22px;font-weight:800;color:#05275C;line-height:1;}
-.mal-kpi .l{font-size:10px;text-transform:uppercase;letter-spacing:.4px;color:#64748b;margin-top:5px;}
-.mal-kpi--warn{border-left-color:#dc3545;} .mal-kpi--warn .v{color:#b42318;}
-.mal-kpi--ok{border-left-color:#16a34a;}
-.mal-grid{display:grid;grid-template-columns:1fr 260px;gap:12px;align-items:start;}
-@media(max-width:1050px){.mal-grid{grid-template-columns:1fr;}}
-.mal-card{background:#fff;border:1px solid #e0e5ed;}
-.mal-toolbar{display:flex;gap:8px;flex-wrap:wrap;align-items:center;padding:10px 12px;border-bottom:1px solid #e0e5ed;}
-.mal-search{flex:1 1 200px;min-width:150px;}
-.mal-tw{overflow-x:auto;max-height:600px;overflow-y:auto;}
-.mal-tbl{width:100%;border-collapse:collapse;font-size:11px;min-width:820px;}
-.mal-tbl th{position:sticky;top:0;background:#05275C;color:#fff;text-align:left;padding:8px 10px;font-size:10px;font-weight:700;white-space:nowrap;text-transform:uppercase;letter-spacing:.3px;}
-.mal-tbl td{padding:6px 10px;border-bottom:1px solid #eef2f7;vertical-align:middle;}
-.mal-tbl tbody tr:nth-child(even){background:#f6f8fb;}
-.mal-row{cursor:pointer;} .mal-row:hover{background:#e8f0fd !important;}
-.mal-when{white-space:nowrap;color:#475569;}
-.mal-user{font-weight:600;color:#05275C;}
-.mal-act{font-family:Consolas,monospace;font-size:10px;color:#174DA4;font-weight:700;}
-.mal-b{display:inline-block;padding:1px 7px;font-size:9px;font-weight:700;border-radius:2px;text-transform:uppercase;background:#eef1f6;color:#64748b;}
-.mal-b--success{background:#e7f6ec;color:#15803d;}
-.mal-b--error{background:#fdeaea;color:#b91c1c;}
-.mal-b--auth_fail{background:#fdeaea;color:#b91c1c;}
-.mal-b--validation_fail{background:#fef6e7;color:#b45309;}
-.mal-b--locked{background:#eef1f6;color:#6b7280;}
-.mal-b--idle_timeout{background:#eef2ff;color:#4338ca;}
-.mal-side .mal-card{margin-bottom:12px;padding:12px;}
-.mal-side h3{margin:0 0 8px;font-size:11px;font-weight:800;text-transform:uppercase;letter-spacing:.4px;color:#05275C;}
-.mal-mini{display:flex;align-items:center;justify-content:space-between;font-size:11px;padding:4px 0;border-bottom:1px solid #f0f2f6;}
-.mal-mini:last-child{border-bottom:none;}
-.mal-mini b{color:#05275C;}
-.mal-empty{text-align:center;color:#94a3b8;padding:26px;font-size:12px;}
-.mal-ovl{display:none;position:fixed;inset:0;background:rgba(10,20,40,.5);z-index:10000;align-items:center;justify-content:center;padding:20px;}
-.mal-ovl.open{display:flex;}
-.mal-modal{background:#fff;width:560px;max-width:96vw;max-height:88vh;display:flex;flex-direction:column;box-shadow:0 16px 48px rgba(0,0,0,.28);}
-.mal-modal__hd{display:flex;align-items:center;justify-content:space-between;padding:12px 16px;border-bottom:1px solid #e0e5ed;}
-.mal-modal__hd h3{margin:0;font-size:14px;color:#05275C;}
-.mal-modal__x{background:none;border:none;font-size:22px;line-height:1;color:#888;cursor:pointer;}
-.mal-modal__bd{padding:14px 16px;overflow-y:auto;}
-.mal-kv{display:grid;grid-template-columns:120px 1fr;gap:5px 10px;font-size:12px;margin-bottom:12px;}
-.mal-kv .k{color:#64748b;} .mal-kv .v{color:#1a1a2e;font-weight:500;word-break:break-word;}
-.mal-ctx{background:#0f172a;color:#a8e6cf;font-family:Consolas,monospace;font-size:11px;padding:10px 12px;white-space:pre-wrap;word-break:break-word;max-height:260px;overflow:auto;}
-.mal-btn{padding:7px 12px;font-size:12px;font-weight:600;border:1px solid #cdd5e1;background:#fff;color:#05275C;cursor:pointer;}
-.mal-btn:hover{background:#eef4fd;}
-/* action label (human) + raw code */
-.mal-actwrap{display:flex;flex-direction:column;line-height:1.25;}
-.mal-actlbl{font-weight:700;color:#05275C;font-size:11px;}
-.mal-actcode{font-family:Consolas,monospace;font-size:9px;color:#94a3b8;}
-.mal-sum{color:#475569;font-size:10.5px;max-width:320px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
-.mal-sum b{color:#05275C;font-weight:600;}
-.mal-dur{display:inline-block;padding:1px 6px;border-radius:2px;font-size:10px;font-weight:600;background:#eef1f6;color:#64748b;}
-.mal-dur--slow{background:#fef6e7;color:#b45309;}
-/* KPI accent for avg */
-.mal-kpi--info{border-left-color:#0277bd;} .mal-kpi--info .v{color:#0277bd;}
-/* modal — richer */
-.mal-modal{width:600px;}
-.mal-msec{margin-bottom:14px;}
-.mal-msec__h{font-size:10px;text-transform:uppercase;letter-spacing:.5px;color:#94a3b8;font-weight:700;margin:0 0 6px;display:flex;align-items:center;gap:6px;}
-.mal-msec__h::after{content:'';flex:1;height:1px;background:#eef2f7;}
-.mal-mhero{display:flex;align-items:center;gap:10px;padding:10px 12px;background:#f6f8fb;border:1px solid #eef2f7;border-left:3px solid #05275C;margin-bottom:14px;}
-.mal-mhero__ic{width:34px;height:34px;border-radius:7px;background:#05275C;color:#fff;display:flex;align-items:center;justify-content:center;font-size:15px;flex-shrink:0;}
-.mal-mhero__t{font-size:14px;font-weight:800;color:#05275C;line-height:1.2;}
-.mal-mhero__s{font-size:10.5px;color:#64748b;margin-top:1px;}
-.mal-ctxtbl{width:100%;border-collapse:collapse;font-size:11.5px;}
-.mal-ctxtbl td{padding:5px 8px;border-bottom:1px solid #f0f2f6;vertical-align:top;word-break:break-word;}
-.mal-ctxtbl td.k{color:#64748b;width:130px;white-space:nowrap;font-weight:600;}
-.mal-ctxtbl td.v{color:#1a1a2e;}
-.mal-raw-toggle{font-size:10px;color:#174DA4;cursor:pointer;font-weight:600;user-select:none;}
-.mal-raw-toggle:hover{text-decoration:underline;}
-.mal-none{color:#94a3b8;font-style:italic;font-size:11px;}
+/* ===================================================================
+   Admin Action Log  --  house design system (navy, flat, compact).
+   Prefix: mal-      Spec: NewScreens/DESIGN_SYSTEM.md
+   =================================================================== */
+
+/* --- page header ------------------------------------------------- */
+.mal-head{display:flex;align-items:center;justify-content:space-between;gap:16px;flex-wrap:wrap;
+          background:#05275C;color:#fff;padding:14px 20px;border-bottom:3px solid #041d45}
+.mal-head__l{display:flex;align-items:center;gap:12px;min-width:0}
+.mal-head__ic{width:40px;height:40px;background:rgba(255,255,255,.12);border-radius:4px;
+              display:flex;align-items:center;justify-content:center;flex-shrink:0}
+.mal-head__t{font-size:16px;font-weight:700;line-height:1.2}
+.mal-head__s{font-size:12px;opacity:.75;margin-top:2px;max-width:640px;line-height:1.45}
+.mal-head__r{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+
+.mal-body{padding:14px 20px 24px}
+
+/* --- notices ----------------------------------------------------- */
+.mal-note{padding:10px 14px;font-size:11.5px;line-height:1.55;margin-bottom:12px;border-radius:2px}
+.mal-note--info{background:#eef3fb;border:1px solid #cfdcf2;color:#173f79}
+.mal-note--warn{background:#fff8e1;border:1px solid #f4dba6;color:#8a5a08}
+.mal-note--error{background:#fef5f5;border:1px solid #f5c6cb;color:#912018}
+.mal-note b{font-weight:600}
+
+/* --- KPI cards --------------------------------------------------- */
+.mal-stats{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px;margin-bottom:14px}
+.mal-stat{background:#fff;border:1px solid #e0e5ed;border-radius:4px;padding:13px 15px;min-width:0}
+.mal-stat__label{font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:.4px;color:#888;margin-bottom:5px}
+.mal-stat__value{font-size:22px;font-weight:700;color:#05275C;line-height:1;font-variant-numeric:tabular-nums}
+.mal-stat__value--warn{color:#b45309}
+.mal-stat__sub{font-size:11px;color:#888;margin-top:5px;line-height:1.4}
+
+/* --- quick ranges ------------------------------------------------ */
+.mal-quick{display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-bottom:12px}
+.mal-quick__label{font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:.4px;color:#888;margin-right:2px}
+.mal-pill{padding:5px 11px;font-size:11px;font-weight:500;background:#fff;border:1px solid #e0e5ed;
+          color:#555;border-radius:0;cursor:pointer;text-decoration:none;font-family:inherit}
+.mal-pill:hover{background:#f5f7fa;color:#05275C;text-decoration:none}
+.mal-pill--active{background:#05275C;color:#fff;border-color:#05275C}
+.mal-pill--active:hover{background:#041d45;color:#fff}
+
+/* --- filter bar -------------------------------------------------- */
+.mal-filters{display:flex;flex-wrap:wrap;align-items:flex-end;gap:10px;background:#fff;
+             padding:12px 14px;border:1px solid #e0e5ed;border-radius:4px;margin-bottom:12px}
+.mal-fg{display:flex;flex-direction:column;gap:4px;min-width:0}
+.mal-fg__label{font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:.4px;color:#555}
+.mal-fg input,.mal-fg select{padding:6px 8px;border:1px solid #cdd3de;border-radius:0;font-size:12px;
+                             font-family:inherit;color:#1a1a2e;background:#fff;min-width:130px;max-width:100%;box-sizing:border-box}
+.mal-fg input:focus,.mal-fg select:focus{outline:none;border-color:#174DA4}
+.mal-fg--grow{flex:1 1 200px}
+.mal-fg--grow input{width:100%;min-width:0}
+.mal-filters__end{display:flex;gap:8px;align-items:flex-end;margin-left:auto}
+
+/* --- buttons ----------------------------------------------------- */
+.mal-btn{padding:7px 14px;font-size:12px;font-weight:500;border:1px solid transparent;border-radius:0;
+         cursor:pointer;display:inline-flex;align-items:center;gap:5px;font-family:inherit;
+         text-decoration:none;white-space:nowrap;line-height:1.4}
+.mal-btn:hover{text-decoration:none}
+.mal-btn--primary{background:#05275C;color:#fff;border-color:#05275C}
+.mal-btn--primary:hover{background:#041d45;color:#fff}
+.mal-btn--ghost{background:#fff;color:#333;border-color:#cdd3de}
+.mal-btn--ghost:hover{background:#f5f7fa;color:#333}
+.mal-btn--inv{background:transparent;color:#fff;border-color:rgba(255,255,255,.5)}
+.mal-btn--inv:hover{background:rgba(255,255,255,.12);color:#fff}
+.mal-btn--sm{padding:4px 10px;font-size:11px}
+
+/* --- card + table ------------------------------------------------ */
+.mal-card{background:#fff;border:1px solid #e0e5ed;border-radius:4px;overflow:hidden;margin-bottom:14px}
+.mal-card__hdr{display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;
+               padding:11px 14px;border-bottom:1px solid #e0e5ed;background:#f5f7fa}
+.mal-card__title{font-size:13px;font-weight:600;color:#1a1a2e}
+.mal-card__meta{font-size:11px;color:#888}
+.mal-tablewrap{width:100%;overflow-x:auto;-webkit-overflow-scrolling:touch}
+.mal-table{width:100%;border-collapse:collapse;font-size:11px}
+.mal-table thead tr{background:#f5f7fa}
+.mal-table th{padding:8px 12px;text-align:left;font-size:10px;font-weight:600;text-transform:uppercase;
+              letter-spacing:.4px;color:#555;border-bottom:2px solid #e0e5ed;white-space:nowrap}
+.mal-table td{padding:8px 12px;border-bottom:1px solid #e0e5ed;color:#1a1a2e;vertical-align:top}
+.mal-table tbody tr:hover{background:#f9fafc}
+.mal-table tbody tr:last-child td{border-bottom:none}
+.mal-empty{text-align:center;padding:44px 20px;color:#888;font-size:12px}
+.mal-empty b{display:block;font-size:13px;color:#555;margin-bottom:4px;font-weight:600}
+
+/* --- cell pieces ------------------------------------------------- */
+.mal-when{white-space:nowrap}
+.mal-when__d{font-weight:600;color:#1a1a2e}
+.mal-when__t{color:#888;font-size:10px;display:block;margin-top:1px}
+.mal-who{font-weight:600;color:#05275C;word-break:break-word}
+.mal-who__sub{display:block;color:#888;font-weight:400;font-size:10px;margin-top:1px}
+.mal-what{font-weight:600;color:#1a1a2e;line-height:1.35}
+.mal-what__sub{display:block;color:#888;font-weight:400;font-size:10px;margin-top:2px;line-height:1.4}
+.mal-code{font-family:Consolas,"Courier New",monospace;font-size:10.5px;font-weight:600;
+          background:rgba(23,77,164,.07);border:1px solid rgba(23,77,164,.15);color:#174DA4;padding:1px 5px;
+          border-radius:0;white-space:nowrap;display:inline-block}
+.mal-sub{display:block;color:#888;font-size:10px;margin-top:2px;line-height:1.4}
+.mal-nil{color:#c7cdd6}
+.mal-many{font-weight:600;color:#05275C}
+
+/* --- badges ------------------------------------------------------ */
+.mal-badge{display:inline-block;font-size:9.5px;font-weight:600;padding:2px 6px;border-radius:0;
+           text-transform:uppercase;letter-spacing:.3px;white-space:nowrap}
+.mal-badge--navy{background:rgba(5,39,92,.08);color:#05275C;border:1px solid rgba(5,39,92,.18)}
+.mal-badge--blue{background:#e8f0fc;color:#174DA4;border:1px solid #c7d8f3}
+.mal-badge--green{background:#e6f4ea;color:#155724;border:1px solid #c3e6cb}
+.mal-badge--amber{background:#fff8e1;color:#b45309;border:1px solid #f4dba6}
+.mal-badge--red{background:#fef5f5;color:#912018;border:1px solid #f5c6cb}
+.mal-badge--grey{background:#f1f3f7;color:#667085;border:1px solid #e0e5ed}
+.mal-dur{font-size:10px;color:#a0a8b4;font-variant-numeric:tabular-nums}
+.mal-dur--slow{color:#b45309;font-weight:600}
+
+/* --- legend ------------------------------------------------------ */
+.mal-legend{display:flex;gap:18px;flex-wrap:wrap;align-items:center;padding:9px 14px;
+            background:#f9fafc;border-top:1px solid #e0e5ed;font-size:10.5px;color:#888;line-height:1.5}
+.mal-legend__g{display:inline-flex;align-items:center;gap:5px;flex-wrap:wrap}
+.mal-legend__g>b{color:#555;font-weight:600}
+
+/* --- pager ------------------------------------------------------- */
+.mal-pager{display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;
+           padding:10px 14px;border-top:1px solid #e0e5ed;background:#f9fafc}
+.mal-pager__info{font-size:11px;color:#888}
+.mal-pager__btns{display:flex;gap:4px;flex-wrap:wrap}
+.mal-pg{padding:5px 10px;font-size:11px;border:1px solid #cdd3de;background:#fff;color:#333;
+        text-decoration:none;border-radius:0;line-height:1.4}
+.mal-pg:hover{background:#f5f7fa;color:#05275C;text-decoration:none}
+.mal-pg--active{background:#05275C;color:#fff;border-color:#05275C;font-weight:600}
+.mal-pg--active:hover{background:#05275C;color:#fff}
+.mal-pg--off{color:#c7cdd6;pointer-events:none;background:#f9fafc}
+
+/* --- detail modal ------------------------------------------------ */
+.mal-ov{display:none;position:fixed;top:0;right:0;bottom:0;left:0;background:rgba(0,0,0,.45);
+        z-index:1000;align-items:center;justify-content:center;padding:12px}
+.mal-ov.is-open{display:flex}
+.mal-modal{background:#fff;border-radius:2px;width:700px;max-width:100%;max-height:92vh;
+           overflow-y:auto;box-shadow:0 12px 40px rgba(0,0,0,.18)}
+.mal-modal__hdr{background:#05275C;color:#fff;padding:13px 18px;display:flex;align-items:center;
+                justify-content:space-between;gap:10px;position:sticky;top:0;z-index:1}
+.mal-modal__title{font-size:13px;font-weight:600}
+.mal-modal__close{background:none;border:none;color:#fff;font-size:22px;cursor:pointer;line-height:1;padding:0;opacity:.8}
+.mal-modal__close:hover{opacity:1}
+.mal-modal__body{padding:16px 18px;min-height:90px}
+.mal-modal__foot{padding:12px 18px;border-top:1px solid #e0e5ed;display:flex;justify-content:flex-end;gap:8px;background:#f9fafc}
+.mal-sect{font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:.4px;color:#888;
+          margin:0 0 7px;padding-bottom:5px;border-bottom:1px solid #e0e5ed}
+.mal-sect--top{margin-top:0}
+.mal-dl{display:grid;grid-template-columns:140px minmax(0,1fr);gap:6px 12px;font-size:11.5px;margin-bottom:18px}
+.mal-dl dt{color:#888;font-weight:500}
+.mal-dl dd{margin:0;color:#1a1a2e;word-break:break-word}
+.mal-lead{font-size:13px;font-weight:600;color:#05275C;line-height:1.35;margin-bottom:3px}
+.mal-leadsub{font-size:11px;color:#888;margin-bottom:16px}
+.mal-rtbl{width:100%;border-collapse:collapse;font-size:11px;margin-bottom:18px}
+.mal-rtbl th{text-align:left;font-size:9.5px;text-transform:uppercase;letter-spacing:.4px;color:#888;
+             font-weight:600;padding:5px 8px;border-bottom:1px solid #e0e5ed;white-space:nowrap}
+.mal-rtbl td{padding:6px 8px;border-bottom:1px solid #f0f2f5;vertical-align:top}
+.mal-rtbl tr:last-child td{border-bottom:none}
+.mal-raw{font-family:Consolas,"Courier New",monospace;font-size:10.5px;background:#f5f7fa;
+         border:1px solid #e0e5ed;padding:10px;white-space:pre-wrap;word-break:break-word;color:#475569;margin-bottom:18px}
+.mal-toggle{font-size:10px;color:#174DA4;cursor:pointer;font-weight:600;float:right;text-transform:none;letter-spacing:0}
+.mal-toggle:hover{text-decoration:underline}
+
+/* --- responsive -------------------------------------------------- */
+@media(max-width:1100px){.mal-stats{grid-template-columns:repeat(2,minmax(0,1fr))}}
+@media(max-width:760px){
+    .mal-head{padding:12px 14px}
+    .mal-head__ic{display:none}
+    .mal-body{padding:12px 14px 20px}
+    .mal-stats{grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}
+    .mal-stat__value{font-size:19px}
+    .mal-fg{flex:1 1 140px}
+    .mal-fg input,.mal-fg select{min-width:0;width:100%}
+    .mal-filters__end{margin-left:0;width:100%}
+    .mal-filters__end .mal-btn{flex:1 1 auto;justify-content:center}
+    .mal-dl{grid-template-columns:1fr;gap:2px 0}
+    .mal-dl dd{margin-bottom:8px}
+}
+@media print{
+    .mal-filters,.mal-quick,.mal-pager,.mal-head__r,.mal-ov{display:none!important}
+    .mal-head{background:#05275C!important;-webkit-print-color-adjust:exact;print-color-adjust:exact}
+    .mal-card{border:none}
+}
 </style>
 </asp:Content>
 
 <asp:Content ID="MainContent" ContentPlaceHolderID="ContentPlaceHolder1" runat="server">
-<div class="mal-wrap">
-    <div class="mal-hd">
+
+<div class="mal-head">
+    <div class="mal-head__l">
+        <div class="mal-head__ic">
+            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M9 5H7a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2h-2"/>
+                <rect x="9" y="3" width="6" height="4" rx="1"/><path d="M9 12h6M9 16h4"/>
+            </svg>
+        </div>
         <div>
-            <h1>Admin Action Log</h1>
-            <p>Independent trace of every admin / manager action across the marks module &mdash; who did what, when, from where, and the outcome.</p>
-        </div>
-        <div class="mal-win"><label>Window</label>
-            <select id="malDays" class="mal-sel">
-                <option value="1">Today</option>
-                <option value="7" selected="selected">Last 7 days</option>
-                <option value="30">Last 30 days</option>
-                <option value="90">Last 90 days</option>
-                <option value="3650">All time</option>
-            </select>
+            <div class="mal-head__t">Admin Action Log</div>
+            <div class="mal-head__s"><asp:Literal ID="litHeadSub" runat="server" /></div>
         </div>
     </div>
-
-    <div class="mal-kpis">
-        <div class="mal-kpi"><div class="v" id="kTotal">&mdash;</div><div class="l">Actions (all time)</div></div>
-        <div class="mal-kpi"><div class="v" id="kWindow">&mdash;</div><div class="l">In selected window</div></div>
-        <div class="mal-kpi mal-kpi--ok"><div class="v" id="kToday">&mdash;</div><div class="l">Today</div></div>
-        <div class="mal-kpi"><div class="v" id="kUsers">&mdash;</div><div class="l">Distinct users</div></div>
-        <div class="mal-kpi mal-kpi--info"><div class="v" id="kAvg">&mdash;</div><div class="l">Avg response (ms)</div></div>
-        <div class="mal-kpi mal-kpi--warn"><div class="v" id="kProblems">&mdash;</div><div class="l">Errors / failures</div></div>
-    </div>
-
-    <div class="mal-grid">
-        <div class="mal-card">
-            <div class="mal-toolbar">
-                <input type="text" id="malQ" class="mal-inp mal-search" placeholder="Search user, student, IP or context&hellip;" />
-                <select id="malAction" class="mal-sel" title="Filter by action type"><option value="">All actions</option></select>
-                <select id="malPage" class="mal-sel" title="Filter by page"><option value="ALL">All pages</option></select>
-                <select id="malOutcome" class="mal-sel" title="Filter by outcome"><option value="all">All outcomes</option></select>
-                <select id="malLimit" class="mal-sel" title="Rows to show"><option value="50">50</option><option value="100" selected="selected">100</option><option value="200">200</option><option value="500">500</option></select>
-                <button type="button" class="mal-btn" id="malRefresh">&#8635; Refresh</button>
-            </div>
-            <div class="mal-tw">
-                <table class="mal-tbl">
-                    <thead><tr><th>When</th><th>User</th><th>Page</th><th>Action</th><th>Summary</th><th>Outcome</th><th>Duration</th><th>IP</th></tr></thead>
-                    <tbody id="malBody"><tr><td colspan="8" class="mal-empty">Loading&hellip;</td></tr></tbody>
-                </table>
-            </div>
-        </div>
-        <div class="mal-side">
-            <div class="mal-card"><h3>Most active users</h3><div id="malTopUsers"><div class="mal-empty">&mdash;</div></div></div>
-            <div class="mal-card"><h3>Busiest pages</h3><div id="malTopPages"><div class="mal-empty">&mdash;</div></div></div>
-        </div>
+    <div class="mal-head__r">
+        <asp:Literal ID="litExportBtn" runat="server" />
     </div>
 </div>
 
-<div class="mal-ovl" id="malOvl">
-    <div class="mal-modal">
-        <div class="mal-modal__hd"><h3 id="malMTitle">Action detail</h3><button type="button" class="mal-modal__x" id="malMClose">&times;</button></div>
-        <div class="mal-modal__bd" id="malMBody"></div>
+<div class="mal-body">
+
+    <asp:Literal ID="litNotice" runat="server" />
+
+    <asp:Panel ID="pnlMain" runat="server">
+
+        <div class="mal-stats">
+            <div class="mal-stat">
+                <div class="mal-stat__label">Actions</div>
+                <div class="mal-stat__value"><asp:Literal ID="litKpiActions" runat="server">0</asp:Literal></div>
+                <div class="mal-stat__sub"><asp:Literal ID="litKpiActionsSub" runat="server" /></div>
+            </div>
+            <div class="mal-stat">
+                <div class="mal-stat__label">Changed something</div>
+                <div class="mal-stat__value"><asp:Literal ID="litKpiChanges" runat="server">0</asp:Literal></div>
+                <div class="mal-stat__sub"><asp:Literal ID="litKpiChangesSub" runat="server" /></div>
+            </div>
+            <div class="mal-stat">
+                <div class="mal-stat__label">Students affected</div>
+                <div class="mal-stat__value"><asp:Literal ID="litKpiStudents" runat="server">0</asp:Literal></div>
+                <div class="mal-stat__sub"><asp:Literal ID="litKpiStudentsSub" runat="server" /></div>
+            </div>
+            <div class="mal-stat">
+                <div class="mal-stat__label">Did not go through</div>
+                <div class="mal-stat__value mal-stat__value--warn"><asp:Literal ID="litKpiProblems" runat="server">0</asp:Literal></div>
+                <div class="mal-stat__sub"><asp:Literal ID="litKpiProblemsSub" runat="server" /></div>
+            </div>
+        </div>
+
+        <div class="mal-quick">
+            <span class="mal-quick__label">Period</span>
+            <asp:Literal ID="litQuick" runat="server" />
+        </div>
+
+        <div class="mal-filters">
+            <div class="mal-fg">
+                <label class="mal-fg__label" for="fFrom">From</label>
+                <input type="date" id="fFrom" value="<asp:Literal ID='litFrom' runat='server' />" />
+            </div>
+            <div class="mal-fg">
+                <label class="mal-fg__label" for="fTo">To</label>
+                <input type="date" id="fTo" value="<asp:Literal ID='litTo' runat='server' />" />
+            </div>
+            <div class="mal-fg">
+                <label class="mal-fg__label" for="fWho">Who</label>
+                <select id="fWho"><asp:Literal ID="litWhoOpts" runat="server" /></select>
+            </div>
+            <div class="mal-fg">
+                <label class="mal-fg__label" for="fImp">Effect</label>
+                <select id="fImp"><asp:Literal ID="litImpOpts" runat="server" /></select>
+            </div>
+            <div class="mal-fg">
+                <label class="mal-fg__label" for="fAct">Action</label>
+                <select id="fAct"><asp:Literal ID="litActOpts" runat="server" /></select>
+            </div>
+            <div class="mal-fg">
+                <label class="mal-fg__label" for="fScreen">Screen</label>
+                <select id="fScreen"><asp:Literal ID="litScreenOpts" runat="server" /></select>
+            </div>
+            <div class="mal-fg">
+                <label class="mal-fg__label" for="fOut">Outcome</label>
+                <select id="fOut"><asp:Literal ID="litOutOpts" runat="server" /></select>
+            </div>
+            <div class="mal-fg mal-fg--grow">
+                <label class="mal-fg__label" for="fQ">Student, course or text</label>
+                <input type="text" id="fQ" placeholder="reg. number, student name, course code, IP..."
+                       value="<asp:Literal ID='litQ' runat='server' />" onkeydown="if(event.keyCode==13){malApply();return false;}" />
+            </div>
+            <div class="mal-filters__end">
+                <button type="button" class="mal-btn mal-btn--primary" onclick="malApply()">Search</button>
+                <a href="MarksActionLog.aspx" class="mal-btn mal-btn--ghost">Clear</a>
+            </div>
+        </div>
+
+        <div class="mal-card">
+            <div class="mal-card__hdr">
+                <span class="mal-card__title">Actions</span>
+                <span class="mal-card__meta">
+                    <asp:Literal ID="litMeta" runat="server" />
+                    &nbsp;&middot;&nbsp;Show
+                    <select id="malPageSize" onchange="malApply()" style="border:1px solid #cdd3de;padding:2px 4px;font-size:11px;font-family:inherit">
+                        <asp:Literal ID="litPsOpts" runat="server" />
+                    </select>
+                </span>
+            </div>
+            <div class="mal-tablewrap">
+                <table class="mal-table">
+                    <thead>
+                        <tr>
+                            <th style="width:96px">When</th>
+                            <th style="width:150px">Who</th>
+                            <th style="width:240px">What happened</th>
+                            <th style="width:160px">Student</th>
+                            <th style="width:135px">Course</th>
+                            <th style="width:96px">Outcome</th>
+                            <th style="width:64px"></th>
+                        </tr>
+                    </thead>
+                    <tbody><asp:Literal ID="litRows" runat="server" /></tbody>
+                </table>
+            </div>
+            <div class="mal-legend">
+                <span class="mal-legend__g"><b>Effect</b>
+                    <span class="mal-badge mal-badge--navy">Changed</span> the action altered a record
+                    &nbsp;<span class="mal-badge mal-badge--grey">Viewed</span> it only read one
+                </span>
+                <span class="mal-legend__g"><b>Student</b> resolved from the registration reference the action recorded, not stored on the log row.</span>
+            </div>
+            <div class="mal-pager">
+                <span class="mal-pager__info"><asp:Literal ID="litPagerInfo" runat="server" /></span>
+                <span class="mal-pager__btns"><asp:Literal ID="litPager" runat="server" /></span>
+            </div>
+        </div>
+
+    </asp:Panel>
+
+</div>
+
+<!-- ============================ DETAIL MODAL ============================= -->
+<div class="mal-ov" id="malDetail" onclick="if(event.target===this)malClose()">
+    <div class="mal-modal" role="dialog" aria-modal="true" aria-labelledby="malDetailTitle">
+        <div class="mal-modal__hdr">
+            <span class="mal-modal__title" id="malDetailTitle">Action detail</span>
+            <button type="button" class="mal-modal__close" onclick="malClose()" aria-label="Close">&#215;</button>
+        </div>
+        <div class="mal-modal__body" id="malDetailBody"></div>
+        <div class="mal-modal__foot">
+            <button type="button" class="mal-btn mal-btn--ghost" onclick="malClose()">Close</button>
+        </div>
     </div>
 </div>
 
 <script type="text/javascript">
-(function(){
-'use strict';
-function $(id){ return document.getElementById(id); }
-function esc(s){ s=(s==null?'':''+s); return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
-function fmt(n){ n=Number(n)||0; return n.toLocaleString('en-US'); }
-function get(params){ return fetch('MarksActionLog.aspx?'+params,{credentials:'same-origin',headers:{'X-Requested-With':'XMLHttpRequest'}}).then(function(r){return r.json();}); }
-var _rows=[];
-
-/* ── humanizers: turn raw codes into readable labels ── */
-var ACT_LABELS={SESSION_SECURITY:'Session security',IDLE_TIMEOUT:'Idle timeout',dropdowns:'Load dropdowns',init:'Initialize',view_record:'View record',edit_marks:'Edit marks',unlocks:'Unlock record',publish:'Publish',search:'Search',summary:'Summary',logs:'View logs',delete_registration:'Delete registration',create_registration:'Create registration'};
-function titleCase(s){ s=(''+s).replace(/[_:]+/g,' ').trim(); return s.replace(/\w\S*/g,function(t){return t.charAt(0).toUpperCase()+t.slice(1);}); }
-function actLabel(a){ if(a==null||a==='') return '—'; if(ACT_LABELS[a]) return ACT_LABELS[a]; if(/^force_status:/i.test(a)) return 'Force status → '+titleCase(a.split(':')[1]||''); if(/^bulk:/i.test(a)) return 'Bulk → '+titleCase(a.split(':')[1]||''); return titleCase(a); }
-var OUT_LABELS={success:'Success',error:'Error',auth_fail:'Auth fail',validation_fail:'Validation',locked:'Locked',idle_timeout:'Idle timeout'};
-function outClass(o){ o=(''+(o||'')).toLowerCase(); return o.replace(/[^a-z_]/g,''); }
-function outLabel(o){ o=(''+(o||'')).toLowerCase(); return OUT_LABELS[o]||titleCase(o||'—'); }
-var CTX_LABELS={id:'Record ID',actor:'Performed by',status:'New status',comment:'Comment',cw:'Course work',exam:'Exam mark',total:'Total',note:'Note / reason',regno:'Student',course:'Course',reason:'Reason'};
-function ctxLabel(k){ return CTX_LABELS[k]||titleCase(k); }
-function parseCtx(s){ if(!s) return null; try{ var o=JSON.parse(s); return (o&&typeof o==='object'&&!Array.isArray(o))?o:null; }catch(e){ return null; } }
-function ctxSummary(r){
-    var o=parseCtx(r.ctx); if(!o) return '';
-    var b=[];
-    if(o.id) b.push('#'+esc(o.id));
-    if(o.regno) b.push(esc(o.regno));
-    if(o.course) b.push(esc(o.course));
-    if(o.status) b.push('&rarr; <b>'+esc(o.status)+'</b>');
-    if(o.cw!=null||o.exam!=null||o.total!=null) b.push('CW '+esc(o.cw==null?'-':o.cw)+' &middot; Exam '+esc(o.exam==null?'-':o.exam)+' &middot; Tot '+esc(o.total==null?'-':o.total));
-    var n=o.note||o.comment; if(n){ n=''+n; b.push('&ldquo;'+esc(n.slice(0,50))+(n.length>50?'…':'')+'&rdquo;'); }
-    if(!b.length&&o.actor) b.push('by '+esc(o.actor));
-    return b.join(' &middot; ');
-}
-function durCell(ms){ ms=Number(ms)||0; return '<span class="mal-dur'+(ms>=800?' mal-dur--slow':'')+'">'+fmt(ms)+' ms</span>'; }
-function fillOpts(sel,items,fv,ft,lab){ if(!sel||!items) return; var cur=sel.value; var h='<option value="'+fv+'">'+ft+'</option>'; items.forEach(function(v){ h+='<option value="'+esc(v)+'">'+esc(lab?lab(v):v)+'</option>'; }); sel.innerHTML=h; sel.value=cur; }
-
-function loadStats(){
-    get('ajax=stats&days='+$('malDays').value).then(function(d){
-        if(!d.ok) return;
-        $('kTotal').textContent=fmt(d.total); $('kWindow').textContent=fmt(d.window);
-        $('kToday').textContent=fmt(d.today); $('kUsers').textContent=fmt(d.users);
-        $('kAvg').textContent=fmt(d.avgms); $('kProblems').textContent=fmt(d.problems);
-        $('malTopUsers').innerHTML=(d.top_users&&d.top_users.length)?d.top_users.map(function(x){return '<div class="mal-mini"><span>'+esc(x.k||'(unknown)')+'</span><b>'+fmt(x.n)+'</b></div>';}).join(''):'<div class="mal-empty">No data</div>';
-        $('malTopPages').innerHTML=(d.top_pages&&d.top_pages.length)?d.top_pages.map(function(x){return '<div class="mal-mini"><span>'+esc(x.k||'(unknown)')+'</span><b>'+fmt(x.n)+'</b></div>';}).join(''):'<div class="mal-empty">No data</div>';
-    });
-}
-function loadFeed(){
-    var body=$('malBody');
-    var p='ajax=feed&days='+$('malDays').value+'&limit='+$('malLimit').value
-        +'&q='+encodeURIComponent($('malQ').value)+'&page='+encodeURIComponent($('malPage').value)
-        +'&outcome='+encodeURIComponent($('malOutcome').value)+'&action='+encodeURIComponent($('malAction').value);
-    get(p).then(function(d){
-        if(!d.ok){ body.innerHTML='<tr><td colspan="8" class="mal-empty" style="color:#b42318;">'+esc(d.message||'Failed to load.')+'</td></tr>'; return; }
-        _rows=d.rows||[];
-        fillOpts($('malPage'),d.pages,'ALL','All pages',null);
-        fillOpts($('malAction'),d.actions,'','All actions',actLabel);
-        fillOpts($('malOutcome'),d.outcomes,'all','All outcomes',outLabel);
-        if(!_rows.length){ body.innerHTML='<tr><td colspan="8" class="mal-empty">No actions match your filters.</td></tr>'; return; }
-        body.innerHTML=_rows.map(function(r,i){
-            var sum=ctxSummary(r);
-            return '<tr class="mal-row" data-i="'+i+'">'
-                +'<td class="mal-when">'+esc(r.ts)+'</td>'
-                +'<td class="mal-user">'+esc(r.user||'(unknown)')+'</td>'
-                +'<td>'+esc(r.page)+'</td>'
-                +'<td><div class="mal-actwrap"><span class="mal-actlbl">'+esc(actLabel(r.action))+'</span><span class="mal-actcode">'+esc(r.action)+'</span></div></td>'
-                +'<td class="mal-sum">'+(sum||'<span style="color:#cbd5e1;">&mdash;</span>')+'</td>'
-                +'<td><span class="mal-b mal-b--'+outClass(r.outcome)+'">'+esc(outLabel(r.outcome))+'</span></td>'
-                +'<td>'+durCell(r.dur)+'</td>'
-                +'<td style="font-size:10px;color:#94a3b8;">'+esc(r.ip)+'</td></tr>';
-        }).join('');
-        var trs=body.querySelectorAll('.mal-row');
-        for(var j=0;j<trs.length;j++) trs[j].onclick=function(){ detail(_rows[parseInt(this.getAttribute('data-i'),10)]); };
-    });
-}
-function detail(r){
-    if(!r) return;
-    $('malMTitle').textContent='Action detail';
-    var o=parseCtx(r.ctx);
-    /* hero */
-    var h='<div class="mal-mhero"><div class="mal-mhero__ic">&#9670;</div>'
-        +'<div><div class="mal-mhero__t">'+esc(actLabel(r.action))+'</div>'
-        +'<div class="mal-mhero__s">'+esc(r.page||'')+'  &middot;  <span class="mal-b mal-b--'+outClass(r.outcome)+'">'+esc(outLabel(r.outcome))+'</span></div></div></div>';
-    /* who/when/where */
-    function row(k,v){ return '<tr><td class="k">'+esc(k)+'</td><td class="v">'+(v==null||v===''?'<span class="mal-none">not recorded</span>':v)+'</td></tr>'; }
-    h+='<div class="mal-msec"><div class="mal-msec__h">Who &amp; When</div><table class="mal-ctxtbl">'
-        +row('Performed by','<strong>'+esc(r.user||'(unknown)')+'</strong>')
-        +row('Timestamp',esc(r.ts))
-        +row('Page / screen',esc(r.page))
-        +row('Action code','<span class="mal-actcode" style="font-size:11px;">'+esc(r.action)+'</span>')
-        +row('Outcome','<span class="mal-b mal-b--'+outClass(r.outcome)+'">'+esc(outLabel(r.outcome))+'</span>')
-        +row('Duration',durCell(r.dur))
-        +row('IP address',esc(r.ip))
-        +(r.corr?row('Correlation ID','<span class="mal-actcode" style="font-size:11px;">'+esc(r.corr)+'</span>'):'')
-        +'</table></div>';
-    /* parsed context */
-    if(o){
-        var keys=Object.keys(o), body2='';
-        keys.forEach(function(k){ var val=o[k]; if(val==null||val==='') return; body2+='<tr><td class="k">'+esc(ctxLabel(k))+'</td><td class="v">'+esc(''+val)+'</td></tr>'; });
-        if(body2) h+='<div class="mal-msec"><div class="mal-msec__h">Details</div><table class="mal-ctxtbl">'+body2+'</table></div>';
+// --- filters ------------------------------------------------------------
+// The page is a GET report: every filtered view is a link that can be
+// bookmarked, pasted into an email, or reached with the Back button.
+function malApply(){
+    var p = [];
+    function add(key, id){
+        var el = document.getElementById(id);
+        if (el && el.value) p.push(key + '=' + encodeURIComponent(el.value));
     }
-    /* raw json (collapsible) */
-    if(r.ctx){
-        var raw=''; try{ raw=JSON.stringify(JSON.parse(r.ctx),null,2); }catch(e){ raw=r.ctx; }
-        h+='<div class="mal-msec"><div class="mal-msec__h">Raw context <span class="mal-raw-toggle" id="malRawT">show</span></div>'
-          +'<div class="mal-ctx" id="malRaw" style="display:none;">'+esc(raw)+'</div></div>';
-    }
-    $('malMBody').innerHTML=h;
-    var rt=$('malRawT'); if(rt) rt.onclick=function(){ var el=$('malRaw'); var on=el.style.display==='none'; el.style.display=on?'block':'none'; this.textContent=on?'hide':'show'; };
-    $('malOvl').classList.add('open');
+    add('from','fFrom'); add('to','fTo');   add('who','fWho');
+    add('imp','fImp');   add('act','fAct'); add('screen','fScreen');
+    add('out','fOut');   add('q','fQ');     add('ps','malPageSize');
+    window.location.href = 'MarksActionLog.aspx' + (p.length ? '?' + p.join('&') : '');
 }
-function reload(){ loadStats(); loadFeed(); }
-$('malDays').onchange=reload;
-$('malLimit').onchange=loadFeed;
-$('malPage').onchange=loadFeed;
-$('malOutcome').onchange=loadFeed;
-$('malAction').onchange=loadFeed;
-$('malRefresh').onclick=reload;
-$('malQ').onkeydown=function(e){ if(e.key==='Enter') loadFeed(); };
-$('malMClose').onclick=function(){ $('malOvl').classList.remove('open'); };
-$('malOvl').onclick=function(e){ if(e.target===this) this.classList.remove('open'); };
-document.addEventListener('keydown',function(e){ if(e.key==='Escape') $('malOvl').classList.remove('open'); });
-reload();
-})();
+
+// --- detail -------------------------------------------------------------
+function malEsc(s){
+    return String(s === null || s === undefined ? '' : s)
+        .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+function malRow(label, value, raw){
+    if (value === null || value === undefined || value === '') return '';
+    return '<dt>' + malEsc(label) + '</dt><dd>' + (raw ? value : malEsc(value)) + '</dd>';
+}
+function malOpen(btn){
+    var id = btn.getAttribute('data-id');
+    var box = document.getElementById('malDetailBody');
+    document.getElementById('malDetailTitle').textContent = 'Action #' + id;
+    box.innerHTML = '<div style="color:#888;font-size:12px;padding:20px 0;text-align:center">Loading the full record...</div>';
+    document.getElementById('malDetail').classList.add('is-open');
+
+    var xhr = new XMLHttpRequest();
+    xhr.open('GET', 'MarksActionLog.aspx?ajax=detail&id=' + encodeURIComponent(id), true);
+    xhr.setRequestHeader('X-Requested-With', 'XMLHttpRequest');
+    xhr.onreadystatechange = function(){
+        if (xhr.readyState !== 4) return;
+        var d = null;
+        try { d = JSON.parse(xhr.responseText); } catch (e) { d = null; }
+        if (!d || !d.ok){
+            box.innerHTML = '<div class="mal-note mal-note--error">' +
+                malEsc((d && d.message) || 'This record could not be loaded.') + '</div>';
+            return;
+        }
+        box.innerHTML = malRender(d);
+        var t = document.getElementById('malRawToggle');
+        if (t) t.onclick = function(){
+            var el = document.getElementById('malRawBox');
+            var showing = el.style.display !== 'none';
+            el.style.display = showing ? 'none' : 'block';
+            this.textContent = showing ? 'show' : 'hide';
+        };
+    };
+    xhr.send();
+}
+function malRender(d){
+    var r = d.row, h = '';
+
+    h += '<div class="mal-lead">' + malEsc(r.what) + '</div>';
+    h += '<div class="mal-leadsub">' + malEsc(r.screen) + ' &middot; ' + malEsc(r.outcomeLabel) + '</div>';
+
+    h += '<div class="mal-sect mal-sect--top">Who and when</div><dl class="mal-dl">';
+    h += malRow('Performed by', r.who);
+    h += malRow('Staff record',  r.staff);
+    h += malRow('Date and time', r.at);
+    h += malRow('Screen',        r.screen);
+    h += malRow('Action code',   r.action);
+    h += malRow('Outcome',       r.outcomeLabel);
+    h += malRow('IP address',    r.ip);
+    h += malRow('Took',          r.duration);
+    h += malRow('Correlation',   r.corr);
+    h += '</dl>';
+
+    if (d.batchNote) h += '<div class="mal-note mal-note--info">' + malEsc(d.batchNote) + '</div>';
+
+    if (d.records && d.records.length){
+        h += '<div class="mal-sect">Records touched (' + d.records.length +
+             (d.moreRecords ? ' of ' + d.moreRecords : '') + ')</div>';
+        h += '<table class="mal-rtbl"><thead><tr><th>Student</th><th>Course</th><th>Term</th>' +
+             '<th>Marks now</th><th>Status</th><th></th></tr></thead><tbody>';
+        for (var i = 0; i < d.records.length; i++){
+            var x = d.records[i];
+            h += '<tr><td>' + (x.regno ? '<span class="mal-code">' + malEsc(x.regno) + '</span>' : '<span class="mal-nil">gone</span>') +
+                 (x.name ? '<span class="mal-sub">' + malEsc(x.name) + '</span>' : '') + '</td>' +
+                 '<td>' + (x.course ? '<span class="mal-code">' + malEsc(x.course) + '</span>' : '') +
+                 (x.courseName ? '<span class="mal-sub">' + malEsc(x.courseName) + '</span>' : '') + '</td>' +
+                 '<td>' + malEsc(x.term || '') + '</td>' +
+                 '<td>' + malEsc(x.marks || '') + '</td>' +
+                 '<td>' + (x.status ? '<span class="mal-badge mal-badge--grey">' + malEsc(x.status) + '</span>' : '') + '</td>' +
+                 '<td>' + (x.regno ? '<a class="mal-btn mal-btn--ghost mal-btn--sm" target="_blank" href="MarksAuditTrail.aspx?r=all&amp;q=' +
+                    encodeURIComponent(x.regno) + '">Mark history</a>' : '') + '</td></tr>';
+        }
+        h += '</tbody></table>';
+        if (d.missing) h += '<div class="mal-note mal-note--warn">' + malEsc(d.missing) + '</div>';
+    } else if (d.noRecordsNote){
+        h += '<div class="mal-sect">Records touched</div>' +
+             '<div class="mal-note mal-note--info">' + malEsc(d.noRecordsNote) + '</div>';
+    }
+
+    if (d.context && d.context.length){
+        h += '<div class="mal-sect">What the action recorded</div><dl class="mal-dl">';
+        for (var j = 0; j < d.context.length; j++) h += malRow(d.context[j].k, d.context[j].v);
+        h += '</dl>';
+    }
+
+    if (r.raw){
+        h += '<div class="mal-sect">Raw context <span class="mal-toggle" id="malRawToggle">show</span></div>' +
+             '<div class="mal-raw" id="malRawBox" style="display:none">' + malEsc(r.raw) + '</div>';
+    }
+    return h;
+}
+function malClose(){ document.getElementById('malDetail').classList.remove('is-open'); }
+document.addEventListener('keydown', function(e){ if (e.keyCode === 27) malClose(); });
 </script>
+
 </asp:Content>
