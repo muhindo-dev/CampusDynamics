@@ -63,7 +63,9 @@ public partial class COOPERP_NewScreens_MarksActionLog : Page
     private string _screen = "";
     private string _out = "";
     private string _imp = "";          // changes | views | ""
-    private string _q = "";
+    private string _stu = "";          // reg. number or student name
+    private string _crs = "";          // course code or course title
+    private string _q = "";            // anything else
     private int _page = 1;
     private int _pageSize = 50;
 
@@ -99,9 +101,10 @@ public partial class COOPERP_NewScreens_MarksActionLog : Page
             {
                 conn.Open();
 
-                List<Row> rows = LoadRows(conn);
-                ResolveRegistrations(conn, rows);
-                rows = ApplyMemoryFilters(rows);
+                List<Row> all = LoadRows(conn);
+                ResolveRegistrations(conn, all);
+                all = ApplyScope(all);
+                List<Row> rows = ApplyTextFilters(all);
 
                 if (string.Equals(Request["export"], "csv", StringComparison.OrdinalIgnoreCase))
                 {
@@ -109,10 +112,15 @@ public partial class COOPERP_NewScreens_MarksActionLog : Page
                     return;
                 }
 
+                // Built from everything in scope for the period, not from what survived the
+                // text filters — otherwise choosing one course would empty the course list.
+                BuildPickLists(all);
                 LoadFilterOptions(conn);
                 RenderQuickRanges();
                 litFrom.Text = Enc(_from);
                 litTo.Text = Enc(_to);
+                litStu.Text = Enc(_stu);
+                litCrs.Text = Enc(_crs);
                 litQ.Text = Enc(_q);
                 litPsOpts.Text = PageSizeOptions();
 
@@ -137,6 +145,8 @@ public partial class COOPERP_NewScreens_MarksActionLog : Page
         _screen = Trim(qs["screen"], 100);
         _out = Trim(qs["out"], 30);
         _imp = Low(qs["imp"]);
+        _stu = Trim(qs["stu"], 60);
+        _crs = Trim(qs["crs"], 60);
         _q = Trim(qs["q"], 80);
         if (_imp != "changes" && _imp != "views") _imp = "";
 
@@ -668,23 +678,121 @@ public partial class COOPERP_NewScreens_MarksActionLog : Page
     // ── filters that need the resolved student ──────────────────────────
 
     /// <summary>
-    /// Programme scope and the free-text search both need to know which student an action
-    /// touched, and that is only known after the registration references are resolved — so
-    /// both run here rather than in the SQL.
+    /// Programme scope needs to know which student an action touched, and that is only known
+    /// once the registration references are resolved — so it runs here rather than in the SQL.
+    /// It runs before the pick lists are built, so a dean is never offered another faculty's
+    /// students or courses to filter by.
     /// </summary>
-    private List<Row> ApplyMemoryFilters(List<Row> rows)
+    private List<Row> ApplyScope(List<Row> rows)
     {
-        string q = _q.ToLowerInvariant();
+        if (_unrestricted) return rows;
         List<Row> kept = new List<Row>();
+        for (int i = 0; i < rows.Count; i++)
+            if (InScope(rows[i])) kept.Add(rows[i]);
+        return kept;
+    }
 
+    /// <summary>
+    /// The three text filters. Student and course are separate on purpose: one blended box
+    /// cannot answer "what has anyone done to this student" without also matching a course
+    /// code that happens to share the letters.
+    /// </summary>
+    private List<Row> ApplyTextFilters(List<Row> rows)
+    {
+        string stu = _stu.ToLowerInvariant();
+        string crs = _crs.ToLowerInvariant();
+        string q = _q.ToLowerInvariant();
+        if (stu.Length == 0 && crs.Length == 0 && q.Length == 0) return rows;
+
+        List<Row> kept = new List<Row>();
         for (int i = 0; i < rows.Count; i++)
         {
             Row x = rows[i];
-            if (!_unrestricted && !InScope(x)) continue;
+
+            if (stu.Length > 0 && crs.Length > 0)
+            {
+                // Both set means one question, not two: this student on that course. A bulk
+                // action naming 40 registrations would otherwise match because somebody in the
+                // batch was the student and somebody else was on the course.
+                if (!MatchesPair(x, stu, crs)) continue;
+            }
+            else
+            {
+                if (stu.Length > 0 && !MatchesStudent(x, stu)) continue;
+                if (crs.Length > 0 && !MatchesCourse(x, crs)) continue;
+            }
+
             if (q.Length > 0 && !Matches(x, q)) continue;
             kept.Add(x);
         }
         return kept;
+    }
+
+    /// <summary>One registration that is this student's and on that course.</summary>
+    private bool MatchesPair(Row x, string stu, string crs)
+    {
+        for (int i = 0; i < x.RegIds.Count; i++)
+        {
+            Reg g;
+            if (!_regs.TryGetValue(x.RegIds[i], out g)) continue;
+            if ((Has(g.Regno, stu) || Has(g.StudentName, stu)) && (Has(g.Course, crs) || Has(g.CourseName, crs)))
+                return true;
+        }
+
+        Batch b = BatchOf(x);
+        if (b != null)
+            for (int i = 0; i < b.Rows.Count; i++)
+                if ((Has(b.Rows[i][0], stu) || Has(Val(b.Names, b.Rows[i][0]), stu)) && Has(b.Rows[i][1], crs))
+                    return true;
+
+        // An action that named the student and the course directly rather than a registration.
+        string ctxRegno = Get(x.Ctx, "regno");
+        if (ctxRegno.Length > 0 && Has(ctxRegno, stu)
+            && (Has(Get(x.Ctx, "course"), crs) || Has(Get(x.Ctx, "source"), crs) || Has(Get(x.Ctx, "target"), crs)))
+            return true;
+
+        return false;
+    }
+
+    /// <summary>A reg. number or a student's name, wherever this action names one.</summary>
+    private bool MatchesStudent(Row x, string q)
+    {
+        if (Has(Get(x.Ctx, "regno"), q)) return true;
+
+        for (int i = 0; i < x.RegIds.Count; i++)
+        {
+            Reg g;
+            if (!_regs.TryGetValue(x.RegIds[i], out g)) continue;
+            if (Has(g.Regno, q) || Has(g.StudentName, q)) return true;
+        }
+
+        Batch b = BatchOf(x);
+        if (b != null)
+            for (int i = 0; i < b.Regnos.Count; i++)
+                if (Has(b.Regnos[i], q) || Has(Val(b.Names, b.Regnos[i]), q)) return true;
+
+        return false;
+    }
+
+    /// <summary>A course code or title, including the two ends of a course transfer.</summary>
+    private bool MatchesCourse(Row x, string q)
+    {
+        if (Has(Get(x.Ctx, "course"), q) || Has(Get(x.Ctx, "source"), q) || Has(Get(x.Ctx, "target"), q))
+            return true;
+
+        for (int i = 0; i < x.RegIds.Count; i++)
+        {
+            Reg g;
+            if (!_regs.TryGetValue(x.RegIds[i], out g)) continue;
+            if (Has(g.Course, q) || Has(g.CourseName, q)) return true;
+        }
+
+        Batch b = BatchOf(x);
+        if (b != null)
+            for (int i = 0; i < b.Rows.Count; i++)
+                if (Has(b.Rows[i][1], q)) return true;
+
+        return false;
     }
 
     private bool InScope(Row x)
@@ -969,6 +1077,15 @@ public partial class COOPERP_NewScreens_MarksActionLog : Page
         return sb.Append("</tr>").ToString();
     }
 
+    /// <summary>A code badge that narrows the page to itself. The fastest way to answer
+    /// "everything anyone did to this student" is to click the student.</summary>
+    private string CodeLink(string text, string key, string value)
+    {
+        if (text == null || text.Length == 0) return "";
+        return "<a class='mal-code mal-link' title='Filter by this' href='"
+             + Enc(Url(key, value, "p", null)) + "'>" + Enc(text) + "</a>";
+    }
+
     private string StudentCell(Row x)
     {
         List<Reg> found = Resolved(x);
@@ -976,7 +1093,7 @@ public partial class COOPERP_NewScreens_MarksActionLog : Page
         if (found.Count == 0)
         {
             string regno = Get(x.Ctx, "regno");
-            if (regno.Length > 0) return "<span class='mal-code'>" + Enc(regno) + "</span>";
+            if (regno.Length > 0) return CodeLink(regno, "stu", regno);
 
             Batch b = BatchOf(x);
             if (b != null && b.Regnos.Count > 0)
@@ -984,7 +1101,7 @@ public partial class COOPERP_NewScreens_MarksActionLog : Page
                 StringBuilder bs = new StringBuilder();
                 if (b.Regnos.Count == 1)
                 {
-                    bs.Append("<span class='mal-code'>").Append(Enc(b.Regnos[0])).Append("</span>");
+                    bs.Append(CodeLink(b.Regnos[0], "stu", b.Regnos[0]));
                     string nm = Val(b.Names, b.Regnos[0]);
                     if (nm.Length > 0) bs.Append("<span class='mal-sub'>").Append(Enc(nm)).Append("</span>");
                 }
@@ -1007,7 +1124,7 @@ public partial class COOPERP_NewScreens_MarksActionLog : Page
         if (found.Count == 1)
         {
             Reg g = found[0];
-            StringBuilder sb = new StringBuilder("<span class='mal-code'>").Append(Enc(g.Regno)).Append("</span>");
+            StringBuilder sb = new StringBuilder(CodeLink(g.Regno, "stu", g.Regno));
             if (g.StudentName.Length > 0) sb.Append("<span class='mal-sub'>").Append(Enc(g.StudentName)).Append("</span>");
             return sb.ToString();
         }
@@ -1032,15 +1149,15 @@ public partial class COOPERP_NewScreens_MarksActionLog : Page
             string c = Get(x.Ctx, "course");
             string t = Join(Get(x.Ctx, "year"), Sem(Get(x.Ctx, "sem")));
             if (c.Length > 0)
-                return "<span class='mal-code'>" + Enc(c) + "</span>"
+                return CodeLink(c, "crs", c)
                      + (t.Length > 0 ? "<span class='mal-sub'>" + Enc(t) + "</span>" : "");
             string src = Get(x.Ctx, "source"), tgt = Get(x.Ctx, "target");
             if (src.Length > 0 || tgt.Length > 0)
             {
                 StringBuilder cs = new StringBuilder();
-                if (src.Length > 0) cs.Append("<span class='mal-code'>").Append(Enc(src)).Append("</span>");
+                if (src.Length > 0) cs.Append(CodeLink(src, "crs", src));
                 if (tgt.Length > 0)
-                    cs.Append(src.Length > 0 ? " " : "").Append("<span class='mal-code'>").Append(Enc(tgt)).Append("</span>");
+                    cs.Append(src.Length > 0 ? " " : "").Append(CodeLink(tgt, "crs", tgt));
                 if (x.CtxProg.Length > 0) cs.Append("<span class='mal-sub'>").Append(Enc(x.CtxProg)).Append("</span>");
                 return cs.ToString();
             }
@@ -1054,7 +1171,7 @@ public partial class COOPERP_NewScreens_MarksActionLog : Page
         for (int i = 0; i < found.Count; i++) if (found[i].Course.Length > 0) codes[found[i].Course] = true;
 
         Reg g = found[0];
-        StringBuilder sb = new StringBuilder("<span class='mal-code'>").Append(Enc(g.Course)).Append("</span>");
+        StringBuilder sb = new StringBuilder(CodeLink(g.Course, "crs", g.Course));
         if (codes.Count > 1)
             sb.Append("<span class='mal-sub'>and ").Append(N(codes.Count - 1)).Append(" other course")
               .Append(codes.Count == 2 ? "" : "s").Append("</span>");
@@ -1080,10 +1197,70 @@ public partial class COOPERP_NewScreens_MarksActionLog : Page
     private bool HasFilter()
     {
         return _who.Length > 0 || _act.Length > 0 || _screen.Length > 0 || _out.Length > 0
-            || _imp.Length > 0 || _q.Length > 0 || _from.Length > 0 || _to.Length > 0;
+            || _imp.Length > 0 || _stu.Length > 0 || _crs.Length > 0 || _q.Length > 0
+            || _from.Length > 0 || _to.Length > 0;
     }
 
     // ── filter options ──────────────────────────────────────────────────
+
+    /// <summary>
+    /// Type-ahead values for the student and course filters: the ones this period actually
+    /// contains, so the two boxes are picked from rather than guessed at. Free text still works
+    /// for anything outside the list.
+    /// </summary>
+    private void BuildPickLists(List<Row> rows)
+    {
+        SortedDictionary<string, string> students = new SortedDictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        SortedDictionary<string, string> courses = new SortedDictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+
+        for (int i = 0; i < rows.Count; i++)
+        {
+            Row x = rows[i];
+
+            for (int j = 0; j < x.RegIds.Count; j++)
+            {
+                Reg g;
+                if (!_regs.TryGetValue(x.RegIds[j], out g)) continue;
+                if (g.Regno.Length > 0 && !students.ContainsKey(g.Regno)) students[g.Regno] = g.StudentName;
+                if (g.Course.Length > 0 && !courses.ContainsKey(g.Course)) courses[g.Course] = g.CourseName;
+            }
+
+            Batch b = BatchOf(x);
+            if (b != null)
+            {
+                for (int j = 0; j < b.Regnos.Count; j++)
+                    if (!students.ContainsKey(b.Regnos[j])) students[b.Regnos[j]] = Val(b.Names, b.Regnos[j]);
+                for (int j = 0; j < b.Rows.Count; j++)
+                    if (b.Rows[j][1].Length > 0 && !courses.ContainsKey(b.Rows[j][1])) courses[b.Rows[j][1]] = "";
+            }
+
+            string ctxRegno = Get(x.Ctx, "regno");
+            if (ctxRegno.Length > 0 && !students.ContainsKey(ctxRegno)) students[ctxRegno] = "";
+            string[] ctxCourses = new string[] { Get(x.Ctx, "course"), Get(x.Ctx, "source"), Get(x.Ctx, "target") };
+            for (int j = 0; j < ctxCourses.Length; j++)
+                if (ctxCourses[j].Length > 0 && !courses.ContainsKey(ctxCourses[j])) courses[ctxCourses[j]] = "";
+        }
+
+        litStuList.Text = DataList(students);
+        litCrsList.Text = DataList(courses);
+        litStuCount.Text = students.Count == 0 ? "" : N(students.Count) + " in view";
+        litCrsCount.Text = courses.Count == 0 ? "" : N(courses.Count) + " in view";
+    }
+
+    private const int PickListCap = 600;
+
+    private static string DataList(SortedDictionary<string, string> items)
+    {
+        StringBuilder sb = new StringBuilder();
+        int n = 0;
+        foreach (KeyValuePair<string, string> kv in items)
+        {
+            if (n++ >= PickListCap) break;
+            sb.Append("<option value='").Append(Enc(kv.Key)).Append("'>")
+              .Append(Enc(kv.Value)).Append("</option>");
+        }
+        return sb.ToString();
+    }
 
     private void LoadFilterOptions(MySqlConnection conn)
     {
@@ -1292,6 +1469,8 @@ public partial class COOPERP_NewScreens_MarksActionLog : Page
         if (_screen.Length > 0) p["screen"] = _screen;
         if (_out.Length > 0) p["out"] = _out;
         if (_imp.Length > 0) p["imp"] = _imp;
+        if (_stu.Length > 0) p["stu"] = _stu;
+        if (_crs.Length > 0) p["crs"] = _crs;
         if (_q.Length > 0) p["q"] = _q;
         if (_pageSize != 50) p["ps"] = _pageSize.ToString(CultureInfo.InvariantCulture);
         if (_page > 1) p["p"] = _page.ToString(CultureInfo.InvariantCulture);

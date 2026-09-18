@@ -51,8 +51,10 @@
 .mal-fg input,.mal-fg select{padding:6px 8px;border:1px solid #cdd3de;border-radius:0;font-size:12px;
                              font-family:inherit;color:#1a1a2e;background:#fff;min-width:130px;max-width:100%;box-sizing:border-box}
 .mal-fg input:focus,.mal-fg select:focus{outline:none;border-color:#174DA4}
-.mal-fg--grow{flex:1 1 200px}
+.mal-fg--grow{flex:1 1 190px}
 .mal-fg--grow input{width:100%;min-width:0}
+.mal-fg--wide input{min-width:172px}
+.mal-fg__hint{font-weight:400;text-transform:none;letter-spacing:0;color:#a0a8b4;margin-left:4px}
 .mal-filters__end{display:flex;gap:8px;align-items:flex-end;margin-left:auto}
 
 /* --- buttons ----------------------------------------------------- */
@@ -98,6 +100,8 @@
           border-radius:0;white-space:nowrap;display:inline-block}
 .mal-sub{display:block;color:#888;font-size:10px;margin-top:2px;line-height:1.4}
 .mal-nil{color:#c7cdd6}
+a.mal-link{text-decoration:none;cursor:pointer}
+a.mal-link:hover{background:rgba(23,77,164,.14);border-color:rgba(23,77,164,.35);text-decoration:none}
 .mal-many{font-weight:600;color:#05275C}
 
 /* --- badges ------------------------------------------------------ */
@@ -267,9 +271,25 @@
                 <label class="mal-fg__label" for="fOut">Outcome</label>
                 <select id="fOut"><asp:Literal ID="litOutOpts" runat="server" /></select>
             </div>
+            <div class="mal-fg mal-fg--wide">
+                <label class="mal-fg__label" for="fStu">Student
+                    <span class="mal-fg__hint"><asp:Literal ID="litStuCount" runat="server" /></span>
+                </label>
+                <input type="text" id="fStu" list="malStuList" autocomplete="off" placeholder="reg. number or name"
+                       value="<asp:Literal ID='litStu' runat='server' />" onkeydown="if(event.keyCode==13){malApply();return false;}" />
+                <datalist id="malStuList"><asp:Literal ID="litStuList" runat="server" /></datalist>
+            </div>
+            <div class="mal-fg mal-fg--wide">
+                <label class="mal-fg__label" for="fCrs">Course
+                    <span class="mal-fg__hint"><asp:Literal ID="litCrsCount" runat="server" /></span>
+                </label>
+                <input type="text" id="fCrs" list="malCrsList" autocomplete="off" placeholder="course code or title"
+                       value="<asp:Literal ID='litCrs' runat='server' />" onkeydown="if(event.keyCode==13){malApply();return false;}" />
+                <datalist id="malCrsList"><asp:Literal ID="litCrsList" runat="server" /></datalist>
+            </div>
             <div class="mal-fg mal-fg--grow">
-                <label class="mal-fg__label" for="fQ">Student, course or text</label>
-                <input type="text" id="fQ" placeholder="reg. number, student name, course code, IP..."
+                <label class="mal-fg__label" for="fQ">Anything else</label>
+                <input type="text" id="fQ" placeholder="IP address, note, correction reference..."
                        value="<asp:Literal ID='litQ' runat='server' />" onkeydown="if(event.keyCode==13){malApply();return false;}" />
             </div>
             <div class="mal-filters__end">
@@ -310,7 +330,7 @@
                     <span class="mal-badge mal-badge--navy">Changed</span> the action altered a record
                     &nbsp;<span class="mal-badge mal-badge--grey">Viewed</span> it only read one
                 </span>
-                <span class="mal-legend__g"><b>Student</b> resolved from the registration reference the action recorded, not stored on the log row.</span>
+                <span class="mal-legend__g"><b>Student</b> and <b>course</b> are resolved from the registration the action referenced &mdash; neither is stored on the log row. Click either code to filter by it.</span>
             </div>
             <div class="mal-pager">
                 <span class="mal-pager__info"><asp:Literal ID="litPagerInfo" runat="server" /></span>
@@ -348,7 +368,8 @@ function malApply(){
     }
     add('from','fFrom'); add('to','fTo');   add('who','fWho');
     add('imp','fImp');   add('act','fAct'); add('screen','fScreen');
-    add('out','fOut');   add('q','fQ');     add('ps','malPageSize');
+    add('out','fOut');   add('stu','fStu'); add('crs','fCrs');
+    add('q','fQ');       add('ps','malPageSize');
     window.location.href = 'MarksActionLog.aspx' + (p.length ? '?' + p.join('&') : '');
 }
 
