@@ -76,7 +76,7 @@ public static class MarksSheetSyncService
                 using (MySqlCommand ins = new MySqlCommand(
                     @"INSERT INTO acad_examresults_faculty 
                         (regno, course_id, progid, acad_year, semester, study_year, campus, stud_session,
-                         cw_mark_entered, test_mark_entered, ex_mark_entered,
+                         cw_mark_entered, test_mark_entered, exam_mark_entered,
                          cw_mark, test_mark, ex_mark, total_mark, grade, approved_by)
                       SELECT r.regno, @course, @prog, @year, @sem, @sy, @campus, @session,
                              0, 0, 0, 0, 0, 0, 0, '', '-'

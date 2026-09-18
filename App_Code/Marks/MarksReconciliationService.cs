@@ -172,7 +172,7 @@ public static class MarksReconciliationService
                        COALESCE(TRIM(CONCAT(COALESCE(s.surname,''), ' ', COALESCE(s.othernames,''))), ef.regno) AS student_name,
                        CASE WHEN COALESCE(ef.cw_mark_entered, 0) > 0 
                             OR COALESCE(ef.test_mark_entered, 0) > 0 
-                            OR COALESCE(ef.ex_mark_entered, 0) > 0 
+                            OR COALESCE(ef.exam_mark_entered, 0) > 0 
                        THEN 1 ELSE 0 END AS has_marks
                 FROM acad_examresults_faculty ef
                 LEFT JOIN acad_students_biodata s ON s.regno = ef.regno

@@ -361,7 +361,7 @@ public partial class COOPERP_NewScreens_MarkEntry : System.Web.UI.Page
             }
             if (lockState.IsExamLocked)
             {
-                mi.ExamEntered = GetOriginalValue(mi.RowId, "ex_mark_entered");
+                mi.ExamEntered = GetOriginalValue(mi.RowId, "exam_mark_entered");
                 mi.TestEntered = GetOriginalValue(mi.RowId, "test_mark_entered");
             }
 
@@ -479,7 +479,7 @@ public partial class COOPERP_NewScreens_MarkEntry : System.Web.UI.Page
                 mi.CwEntered = GetOriginalValue(mi.RowId, "cw_mark_entered");
             if (lockState.IsExamLocked)
             {
-                mi.ExamEntered = GetOriginalValue(mi.RowId, "ex_mark_entered");
+                mi.ExamEntered = GetOriginalValue(mi.RowId, "exam_mark_entered");
                 mi.TestEntered = GetOriginalValue(mi.RowId, "test_mark_entered");
             }
             inputs.Add(mi);
@@ -1007,7 +1007,7 @@ public partial class COOPERP_NewScreens_MarkEntry : System.Web.UI.Page
             string readSql = @"
                 SELECT regno,
                        COALESCE(cw_mark_entered, 0) AS cw_entered,
-                       COALESCE(ex_mark_entered, 0) AS ex_entered,
+                       COALESCE(exam_mark_entered, 0) AS ex_entered,
                        COALESCE(total_mark,      0) AS total_mark
                 FROM acad_examresults_faculty
                 WHERE course_id = @course AND progid = @prog AND acad_year = @year

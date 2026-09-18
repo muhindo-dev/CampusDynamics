@@ -1665,7 +1665,7 @@ public partial class API_v2_staff : System.Web.UI.Page
                          TRIM(CONCAT(COALESCE(s.firstname,''), ' ', COALESCE(s.othername,''))) AS student_name,
                          COALESCE(ef.cw_mark_entered, 0) AS cw_entered,
                          COALESCE(ef.test_mark_entered, 0) AS test_entered,
-                         COALESCE(ef.ex_mark_entered, 0) AS exam_entered,
+                         COALESCE(ef.exam_mark_entered, 0) AS exam_entered,
                          COALESCE(ef.cw_mark, 0) AS cw_mark,
                          COALESCE(ef.test_mark, 0) AS test_mark,
                          COALESCE(ef.ex_mark, 0) AS exam_mark,
@@ -1824,36 +1824,32 @@ public partial class API_v2_staff : System.Web.UI.Page
                     if (mark.ContainsKey("exam_entered"))
                         decimal.TryParse(mark["exam_entered"].ToString(), out examEntered);
 
-                    // Get ratios for this entry to calculate weighted marks
+                    // Confirm the row exists before writing to it.
+                    //
+                    // This used to also fetch pc.pcw / pc.ptst / pc.pexm from acad_programmecourses
+                    // to weight the marks. Those are not columns on that table, so the query failed
+                    // and every entry in the batch fell into "errors++; continue;" - the endpoint
+                    // could never save anything. The weighting is gone rather than repaired: MRU
+                    // enters coursework out of 40 and the exam out of 60 and sums them plainly,
+                    // which is what the old code did anyway whenever a ratio came back 0.
                     DataTable infoDt = ApiHelper.Query(
-                        @"SELECT ef.course_id, ef.progid,
-                                 COALESCE(pc.pcw, 0) AS cw_ratio,
-                                 COALESCE(pc.ptst, 0) AS test_ratio,
-                                 COALESCE(pc.pexm, 0) AS exam_ratio
+                        @"SELECT ef.course_id, ef.progid
                           FROM acad_examresults_faculty ef
-                          LEFT JOIN acad_programmecourses pc
-                              ON pc.course_code = ef.course_id AND pc.progcode = ef.progid
                           WHERE ef.id = @id LIMIT 1",
                         new MySqlParameter("@id", entryId)
                     );
 
                     if (infoDt.Rows.Count == 0) { errors++; continue; }
 
-                    decimal cwR = 0, testR = 0, examR = 0;
-                    decimal.TryParse(infoDt.Rows[0]["cw_ratio"].ToString(), out cwR);
-                    decimal.TryParse(infoDt.Rows[0]["test_ratio"].ToString(), out testR);
-                    decimal.TryParse(infoDt.Rows[0]["exam_ratio"].ToString(), out examR);
-
-                    // Calculate weighted marks
-                    decimal cwMark = cwR > 0 ? Math.Round(cwEntered * cwR / 100, 2) : cwEntered;
-                    decimal testMark = testR > 0 ? Math.Round(testEntered * testR / 100, 2) : testEntered;
-                    decimal examMark = examR > 0 ? Math.Round(examEntered * examR / 100, 2) : examEntered;
+                    decimal cwMark = cwEntered;
+                    decimal testMark = testEntered;
+                    decimal examMark = examEntered;
                     decimal totalMark = cwMark + testMark + examMark;
                     string grade = CalculateGrade(totalMark);
 
                     ApiHelper.Execute(
                         @"UPDATE acad_examresults_faculty 
-                          SET cw_mark_entered = @cwE, test_mark_entered = @testE, ex_mark_entered = @examE,
+                          SET cw_mark_entered = @cwE, test_mark_entered = @testE, exam_mark_entered = @examE,
                               cw_mark = @cwM, test_mark = @testM, ex_mark = @examM,
                               total_mark = @total, grade = @grade
                           WHERE id = @id",

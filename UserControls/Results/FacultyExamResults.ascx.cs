@@ -157,7 +157,9 @@ public partial class UserControls_Results_FacultyExamResults : System.Web.UI.Use
         {
             e.NewValues["cw_mark_entered"] = e.OldValues["cw_mark_entered"];
             e.NewValues["test_mark_entered"] = e.OldValues["test_mark_entered"];
-            e.NewValues["ex_mark_entered"] = e.OldValues["ex_mark_entered"];
+            // The grid binds this column as exam_mark_entered (see the .ascx); the old key
+            // did not exist in the values dictionary.
+            e.NewValues["exam_mark_entered"] = e.OldValues["exam_mark_entered"];
             throw new Exception("Approved Results Can not be Edited. \nCheck Student: [" + e.OldValues["regno"] + "]");
         }
         else

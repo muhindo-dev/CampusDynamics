@@ -236,7 +236,7 @@ public partial class COOPERP_NewScreens_DeanApproval : System.Web.UI.Page
                                    SELECT course_id, progid, acad_year, semester, study_year, campus, stud_session,
                                           COUNT(*) AS total_students,
                                           SUM(CASE WHEN COALESCE(cw_mark_entered,0) > 0 OR COALESCE(test_mark_entered,0) > 0
-                                                        OR COALESCE(ex_mark_entered,0) > 0 THEN 1 ELSE 0 END) AS marks_entered
+                                                        OR COALESCE(exam_mark_entered,0) > 0 THEN 1 ELSE 0 END) AS marks_entered
                                    FROM acad_examresults_faculty
                                    GROUP BY course_id, progid, acad_year, semester, study_year, campus, stud_session
                                ) cnt ON cnt.course_id = rs.course_id AND cnt.progid = rs.progid

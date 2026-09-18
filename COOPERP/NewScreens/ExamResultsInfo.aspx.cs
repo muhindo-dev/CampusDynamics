@@ -258,40 +258,14 @@ public partial class COOPERP_NewScreens_ExamResultsInfo : System.Web.UI.Page
             string.IsNullOrEmpty(ddlStudyYear.SelectedValue))
             return;
         
-        using (MySqlConnection conn = new MySqlConnection(ConnectionString))
-        {
-            conn.Open();
-            string sql = @"SELECT coursework_ratio, test_ratio, exam_ratio 
-                          FROM acad_examresults_faculty_settings
-                          WHERE course_id = @course 
-                            AND acad_year = @acad 
-                            AND semester = @sem
-                            AND prog_id = @prog
-                            AND stud_session = @session
-                            AND study_year = @yr
-                          LIMIT 1";
-            
-            using (MySqlCommand cmd = new MySqlCommand(sql, conn))
-            {
-                cmd.Parameters.AddWithValue("@course", ddlCourse.SelectedValue);
-                cmd.Parameters.AddWithValue("@acad", ddlAcadYear.SelectedValue);
-                cmd.Parameters.AddWithValue("@sem", int.Parse(ddlSemester.SelectedValue));
-                cmd.Parameters.AddWithValue("@prog", ddlProgramme.SelectedValue);
-                cmd.Parameters.AddWithValue("@session", ddlSession.SelectedValue);
-                cmd.Parameters.AddWithValue("@yr", int.Parse(ddlStudyYear.SelectedValue));
-                
-                using (MySqlDataReader reader = cmd.ExecuteReader())
-                {
-                    if (reader.Read())
-                    {
-                        litCWRatio.Text = reader["coursework_ratio"].ToString();
-                        litTestRatio.Text = reader["test_ratio"].ToString();
-                        litExamRatio.Text = reader["exam_ratio"].ToString();
-                        pnlRatios.Visible = true;
-                    }
-                }
-            }
-        }
+        // The ratio panel used to be filled from acad_examresults_faculty_settings by a query
+        // that could never run (acad_year / prog_id / study_year are not columns on that table).
+        // Marks are not scaled by anything, so the panel would only mislead; it states the scale
+        // the components are actually entered on. No database round-trip is needed for that.
+        litCWRatio.Text = "40";
+        litTestRatio.Text = "0";
+        litExamRatio.Text = "60";
+        pnlRatios.Visible = true;
     }
     
     private void UpdateDisplayLabels()
@@ -1012,42 +986,33 @@ public partial class COOPERP_NewScreens_ExamResultsInfo : System.Web.UI.Page
         int cwEntered = Convert.ToInt32(e.NewValues["cw_mark_entered"] ?? 0);
         int examEntered = Convert.ToInt32(e.NewValues["exam_mark_entered"] ?? 0);
         
-        decimal cwRatio = 30, examRatio = 70; // Default ratios
-        
-        // Get actual ratios from settings
-        using (MySqlConnection conn = new MySqlConnection(ConnectionString))
-        {
-            conn.Open();
-            string sql = @"SELECT coursework_ratio, exam_ratio FROM acad_examresults_faculty_settings
-                          WHERE course_id = @course AND acad_year = @acad AND semester = @sem
-                            AND prog_id = @prog AND stud_session = @session AND study_year = @yr
-                          LIMIT 1";
-            
-            using (MySqlCommand cmd = new MySqlCommand(sql, conn))
-            {
-                cmd.Parameters.AddWithValue("@course", ddlCourse.SelectedValue);
-                cmd.Parameters.AddWithValue("@acad", ddlAcadYear.SelectedValue);
-                cmd.Parameters.AddWithValue("@sem", int.Parse(ddlSemester.SelectedValue));
-                cmd.Parameters.AddWithValue("@prog", ddlProgramme.SelectedValue);
-                cmd.Parameters.AddWithValue("@session", ddlSession.SelectedValue);
-                cmd.Parameters.AddWithValue("@yr", int.Parse(ddlStudyYear.SelectedValue));
-                
-                using (MySqlDataReader reader = cmd.ExecuteReader())
-                {
-                    if (reader.Read())
-                    {
-                        cwRatio = Convert.ToDecimal(reader["coursework_ratio"]);
-                        examRatio = Convert.ToDecimal(reader["exam_ratio"]);
-                    }
-                }
-            }
-        }
-        
-        // Calculate weighted marks
-        int cwMark = (int)Math.Round(cwEntered * cwRatio / 100);
-        int exMark = (int)Math.Round(examEntered * examRatio / 100);
+        // MRU enters marks already on their final scale: coursework out of 40, exam out of 60,
+        // and the total is their plain sum. 36,660 rows in acad_examresults_faculty have
+        // cw_mark = cw_mark_entered against 4 that are scaled.
+        //
+        // A ratio lookup used to sit here. It filtered on acad_year, prog_id and study_year while
+        // the table has acadyear, progid and cyear, so it threw ERROR 1054 on every edit - and
+        // with no try/catch around it, saving a mark on this screen simply failed. It is removed
+        // rather than repaired: its fallback was 30/70 (wrong for MRU), and of the settings rows
+        // for current years 43 read 0/100 and 18 read 0/0, so a repaired lookup would zero the
+        // coursework, or everything, for those courses.
+        int cwMark = cwEntered;
+        int exMark = examEntered;
         int totalMark = cwMark + exMark;
-        
+
+        // Components are entered on their own scales, so check them on their own scales. The four
+        // rows in 2025/2026 carrying invented splits (cw 30 / exam 44, from a 74 typed into BOTH
+        // boxes) are exactly what this refuses.
+        if (cwEntered > 40)
+        {
+            e.Cancel = true;
+            throw new Exception("Coursework is out of 40 - " + cwEntered + " was entered for student: " + e.OldValues["regno"]);
+        }
+        if (examEntered > 60)
+        {
+            e.Cancel = true;
+            throw new Exception("The exam mark is out of 60 - " + examEntered + " was entered for student: " + e.OldValues["regno"]);
+        }
         if (totalMark > 100)
         {
             e.Cancel = true;
@@ -1104,8 +1069,8 @@ public partial class COOPERP_NewScreens_ExamResultsInfo : System.Web.UI.Page
         int cwEntered = Convert.ToInt32(args.NewValues["cw_mark_entered"] ?? 0);
         int examEntered = Convert.ToInt32(args.NewValues["exam_mark_entered"] ?? 0);
         
-        // Get ratios and calculate
-        decimal cwRatio = 30, examRatio = 70;
+        // Not scaled - see gvResults_RowUpdating. Components are entered on their final
+        // scales and the total is their plain sum.
         
         using (MySqlConnection conn = new MySqlConnection(ConnectionString))
         {
@@ -1114,33 +1079,16 @@ public partial class COOPERP_NewScreens_ExamResultsInfo : System.Web.UI.Page
             // Snapshot before edit
             DataRow snap = MarksAuditLogger.SnapshotFaculty(conn, id);
             
-            string ratioSql = @"SELECT coursework_ratio, exam_ratio FROM acad_examresults_faculty_settings
-                               WHERE course_id = @course AND acad_year = @acad AND semester = @sem
-                                 AND prog_id = @prog AND stud_session = @session AND study_year = @yr
-                               LIMIT 1";
-            
-            using (MySqlCommand cmd = new MySqlCommand(ratioSql, conn))
-            {
-                cmd.Parameters.AddWithValue("@course", ddlCourse.SelectedValue);
-                cmd.Parameters.AddWithValue("@acad", ddlAcadYear.SelectedValue);
-                cmd.Parameters.AddWithValue("@sem", int.Parse(ddlSemester.SelectedValue));
-                cmd.Parameters.AddWithValue("@prog", ddlProgramme.SelectedValue);
-                cmd.Parameters.AddWithValue("@session", ddlSession.SelectedValue);
-                cmd.Parameters.AddWithValue("@yr", int.Parse(ddlStudyYear.SelectedValue));
-                
-                using (MySqlDataReader reader = cmd.ExecuteReader())
-                {
-                    if (reader.Read())
-                    {
-                        cwRatio = Convert.ToDecimal(reader["coursework_ratio"]);
-                        examRatio = Convert.ToDecimal(reader["exam_ratio"]);
-                    }
-                }
-            }
-            
-            int cwMark = (int)Math.Round(cwEntered * cwRatio / 100);
-            int exMark = (int)Math.Round(examEntered * examRatio / 100);
+            int cwMark = cwEntered;
+            int exMark = examEntered;
             int totalMark = cwMark + exMark;
+
+            if (cwEntered > 40)
+                throw new Exception("Coursework is out of 40 - " + cwEntered + " was entered (row " + id + ").");
+            if (examEntered > 60)
+                throw new Exception("The exam mark is out of 60 - " + examEntered + " was entered (row " + id + ").");
+            if (totalMark > 100)
+                throw new Exception("Total mark exceeds 100 (row " + id + ").");
             
             // Recalculate grade and grade point from total mark
             string grade = CalculateGrade(totalMark);

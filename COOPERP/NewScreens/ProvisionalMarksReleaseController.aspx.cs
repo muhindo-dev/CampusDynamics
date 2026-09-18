@@ -437,7 +437,7 @@ public partial class COOPERP_NewScreens_ProvisionalMarksReleaseController : Syst
                                    FROM acad_results ar
                                    WHERE TRIM(ar.regno) = TRIM(@reg)
                                      AND (ar.studyyear IS NULL OR ar.gradept IS NULL OR ar.gradept = 0)";
-                var toFix = new List<(int id, string courseid, string acad, string sem, int score, string grade, string progid)>();
+                List<ResultFixRow> toFix = new List<ResultFixRow>();
                 using (MySqlCommand cmd = new MySqlCommand(findSql, conn))
                 {
                     cmd.Parameters.AddWithValue("@reg", regno);
@@ -452,7 +452,10 @@ public partial class COOPERP_NewScreens_ProvisionalMarksReleaseController : Syst
                             int sc     = rdr.IsDBNull(rdr.GetOrdinal("score")) ? 0 : Convert.ToInt32(rdr["score"]);
                             string grd = rdr.IsDBNull(rdr.GetOrdinal("grade")) ? "" : rdr["grade"].ToString();
                             string prg = rdr.IsDBNull(rdr.GetOrdinal("progid")) ? "" : rdr["progid"].ToString();
-                            toFix.Add((rid, cid, acd, sem, sc, grd, prg));
+                            ResultFixRow fx = new ResultFixRow();
+                            fx.id = rid; fx.courseid = cid; fx.acad = acd; fx.sem = sem;
+                            fx.score = sc; fx.grade = grd; fx.progid = prg;
+                            toFix.Add(fx);
                         }
                     }
                 }
@@ -798,5 +801,21 @@ public partial class COOPERP_NewScreens_ProvisionalMarksReleaseController : Syst
     {
         ListItem li = ddl.Items.FindByValue(value);
         if (li != null) li.Selected = true;
+    }
+
+    /// <summary>
+    /// Row carrier for RepairStudentResults. This was a C# 7 named tuple, which this site
+    /// cannot compile - the ASP.NET build here is C# 5, so the page returned CS1031
+    /// "Type expected" and 500'd for every visitor. Keep it a plain class.
+    /// </summary>
+    private class ResultFixRow
+    {
+        public int id;
+        public string courseid;
+        public string acad;
+        public string sem;
+        public int score;
+        public string grade;
+        public string progid;
     }
 }

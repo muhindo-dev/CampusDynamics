@@ -62,7 +62,7 @@ public static class MarksSheetService
                              TRIM(CONCAT(COALESCE(s.firstname,''), ' ', COALESCE(s.othername,''))) AS student_name,
                              COALESCE(ef.cw_mark_entered, 0) AS cw_entered,
                              COALESCE(ef.test_mark_entered, 0) AS test_entered,
-                             COALESCE(ef.ex_mark_entered, 0) AS exam_entered,
+                             COALESCE(ef.exam_mark_entered, 0) AS exam_entered,
                              COALESCE(ef.cw_mark, 0) AS cw_mark,
                              COALESCE(ef.test_mark, 0) AS test_mark,
                              COALESCE(ef.ex_mark, 0) AS exam_mark,
@@ -166,46 +166,19 @@ public static class MarksSheetService
         string courseId, string progid, string acadyear, int semester,
         int studyYear, int campusId, string studSession)
     {
-        try
-        {
-            using (MySqlCommand cmd = new MySqlCommand(
-                @"SELECT COALESCE(cw_ratio, 0) AS cw_ratio,
-                         COALESCE(test_ratio, 0) AS test_ratio,
-                         COALESCE(exam_ratio, 0) AS exam_ratio
-                  FROM acad_examresults_faculty_settings
-                  WHERE course_id = @course AND progid = @prog
-                    AND acad_year = @year AND semester = @sem
-                  LIMIT 1", conn))
-            {
-                cmd.Parameters.AddWithValue("@course", courseId);
-                cmd.Parameters.AddWithValue("@prog", progid);
-                cmd.Parameters.AddWithValue("@year", acadyear);
-                cmd.Parameters.AddWithValue("@sem", semester);
-
-                using (MySqlDataReader rdr = cmd.ExecuteReader())
-                {
-                    if (rdr.Read())
-                    {
-                        sheet.CwRatio = Convert.ToInt32(rdr["cw_ratio"]);
-                        sheet.TestRatio = Convert.ToInt32(rdr["test_ratio"]);
-                        sheet.ExamRatio = Convert.ToInt32(rdr["exam_ratio"]);
-                    }
-                    else
-                    {
-                        // Default ratios if not configured
-                        sheet.CwRatio = 40;
-                        sheet.TestRatio = 0;
-                        sheet.ExamRatio = 60;
-                    }
-                }
-            }
-        }
-        catch
-        {
-            sheet.CwRatio = 40;
-            sheet.TestRatio = 0;
-            sheet.ExamRatio = 60;
-        }
+        // These are LABELS, not multipliers - the sheet shows "out of 40" / "out of 60".
+        // Nothing multiplies by them any more (see BulkSaveMarks).
+        //
+        // A lookup against acad_examresults_faculty_settings used to sit here. It selected
+        // cw_ratio and filtered on acad_year; the table has coursework_ratio and acadyear, so it
+        // threw on every call and the catch supplied exactly these numbers. Removed rather than
+        // corrected, deliberately: of that table's rows for current years 2,945 of ~3,015 read
+        // 100/100 (which under the old formula meant "do not scale" - what MRU already does),
+        // but 43 read 0/100 and 18 read 0/0. Repairing the query would have zeroed the
+        // coursework, or everything, for those courses. Do not "fix" it back.
+        sheet.CwRatio = 40;
+        sheet.TestRatio = 0;
+        sheet.ExamRatio = 60;
     }
 
     // ─────────────────────── Public Ratio Access (H-01) ─────────────────
@@ -218,46 +191,14 @@ public static class MarksSheetService
     /// </summary>
     public static RatioData GetRatios(string courseId, string progid, string acadyear, int semester)
     {
+        // Display labels only. The lookup that used to be here could never run - it selected
+        // cw_ratio and filtered on acad_year, while the table has coursework_ratio and
+        // acadyear - so these defaults were always what callers actually got. Removed rather
+        // than repaired; see LoadRatios for why repairing it would zero some courses.
         RatioData data = new RatioData();
         data.CwRatio = 40;
         data.TestRatio = 0;
         data.ExamRatio = 60;
-
-        try
-        {
-            using (MySqlConnection conn = new MySqlConnection(MarksConfiguration.ConnStr))
-            {
-                conn.Open();
-                using (MySqlCommand cmd = new MySqlCommand(
-                    @"SELECT COALESCE(cw_ratio, 0) AS cw_ratio,
-                             COALESCE(test_ratio, 0) AS test_ratio,
-                             COALESCE(exam_ratio, 0) AS exam_ratio
-                      FROM acad_examresults_faculty_settings
-                      WHERE course_id = @course AND progid = @prog
-                        AND acad_year = @year AND semester = @sem
-                      LIMIT 1", conn))
-                {
-                    cmd.Parameters.AddWithValue("@course", courseId);
-                    cmd.Parameters.AddWithValue("@prog", progid);
-                    cmd.Parameters.AddWithValue("@year", acadyear);
-                    cmd.Parameters.AddWithValue("@sem", semester);
-
-                    using (MySqlDataReader rdr = cmd.ExecuteReader())
-                    {
-                        if (rdr.Read())
-                        {
-                            data.CwRatio = Convert.ToInt32(rdr["cw_ratio"]);
-                            data.TestRatio = Convert.ToInt32(rdr["test_ratio"]);
-                            data.ExamRatio = Convert.ToInt32(rdr["exam_ratio"]);
-                        }
-                    }
-                }
-            }
-        }
-        catch
-        {
-            // Defaults already set above
-        }
         return data;
     }
 
@@ -313,10 +254,20 @@ public static class MarksSheetService
                                 continue;
                             }
 
-                            // Compute weighted marks
-                            int cwWeighted = (cwRatio > 0) ? (int)Math.Round((double)input.CwEntered * cwRatio / 100.0) : 0;
-                            int testWeighted = (testRatio > 0) ? (int)Math.Round((double)input.TestEntered * testRatio / 100.0) : 0;
-                            int examWeighted = (examRatio > 0) ? (int)Math.Round((double)input.ExamEntered * examRatio / 100.0) : 0;
+                            // MRU enters marks ALREADY on their final scale - coursework out of 40,
+                            // exam out of 60 - and the total is their plain sum. 36,660 rows in
+                            // acad_examresults_faculty have cw_mark = cw_mark_entered against 4 that
+                            // are scaled, so this is the established behaviour, not a preference.
+                            //
+                            // This used to multiply by cwRatio/examRatio. Those ratios could never be
+                            // read (the lookup named columns that do not exist - see GetRatios), so the
+                            // fallback 40/0/60 applied and every mark would have been cut to roughly
+                            // 40%/60% of its true value. The path never ran because the column name
+                            // above was wrong too; correcting that name without removing this
+                            // multiplication would have turned a dead screen into a mark-corrupting one.
+                            int cwWeighted = input.CwEntered;
+                            int testWeighted = input.TestEntered;
+                            int examWeighted = input.ExamEntered;
                             int total = cwWeighted + testWeighted + examWeighted;
 
                             if (total > 100)
@@ -330,7 +281,7 @@ public static class MarksSheetService
                             int oldCwMark = 0, oldTestMark = 0, oldExamMark = 0;
                             using (MySqlCommand chk = new MySqlCommand(
                                 @"SELECT approved_by, 
-                                         COALESCE(cw_mark_entered, 0), COALESCE(test_mark_entered, 0), COALESCE(ex_mark_entered, 0),
+                                         COALESCE(cw_mark_entered, 0), COALESCE(test_mark_entered, 0), COALESCE(exam_mark_entered, 0),
                                          COALESCE(cw_mark, 0), COALESCE(test_mark, 0), COALESCE(ex_mark, 0)
                                   FROM acad_examresults_faculty WHERE id = @id", conn, tx))
                             {
@@ -376,7 +327,7 @@ public static class MarksSheetService
                             // Update the row
                             using (MySqlCommand upd = new MySqlCommand(
                                 @"UPDATE acad_examresults_faculty 
-                                  SET cw_mark_entered = @cwe, test_mark_entered = @te, ex_mark_entered = @ee,
+                                  SET cw_mark_entered = @cwe, test_mark_entered = @te, exam_mark_entered = @ee,
                                       cw_mark = @cwm, test_mark = @tm, ex_mark = @em,
                                       total_mark = @total
                                   WHERE id = @id", conn, tx))
