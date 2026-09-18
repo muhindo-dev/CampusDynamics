@@ -369,7 +369,10 @@ function malApply(){
     add('from','fFrom'); add('to','fTo');   add('who','fWho');
     add('imp','fImp');   add('act','fAct'); add('screen','fScreen');
     add('out','fOut');   add('stu','fStu'); add('crs','fCrs');
-    add('q','fQ');       add('ps','malPageSize');
+    add('q','fQ');
+    // 50 is the default, so leave it out and keep the link clean
+    var ps = document.getElementById('malPageSize');
+    if (ps && ps.value && ps.value !== '50') p.push('ps=' + encodeURIComponent(ps.value));
     window.location.href = 'MarksActionLog.aspx' + (p.length ? '?' + p.join('&') : '');
 }
 

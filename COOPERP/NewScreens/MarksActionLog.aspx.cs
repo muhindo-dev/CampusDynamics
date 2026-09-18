@@ -44,6 +44,10 @@ public partial class COOPERP_NewScreens_MarksActionLog : Page
 
     private static readonly int[] PageSizes = new int[] { 25, 50, 100, 200 };
 
+    /// <summary>What the page shows when nobody has chosen anything: everything.</summary>
+    private const string DefaultRange = "all";
+    private const int DefaultPageSize = 50;
+
     /// <summary>How many log rows may be pulled into memory before the student resolution and
     /// the free-text search run. The table grows by roughly 150 rows a month.</summary>
     private const int CandidateCap = 20000;
@@ -55,7 +59,7 @@ public partial class COOPERP_NewScreens_MarksActionLog : Page
     //  Request state
     // ────────────────────────────────────────────────────────────────────
 
-    private string _range = "365";
+    private string _range = "all";
     private string _from = "";
     private string _to = "";
     private string _who = "";
@@ -66,6 +70,8 @@ public partial class COOPERP_NewScreens_MarksActionLog : Page
     private string _stu = "";          // reg. number or student name
     private string _crs = "";          // course code or course title
     private string _q = "";            // anything else
+    private string _stuL = "", _crsL = "", _qL = "";   // the same three, folded for matching
+    private bool _termsReady;
     private int _page = 1;
     private int _pageSize = 50;
 
@@ -104,7 +110,7 @@ public partial class COOPERP_NewScreens_MarksActionLog : Page
                 List<Row> all = LoadRows(conn);
                 ResolveRegistrations(conn, all);
                 all = ApplyScope(all);
-                List<Row> rows = ApplyTextFilters(all);
+                List<Row> rows = ApplyAllFilters(all);
 
                 if (string.Equals(Request["export"], "csv", StringComparison.OrdinalIgnoreCase))
                 {
@@ -112,10 +118,10 @@ public partial class COOPERP_NewScreens_MarksActionLog : Page
                     return;
                 }
 
-                // Built from everything in scope for the period, not from what survived the
-                // text filters — otherwise choosing one course would empty the course list.
+                // Every filter's options come from the scoped set with that one filter lifted,
+                // so each list shows what is still reachable and its counts are the real ones.
                 BuildPickLists(all);
-                LoadFilterOptions(conn);
+                BuildFilterOptions(all);
                 RenderQuickRanges();
                 litFrom.Text = Enc(_from);
                 litTo.Text = Enc(_to);
@@ -150,19 +156,21 @@ public partial class COOPERP_NewScreens_MarksActionLog : Page
         _q = Trim(qs["q"], 80);
         if (_imp != "changes" && _imp != "views") _imp = "";
 
-        string from = Trim(qs["from"], 10);
-        string to = Trim(qs["to"], 10);
+        // No query string means no filter: the whole log, newest first.
+        string from = ValidDate(Trim(qs["from"], 10));
+        string to = ValidDate(Trim(qs["to"], 10));
         if (from.Length > 0 || to.Length > 0)
         {
-            _from = ValidDate(from);
-            _to = ValidDate(to);
+            // A typed date wins over a preset. If only one end is given the other stays open.
+            _from = from;
+            _to = to;
             _range = "";
         }
         else
         {
             _range = Low(qs["r"]);
             if (_range != "all" && _range != "today" && _range != "7" && _range != "30" && _range != "365")
-                _range = "365";
+                _range = DefaultRange;     // also catches a from/to that would not parse
             ApplyRange();
         }
 
@@ -171,7 +179,7 @@ public partial class COOPERP_NewScreens_MarksActionLog : Page
 
         int ps;
         int.TryParse(qs["ps"], out ps);
-        _pageSize = 50;
+        _pageSize = DefaultPageSize;
         for (int i = 0; i < PageSizes.Length; i++) if (PageSizes[i] == ps) _pageSize = ps;
     }
 
@@ -184,7 +192,8 @@ public partial class COOPERP_NewScreens_MarksActionLog : Page
             case "today": _from = Ymd(today); _to = Ymd(today); break;
             case "7": _from = Ymd(today.AddDays(-6)); _to = Ymd(today); break;
             case "30": _from = Ymd(today.AddDays(-29)); _to = Ymd(today); break;
-            default: _from = Ymd(new DateTime(today.Year, 1, 1)); _to = Ymd(today); break;
+            case "365": _from = Ymd(new DateTime(today.Year, 1, 1)); _to = Ymd(today); break;
+            default: _from = ""; _to = ""; break;
         }
     }
 
@@ -288,14 +297,12 @@ public partial class COOPERP_NewScreens_MarksActionLog : Page
     private List<Row> LoadRows(MySqlConnection conn)
     {
         List<Row> rows = new List<Row>();
+        // Only the period narrows the query. Every other filter is decided in memory, so that
+        // each dropdown can be built from what is still reachable rather than from the whole
+        // table — an option offering 12 rows that turn out to be 0 is worse than no option.
         StringBuilder where = new StringBuilder(" WHERE 1=1 ");
         if (_from.Length > 0) where.Append(" AND l.created_at >= @dfrom ");
         if (_to.Length > 0) where.Append(" AND l.created_at < @dto ");
-        if (_who.Length > 0) where.Append(" AND l.username = @who ");
-        if (_act.Length > 0) where.Append(" AND l.action = @act ");
-        if (_screen.Length > 0) where.Append(" AND l.page = @screen ");
-        if (_out.Length > 0) where.Append(" AND l.outcome = @out ");
-        where.Append(ImpactSql());
 
         using (MySqlCommand cmd = new MySqlCommand(
             "SELECT l.id, l.created_at, l.username, l.page, l.action, l.outcome, " +
@@ -336,32 +343,6 @@ public partial class COOPERP_NewScreens_MarksActionLog : Page
     {
         if (_from.Length > 0) cmd.Parameters.AddWithValue("@dfrom", DateTime.Parse(_from, CultureInfo.InvariantCulture));
         if (_to.Length > 0) cmd.Parameters.AddWithValue("@dto", DateTime.Parse(_to, CultureInfo.InvariantCulture).AddDays(1));
-        if (_who.Length > 0) cmd.Parameters.AddWithValue("@who", _who);
-        if (_act.Length > 0) cmd.Parameters.AddWithValue("@act", _act);
-        if (_screen.Length > 0) cmd.Parameters.AddWithValue("@screen", _screen);
-        if (_out.Length > 0) cmd.Parameters.AddWithValue("@out", _out);
-    }
-
-    /// <summary>Built from constants only — nothing the caller typed reaches the SQL.</summary>
-    private string ImpactSql()
-    {
-        if (_imp != "changes" && _imp != "views") return "";
-
-        StringBuilder list = new StringBuilder();
-        for (int i = 0; i < ViewOnlyActions.Length; i++)
-        {
-            if (i > 0) list.Append(",");
-            list.Append("'").Append(ViewOnlyActions[i]).Append("'");
-        }
-        StringBuilder pre = new StringBuilder();
-        for (int i = 0; i < ViewOnlyPrefixes.Length; i++)
-            pre.Append(_imp == "views" ? " OR " : " AND ")
-               .Append("l.action ").Append(_imp == "views" ? "LIKE" : "NOT LIKE")
-               .Append(" '").Append(ViewOnlyPrefixes[i]).Append("%'");
-
-        if (_imp == "views")
-            return " AND (l.action IN (" + list + ")" + pre + ") ";
-        return " AND (l.action NOT IN (" + list + ")" + pre + ") ";
     }
 
     private static bool IsViewOnly(string action)
@@ -693,65 +674,79 @@ public partial class COOPERP_NewScreens_MarksActionLog : Page
     }
 
     /// <summary>
-    /// The three text filters. Student and course are separate on purpose: one blended box
-    /// cannot answer "what has anyone done to this student" without also matching a course
-    /// code that happens to share the letters.
+    /// Every filter except the period, which the query already applied. <paramref name="except"/>
+    /// names one dimension to ignore, which is how each dropdown is built from what is still
+    /// reachable once the *other* filters are in force: an option promising 12 rows that turn
+    /// out to be none is worse than no option at all.
     /// </summary>
-    private List<Row> ApplyTextFilters(List<Row> rows)
+    private bool Keep(Row x, string except)
     {
-        string stu = _stu.ToLowerInvariant();
-        string crs = _crs.ToLowerInvariant();
-        string q = _q.ToLowerInvariant();
-        if (stu.Length == 0 && crs.Length == 0 && q.Length == 0) return rows;
+        EnsureTerms();
 
-        List<Row> kept = new List<Row>();
-        for (int i = 0; i < rows.Count; i++)
+        if (except != "who" && _who.Length > 0
+            && !string.Equals(x.Who, _who, StringComparison.OrdinalIgnoreCase)) return false;
+        if (except != "act" && _act.Length > 0
+            && !string.Equals(x.Action, _act, StringComparison.OrdinalIgnoreCase)) return false;
+        if (except != "screen" && _screen.Length > 0
+            && !string.Equals(x.Screen, _screen, StringComparison.OrdinalIgnoreCase)) return false;
+        if (except != "out" && _out.Length > 0
+            && !string.Equals(x.Outcome, _out, StringComparison.OrdinalIgnoreCase)) return false;
+
+        if (except != "imp" && _imp.Length > 0)
         {
-            Row x = rows[i];
-
-            if (stu.Length > 0 && crs.Length > 0)
-            {
-                // Both set means one question, not two: this student on that course. A bulk
-                // action naming 40 registrations would otherwise match because somebody in the
-                // batch was the student and somebody else was on the course.
-                if (!MatchesPair(x, stu, crs)) continue;
-            }
-            else
-            {
-                if (stu.Length > 0 && !MatchesStudent(x, stu)) continue;
-                if (crs.Length > 0 && !MatchesCourse(x, crs)) continue;
-            }
-
-            if (q.Length > 0 && !Matches(x, q)) continue;
-            kept.Add(x);
+            bool viewOnly = IsViewOnly(x.Action);
+            if (_imp == "views" && !viewOnly) return false;
+            if (_imp == "changes" && viewOnly) return false;
         }
+
+        string stu = except == "stu" ? "" : _stuL;
+        string crs = except == "crs" ? "" : _crsL;
+
+        // Student and course are separate filters on purpose: one blended box cannot answer
+        // "what has anyone done to this student" without also matching a course code that
+        // happens to share the letters. Set together they are one question, not two.
+        if (stu.Length > 0 && crs.Length > 0)
+        {
+            if (!MatchesPair(x, stu, crs)) return false;
+        }
+        else
+        {
+            if (stu.Length > 0 && !MatchesStudent(x, stu)) return false;
+            if (crs.Length > 0 && !MatchesCourse(x, crs)) return false;
+        }
+
+        if (except != "q" && _qL.Length > 0 && !Matches(x, _qL)) return false;
+        return true;
+    }
+
+    /// <summary>
+    /// Folds the three free-text terms once, here rather than in ReadRequest, so that every
+    /// path into Keep() gets them — including the detail endpoint and anything added later.
+    /// A matcher that silently stops matching because a cache was not filled is exactly the
+    /// kind of fault a filter must not have.
+    /// </summary>
+    private void EnsureTerms()
+    {
+        if (_termsReady) return;
+        _stuL = (_stu ?? "").ToLowerInvariant();
+        _crsL = (_crs ?? "").ToLowerInvariant();
+        _qL = (_q ?? "").ToLowerInvariant();
+        _termsReady = true;
+    }
+
+    private List<Row> ApplyAllFilters(List<Row> rows)
+    {
+        if (!AnyRowFilter()) return rows;
+        List<Row> kept = new List<Row>();
+        for (int i = 0; i < rows.Count; i++) if (Keep(rows[i], "")) kept.Add(rows[i]);
         return kept;
     }
 
-    /// <summary>One registration that is this student's and on that course.</summary>
-    private bool MatchesPair(Row x, string stu, string crs)
+    /// <summary>True when anything beyond the period is narrowing the list.</summary>
+    private bool AnyRowFilter()
     {
-        for (int i = 0; i < x.RegIds.Count; i++)
-        {
-            Reg g;
-            if (!_regs.TryGetValue(x.RegIds[i], out g)) continue;
-            if ((Has(g.Regno, stu) || Has(g.StudentName, stu)) && (Has(g.Course, crs) || Has(g.CourseName, crs)))
-                return true;
-        }
-
-        Batch b = BatchOf(x);
-        if (b != null)
-            for (int i = 0; i < b.Rows.Count; i++)
-                if ((Has(b.Rows[i][0], stu) || Has(Val(b.Names, b.Rows[i][0]), stu)) && Has(b.Rows[i][1], crs))
-                    return true;
-
-        // An action that named the student and the course directly rather than a registration.
-        string ctxRegno = Get(x.Ctx, "regno");
-        if (ctxRegno.Length > 0 && Has(ctxRegno, stu)
-            && (Has(Get(x.Ctx, "course"), crs) || Has(Get(x.Ctx, "source"), crs) || Has(Get(x.Ctx, "target"), crs)))
-            return true;
-
-        return false;
+        return _who.Length > 0 || _act.Length > 0 || _screen.Length > 0 || _out.Length > 0
+            || _imp.Length > 0 || _stu.Length > 0 || _crs.Length > 0 || _q.Length > 0;
     }
 
     /// <summary>A reg. number or a student's name, wherever this action names one.</summary>
@@ -840,6 +835,32 @@ public partial class COOPERP_NewScreens_MarksActionLog : Page
     {
         return haystack != null && haystack.Length > 0
             && haystack.ToLowerInvariant().IndexOf(needleLower, StringComparison.Ordinal) >= 0;
+    }
+
+    /// <summary>One registration that is this student's and on that course.</summary>
+    private bool MatchesPair(Row x, string stu, string crs)
+    {
+        for (int i = 0; i < x.RegIds.Count; i++)
+        {
+            Reg g;
+            if (!_regs.TryGetValue(x.RegIds[i], out g)) continue;
+            if ((Has(g.Regno, stu) || Has(g.StudentName, stu)) && (Has(g.Course, crs) || Has(g.CourseName, crs)))
+                return true;
+        }
+
+        Batch b = BatchOf(x);
+        if (b != null)
+            for (int i = 0; i < b.Rows.Count; i++)
+                if ((Has(b.Rows[i][0], stu) || Has(Val(b.Names, b.Rows[i][0]), stu)) && Has(b.Rows[i][1], crs))
+                    return true;
+
+        // An action that named the student and the course directly rather than a registration.
+        string ctxRegno = Get(x.Ctx, "regno");
+        if (ctxRegno.Length > 0 && Has(ctxRegno, stu)
+            && (Has(Get(x.Ctx, "course"), crs) || Has(Get(x.Ctx, "source"), crs) || Has(Get(x.Ctx, "target"), crs)))
+            return true;
+
+        return false;
     }
 
     // ════════════════════════════════════════════════════════════════════
@@ -998,8 +1019,10 @@ public partial class COOPERP_NewScreens_MarksActionLog : Page
         }
 
         litKpiActions.Text = N(rows.Count);
-        litKpiActionsSub.Text = PeriodLabel() + " &middot; " + N(ScalarLong(conn,
-            "SELECT COUNT(*) FROM acad_marks_action_log")) + " on record in total";
+        litKpiActionsSub.Text = HasFilter()
+            ? PeriodLabel() + " &middot; " + N(ScalarLong(conn,
+                  "SELECT COUNT(*) FROM acad_marks_action_log")) + " on record in total"
+            : "the whole log, nothing filtered out";
 
         litKpiChanges.Text = N(changes);
         litKpiChangesSub.Text = N(views) + " were only looking";
@@ -1204,47 +1227,55 @@ public partial class COOPERP_NewScreens_MarksActionLog : Page
     // ── filter options ──────────────────────────────────────────────────
 
     /// <summary>
-    /// Type-ahead values for the student and course filters: the ones this period actually
-    /// contains, so the two boxes are picked from rather than guessed at. Free text still works
-    /// for anything outside the list.
+    /// Type-ahead values for the student and course filters: the ones still reachable under the
+    /// other filters, so the two boxes are picked from rather than guessed at. Free text still
+    /// works for anything outside them.
     /// </summary>
-    private void BuildPickLists(List<Row> rows)
+    private void BuildPickLists(List<Row> scoped)
     {
         SortedDictionary<string, string> students = new SortedDictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         SortedDictionary<string, string> courses = new SortedDictionary<string, string>(StringComparer.OrdinalIgnoreCase);
 
-        for (int i = 0; i < rows.Count; i++)
+        for (int i = 0; i < scoped.Count; i++)
         {
-            Row x = rows[i];
+            Row x = scoped[i];
+            bool forStudents = Keep(x, "stu");
+            bool forCourses = Keep(x, "crs");
+            if (!forStudents && !forCourses) continue;
 
             for (int j = 0; j < x.RegIds.Count; j++)
             {
                 Reg g;
                 if (!_regs.TryGetValue(x.RegIds[j], out g)) continue;
-                if (g.Regno.Length > 0 && !students.ContainsKey(g.Regno)) students[g.Regno] = g.StudentName;
-                if (g.Course.Length > 0 && !courses.ContainsKey(g.Course)) courses[g.Course] = g.CourseName;
+                if (forStudents && g.Regno.Length > 0 && !students.ContainsKey(g.Regno)) students[g.Regno] = g.StudentName;
+                if (forCourses && g.Course.Length > 0 && !courses.ContainsKey(g.Course)) courses[g.Course] = g.CourseName;
             }
 
             Batch b = BatchOf(x);
             if (b != null)
             {
-                for (int j = 0; j < b.Regnos.Count; j++)
-                    if (!students.ContainsKey(b.Regnos[j])) students[b.Regnos[j]] = Val(b.Names, b.Regnos[j]);
-                for (int j = 0; j < b.Rows.Count; j++)
-                    if (b.Rows[j][1].Length > 0 && !courses.ContainsKey(b.Rows[j][1])) courses[b.Rows[j][1]] = "";
+                if (forStudents)
+                    for (int j = 0; j < b.Regnos.Count; j++)
+                        if (!students.ContainsKey(b.Regnos[j])) students[b.Regnos[j]] = Val(b.Names, b.Regnos[j]);
+                if (forCourses)
+                    for (int j = 0; j < b.Rows.Count; j++)
+                        if (b.Rows[j][1].Length > 0 && !courses.ContainsKey(b.Rows[j][1])) courses[b.Rows[j][1]] = "";
             }
 
             string ctxRegno = Get(x.Ctx, "regno");
-            if (ctxRegno.Length > 0 && !students.ContainsKey(ctxRegno)) students[ctxRegno] = "";
-            string[] ctxCourses = new string[] { Get(x.Ctx, "course"), Get(x.Ctx, "source"), Get(x.Ctx, "target") };
-            for (int j = 0; j < ctxCourses.Length; j++)
-                if (ctxCourses[j].Length > 0 && !courses.ContainsKey(ctxCourses[j])) courses[ctxCourses[j]] = "";
+            if (forStudents && ctxRegno.Length > 0 && !students.ContainsKey(ctxRegno)) students[ctxRegno] = "";
+            if (forCourses)
+            {
+                string[] ctxCourses = new string[] { Get(x.Ctx, "course"), Get(x.Ctx, "source"), Get(x.Ctx, "target") };
+                for (int j = 0; j < ctxCourses.Length; j++)
+                    if (ctxCourses[j].Length > 0 && !courses.ContainsKey(ctxCourses[j])) courses[ctxCourses[j]] = "";
+            }
         }
 
         litStuList.Text = DataList(students);
         litCrsList.Text = DataList(courses);
-        litStuCount.Text = students.Count == 0 ? "" : N(students.Count) + " in view";
-        litCrsCount.Text = courses.Count == 0 ? "" : N(courses.Count) + " in view";
+        litStuCount.Text = students.Count == 0 ? "" : N(students.Count) + " to pick from";
+        litCrsCount.Text = courses.Count == 0 ? "" : N(courses.Count) + " to pick from";
     }
 
     private const int PickListCap = 600;
@@ -1262,57 +1293,92 @@ public partial class COOPERP_NewScreens_MarksActionLog : Page
         return sb.ToString();
     }
 
-    private void LoadFilterOptions(MySqlConnection conn)
-    {
-        litWhoOpts.Text = GroupOptions(conn, "username", _who, "Anyone", null);
-        litScreenOpts.Text = GroupOptions(conn, "page", _screen, "Every screen", "screen");
-        litActOpts.Text = GroupOptions(conn, "action", _act, "Every action", "action");
-        litOutOpts.Text = GroupOptions(conn, "outcome", _out, "Any outcome", "outcome");
+    // ── the four dropdowns ──────────────────────────────────────────────
 
+    private void BuildFilterOptions(List<Row> scoped)
+    {
+        litWhoOpts.Text = Facet(scoped, "who", _who, "Anyone", null);
+        litScreenOpts.Text = Facet(scoped, "screen", _screen, "Every screen", "screen");
+        litActOpts.Text = Facet(scoped, "act", _act, "Every action", "action");
+        litOutOpts.Text = Facet(scoped, "out", _out, "Any outcome", "outcome");
+
+        int changed = 0, viewed = 0;
+        for (int i = 0; i < scoped.Count; i++)
+        {
+            if (!Keep(scoped[i], "imp")) continue;
+            if (IsViewOnly(scoped[i].Action)) viewed++; else changed++;
+        }
         litImpOpts.Text =
-            Opt("", "Anything", _imp) +
-            Opt("changes", "Changed something", _imp) +
-            Opt("views", "Only looked", _imp);
+            Opt("", "Anything (" + N(changed + viewed) + ")", _imp) +
+            Opt("changes", "Changed something (" + N(changed) + ")", _imp) +
+            Opt("views", "Only looked (" + N(viewed) + ")", _imp);
+    }
+
+    private static string DimValue(Row x, string dim)
+    {
+        switch (dim)
+        {
+            case "who": return x.Who;
+            case "act": return x.Action;
+            case "screen": return x.Screen;
+            case "out": return x.Outcome;
+        }
+        return "";
     }
 
     /// <summary>
-    /// The column name is a compile-time constant on every call, never anything a caller typed.
-    /// Options carry their counts so an empty filter is obvious before it is applied.
+    /// One dropdown, counted over the rows that survive every filter but this one. Options are
+    /// ordered by how much there is behind them, and a selection that no longer appears is kept
+    /// on the list rather than silently falling back to "all".
     /// </summary>
-    private string GroupOptions(MySqlConnection conn, string column, string current, string allLabel, string labelKind)
+    private string Facet(List<Row> scoped, string dim, string current, string allLabel, string labelKind)
     {
-        StringBuilder sb = new StringBuilder("<option value=''>" + Enc(allLabel) + "</option>");
-        try
-        {
-            using (MySqlCommand cmd = new MySqlCommand(
-                "SELECT l." + column + " k, COUNT(*) n FROM acad_marks_action_log l " +
-                "WHERE l." + column + " IS NOT NULL AND l." + column + " <> '' " +
-                "GROUP BY l." + column + " ORDER BY n DESC LIMIT 200", conn))
-            {
-                cmd.CommandTimeout = 30;
-                using (MySqlDataReader r = cmd.ExecuteReader())
-                    while (r.Read())
-                    {
-                        string v = Str(r["k"]);
-                        if (v.Length == 0) continue;
-                        string label = v;
-                        if (labelKind == "action") label = ActionOptionLabel(v);
-                        else if (labelKind == "outcome") label = OutcomeLabel(v);
-                        else if (labelKind == "screen") label = Words(v);
-                        sb.Append("<option value='").Append(Enc(v)).Append("'")
-                          .Append(v == current ? " selected='selected'" : "").Append(">")
-                          .Append(Enc(label)).Append(" (").Append(N(r["n"])).Append(")</option>");
-                    }
-            }
-        }
-        catch { }
+        Dictionary<string, int> counts = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+        int total = 0;
 
-        // A filter the viewer arrived with must stay selectable even if it fell off the list.
-        if (current.Length > 0 && sb.ToString().IndexOf("value='" + Enc(current) + "'", StringComparison.Ordinal) < 0)
+        for (int i = 0; i < scoped.Count; i++)
+        {
+            if (!Keep(scoped[i], dim)) continue;
+            total++;
+            string v = DimValue(scoped[i], dim);
+            if (v.Length == 0) continue;           // nothing to filter on
+            counts[v] = counts.ContainsKey(v) ? counts[v] + 1 : 1;
+        }
+
+        List<KeyValuePair<string, int>> ordered = new List<KeyValuePair<string, int>>(counts);
+        ordered.Sort(delegate(KeyValuePair<string, int> a, KeyValuePair<string, int> b)
+        {
+            int c = b.Value.CompareTo(a.Value);
+            return c != 0 ? c : string.Compare(a.Key, b.Key, StringComparison.OrdinalIgnoreCase);
+        });
+
+        StringBuilder sb = new StringBuilder();
+        sb.Append("<option value=''>").Append(Enc(allLabel)).Append(" (").Append(N(total)).Append(")</option>");
+
+        bool sawCurrent = false;
+        for (int i = 0; i < ordered.Count && i < 200; i++)
+        {
+            string v = ordered[i].Key;
+            if (string.Equals(v, current, StringComparison.OrdinalIgnoreCase)) sawCurrent = true;
+            sb.Append("<option value='").Append(Enc(v)).Append("'")
+              .Append(string.Equals(v, current, StringComparison.OrdinalIgnoreCase) ? " selected='selected'" : "")
+              .Append(">").Append(Enc(FacetLabel(v, labelKind)))
+              .Append(" (").Append(N(ordered[i].Value)).Append(")</option>");
+        }
+
+        if (current.Length > 0 && !sawCurrent)
             sb.Append("<option value='").Append(Enc(current)).Append("' selected='selected'>")
-              .Append(Enc(current)).Append("</option>");
+              .Append(Enc(FacetLabel(current, labelKind))).Append(" (0)</option>");
 
         return sb.ToString();
+    }
+
+    private static string FacetLabel(string v, string labelKind)
+    {
+        if (labelKind == "action") return ActionOptionLabel(v);
+        if (labelKind == "outcome") return OutcomeLabel(v);
+        if (labelKind == "screen") return Words(v);
+        return v;
     }
 
     /// <summary>Dropdown label for an action code — no context to draw on, so it stays generic.</summary>
@@ -1462,7 +1528,7 @@ public partial class COOPERP_NewScreens_MarksActionLog : Page
     private string Url(params string[] overrides)
     {
         Dictionary<string, string> p = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
-        if (_range.Length > 0) p["r"] = _range;
+        if (_range.Length > 0) { if (_range != DefaultRange) p["r"] = _range; }
         else { if (_from.Length > 0) p["from"] = _from; if (_to.Length > 0) p["to"] = _to; }
         if (_who.Length > 0) p["who"] = _who;
         if (_act.Length > 0) p["act"] = _act;
@@ -1472,7 +1538,7 @@ public partial class COOPERP_NewScreens_MarksActionLog : Page
         if (_stu.Length > 0) p["stu"] = _stu;
         if (_crs.Length > 0) p["crs"] = _crs;
         if (_q.Length > 0) p["q"] = _q;
-        if (_pageSize != 50) p["ps"] = _pageSize.ToString(CultureInfo.InvariantCulture);
+        if (_pageSize != DefaultPageSize) p["ps"] = _pageSize.ToString(CultureInfo.InvariantCulture);
         if (_page > 1) p["p"] = _page.ToString(CultureInfo.InvariantCulture);
 
         for (int i = 0; i + 1 < overrides.Length; i += 2)
@@ -1480,6 +1546,10 @@ public partial class COOPERP_NewScreens_MarksActionLog : Page
             string k = overrides[i], v = overrides[i + 1];
             if (v == null) p.Remove(k); else p[k] = v;
         }
+
+        // The default period carries no parameter, so "Everything" and "Clear" lead to the
+        // same bare URL rather than two spellings of the same view.
+        if (p.ContainsKey("r") && p["r"] == DefaultRange) p.Remove("r");
 
         StringBuilder sb = new StringBuilder("MarksActionLog.aspx");
         bool firstPair = true;
