@@ -614,6 +614,13 @@ public partial class COOPERP_NewScreens_AcademicResults : System.Web.UI.Page
             using (MySqlConnection conn = new MySqlConnection(ConnectionString))
             {
                 conn.Open();
+
+                // Name the person before the row goes. The audit trigger on acad_results reads
+                // mark_audit_context; without this the deletion of a student's published mark
+                // is recorded as "system", which is the same as not recording it.
+                MarkAuditContext.Set(conn, null, "AcademicResults:delete-result",
+                    "Published result deleted from the Academic Results screen");
+
                 string sql = "DELETE FROM acad_results WHERE ID = @id";
                 using (MySqlCommand cmd = new MySqlCommand(sql, conn))
                 {

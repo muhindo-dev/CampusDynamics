@@ -1961,6 +1961,11 @@ public static class MarksControllerShared
         int    effectiveSemester = ParseIntSafe(semester, 0);
         int    effectiveStudyYr  = studyYear;
 
+        // The term this publish is actually for, kept because the block below overwrites the
+        // "effective" values with whatever term an existing result already sits in.
+        string requestedAcad     = acadYear;
+        int    requestedSemester = ParseIntSafe(semester, 0);
+
         using (MySqlCommand chk = new MySqlCommand(@"
             SELECT score, grade, acad, semester, COALESCE(studyyear,0) AS studyyear
             FROM acad_results
@@ -1984,6 +1989,33 @@ public static class MarksControllerShared
                     if (sy > 0) effectiveStudyYr = sy;
                 }
             }
+        }
+
+        // ── Step 1b: Refuse to publish one term's mark on top of another ─────────────
+        // acad_results is UNIQUE on (regno, courseid) alone — a student can hold only one
+        // result per course code for their whole time here. So when the same course is taken
+        // again in a later term, the UPSERT below lands on the EARLIER term's row: the older
+        // mark is overwritten and the term being published shows the student nothing. It has
+        // happened to 113 registrations since 2023/2024.
+        //
+        // Until the key carries the term, refuse loudly. A blocked publish with an explanation
+        // is recoverable; a silent overwrite destroys one mark and hides another, and the
+        // student is the one who finds out.
+        if (priorScore.HasValue
+            && (!string.Equals((effectiveAcad ?? "").Trim(), (requestedAcad ?? "").Trim(), StringComparison.OrdinalIgnoreCase)
+                || effectiveSemester != requestedSemester))
+        {
+            result.Message = string.Format(
+                "Cannot publish: {0} already has a published result for {1} under {2} semester {3} " +
+                "(score {4}{5}). Publishing this {6} semester {7} mark would overwrite it, and this " +
+                "term would still show nothing, because a result is stored once per course code. " +
+                "Correct the registration's academic year or semester, or unpublish the existing " +
+                "result first, then publish again.",
+                regno, courseId,
+                string.IsNullOrEmpty(effectiveAcad) ? "?" : effectiveAcad, effectiveSemester,
+                priorScore.Value, string.IsNullOrEmpty(priorGrade) ? "" : " / " + priorGrade,
+                string.IsNullOrEmpty(requestedAcad) ? "?" : requestedAcad, requestedSemester);
+            return result;
         }
 
         // ── Step 2: Build audit comment ──────────────────────────────────────────────
