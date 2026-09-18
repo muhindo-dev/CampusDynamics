@@ -1,470 +1,524 @@
 <%@ Page Language="C#" MasterPageFile="~/COOPERP/NewScreens/SidebarMaster.master" AutoEventWireup="true" CodeFile="MarksAuditTrail.aspx.cs" Inherits="COOPERP_NewScreens_MarksAuditTrail" Title="Marks Audit Trail - Campus Dynamics" %>
 
-<%@ Register Assembly="DevExpress.Web.v16.1, Version=16.1.4.0, Culture=neutral, PublicKeyToken=b88d1754d700e49a" Namespace="DevExpress.Web" TagPrefix="dx" %>
-
 <asp:Content ID="HeadContent" ContentPlaceHolderID="HeadContent" runat="server">
 <style>
-/* ===== MARKS AUDIT TRAIL — mat- design system ==================== */
+/* ===================================================================
+   Marks Audit Trail  --  house design system (navy, flat, compact).
+   Prefix: mat-      Spec: NewScreens/DESIGN_SYSTEM.md
+   =================================================================== */
 
-/* ── Shared Nav (em- = Exams Module) ── */
-.em-hdr{display:flex;align-items:center;justify-content:space-between;background:linear-gradient(135deg,#1a237e 0%,#283593 100%);color:#fff;padding:12px 20px}
-.em-hdr__title{font-size:15px;font-weight:700}
-.em-hdr__sub{font-size:10px;opacity:.7;margin-top:1px}
-.em-hdr__actions{display:flex;gap:6px;align-items:center}
-.em-tabs{display:flex;gap:0;background:#fff;border-bottom:2px solid #e0e5ed;padding:0 16px;overflow-x:auto;margin-bottom:12px}
-.em-tab{padding:9px 14px;font-size:11px;font-weight:500;color:#555;text-decoration:none;border-bottom:2px solid transparent;margin-bottom:-2px;white-space:nowrap;transition:color .15s,border-color .15s}
-.em-tab:hover{color:#1a237e}
-.em-tab--active{color:#1a237e;border-bottom-color:#1a237e;font-weight:600}
+/* --- page header ------------------------------------------------- */
+.mat-head{display:flex;align-items:center;justify-content:space-between;gap:16px;flex-wrap:wrap;
+          background:#05275C;color:#fff;padding:14px 20px;border-bottom:3px solid #041d45}
+.mat-head__l{display:flex;align-items:center;gap:12px;min-width:0}
+.mat-head__ic{width:40px;height:40px;background:rgba(255,255,255,.12);border-radius:4px;
+              display:flex;align-items:center;justify-content:center;flex-shrink:0}
+.mat-head__t{font-size:16px;font-weight:700;line-height:1.2}
+.mat-head__s{font-size:12px;opacity:.75;margin-top:2px;max-width:620px;line-height:1.45}
+.mat-head__r{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
 
-/* ── Stats Row — redesigned with icons + trends ── */
-.mat-stats{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-bottom:14px}
-.mat-stat{background:#fff;border:1px solid #e0e5ed;padding:14px 16px;position:relative;overflow:hidden;transition:border-color .2s,box-shadow .2s}
-.mat-stat:hover{border-color:#c5cae9;box-shadow:0 2px 8px rgba(26,35,126,.08)}
-.mat-stat::before{content:'';position:absolute;left:0;top:0;bottom:0;width:3px;background:var(--c,#ccc)}
-.mat-stat__top{display:flex;align-items:flex-start;justify-content:space-between;margin-bottom:6px}
-.mat-stat__icon{width:36px;height:36px;border-radius:8px;display:flex;align-items:center;justify-content:center;flex-shrink:0;background:var(--bg,#f5f5f5)}
-.mat-stat__icon svg{width:18px;height:18px;fill:var(--c,#888)}
-.mat-stat__label{font-size:10px;text-transform:uppercase;letter-spacing:.6px;color:#888;font-weight:600}
-.mat-stat__val{font-size:22px;font-weight:800;line-height:1.2;font-variant-numeric:tabular-nums;color:var(--c,#333);margin-top:2px}
-.mat-stat__foot{margin-top:4px;min-height:16px}
-.mat-trend{font-size:10px;font-weight:600;letter-spacing:.2px}
-.mat-trend--up{color:#2e7d32}
-.mat-trend--down{color:#c62828}
-.mat-trend--flat{color:#90a4ae}
-.mat-sub{font-size:10px;color:#90a4ae;font-weight:500}
+/* --- view tabs --------------------------------------------------- */
+.mat-tabs{display:flex;gap:2px;background:#f0f2f5;border-bottom:2px solid #e0e5ed;padding:0 20px;overflow-x:auto}
+.mat-tab{padding:9px 16px;font-size:12px;font-weight:500;color:#555;text-decoration:none;
+         border-bottom:2px solid transparent;margin-bottom:-2px;white-space:nowrap}
+.mat-tab:hover{color:#05275C;text-decoration:none}
+.mat-tab--active{color:#05275C;border-bottom-color:#05275C;font-weight:600}
+.mat-tab__n{font-size:10px;color:#888;margin-left:5px;font-weight:600}
 
-.mat-stat--total{--c:#1a237e;--bg:rgba(26,35,126,.07)}
-.mat-stat--today{--c:#2e7d32;--bg:rgba(46,125,50,.07)}
-.mat-stat--week{--c:#d97706;--bg:rgba(217,119,6,.07)}
-.mat-stat--month{--c:#0277bd;--bg:rgba(2,119,189,.07)}
-.mat-stat--critical{--c:#c62828;--bg:rgba(198,40,40,.07)}
-.mat-stat--users{--c:#6a1b9a;--bg:rgba(106,27,154,.07)}
-.mat-stat--top{--c:#00838f;--bg:rgba(0,131,143,.07)}
-.mat-stat--avg{--c:#4e342e;--bg:rgba(78,52,46,.07)}
+/* --- page body --------------------------------------------------- */
+.mat-body{padding:14px 20px 24px}
 
-/* ── Quick-Filter Chips ── */
-.mat-qf{display:flex;gap:6px;margin-bottom:12px;flex-wrap:wrap;align-items:center}
-.mat-qf__label{font-size:9px;text-transform:uppercase;letter-spacing:.5px;color:#999;font-weight:600;margin-right:4px}
-.mat-chip{padding:5px 12px;font-size:10px;font-weight:600;border:1px solid #e0e5ed;cursor:pointer;background:#fff;color:#555;transition:all .15s;display:inline-flex;align-items:center;gap:4px;font-family:inherit}
-.mat-chip:hover{border-color:#c5cae9;background:#f5f7fa;color:#1a237e}
-.mat-chip--active{background:#1a237e;color:#fff;border-color:#1a237e}
-.mat-chip--active:hover{background:#283593}
-.mat-chip__cnt{background:rgba(255,255,255,.2);padding:1px 5px;font-size:9px;border-radius:8px}
+/* --- notices ----------------------------------------------------- */
+.mat-note{padding:10px 14px;font-size:11.5px;line-height:1.55;margin-bottom:12px;border-radius:2px}
+.mat-note--info{background:#eef3fb;border:1px solid #cfdcf2;color:#173f79}
+.mat-note--error{background:#fef5f5;border:1px solid #f5c6cb;color:#912018}
+.mat-note b{font-weight:600}
 
-/* ── Card System ── */
-.mat-card{background:#fff;border:1px solid #e0e5ed;overflow:hidden;margin-bottom:12px}
-.mat-card__hdr{padding:10px 14px;border-bottom:1px solid #e0e5ed;background:#f8f9fb;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:6px}
-.mat-card__title{font-size:12px;font-weight:700;color:#1a237e;display:flex;align-items:center;gap:6px}
-.mat-card__title svg{width:14px;height:14px;fill:#1a237e;opacity:.7}
-.mat-card__meta{font-size:10px;color:#1a237e;font-weight:600;background:rgba(26,35,126,.07);padding:2px 8px;border:1px solid rgba(26,35,126,.15)}
+/* the guard-health banner rendered by MarksControllerShared */
+.pm-auditwarn{display:flex;gap:10px;align-items:flex-start;background:#fef2f2;border:1px solid #fecaca;
+              border-left:3px solid #b42318;padding:10px 12px;margin-bottom:12px}
+.pm-auditwarn b{display:block;font-size:12px;color:#7a271a;margin-bottom:2px}
+.pm-auditwarn p{margin:0;font-size:11px;color:#912018;line-height:1.5}
+.pm-auditwarn code{background:rgba(180,35,24,.08);padding:0 3px}
 
-/* ── Filters (collapsible) ── */
-.mat-filtbar{background:#f8f9fb;border-bottom:1px solid #e0e5ed;padding:10px 14px;display:none}
-.mat-filtbar.show{display:block}
-.mat-filtbar__row{display:flex;gap:8px;flex-wrap:wrap;align-items:flex-end}
-.mat-fg{display:flex;flex-direction:column;gap:3px}
-.mat-fg__label{font-size:9px;text-transform:uppercase;letter-spacing:.5px;color:#999;font-weight:600}
-.mat-fg select,.mat-fg input[type=text]{border:1px solid #e0e5ed;padding:6px 10px;font-size:11px;background:#fff;color:#333;font-family:inherit;min-width:110px}
-.mat-fg select:focus,.mat-fg input:focus{border-color:#1a237e;outline:none}
+/* --- KPI cards --------------------------------------------------- */
+.mat-stats{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px;margin-bottom:14px}
+.mat-stat{background:#fff;border:1px solid #e0e5ed;border-radius:4px;padding:13px 15px;min-width:0}
+.mat-stat__label{font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:.4px;color:#888;margin-bottom:5px}
+.mat-stat__value{font-size:22px;font-weight:700;color:#05275C;line-height:1;font-variant-numeric:tabular-nums}
+.mat-stat__sub{font-size:11px;color:#888;margin-top:5px;line-height:1.4}
 
-/* ── Buttons ── */
-.mat-btn{padding:6px 14px;font-size:11px;font-weight:600;border:none;cursor:pointer;display:inline-flex;align-items:center;gap:5px;white-space:nowrap;transition:all .15s;font-family:inherit}
-.mat-btn--primary{background:#1a237e;color:#fff}.mat-btn--primary:hover{background:#283593}
-.mat-btn--success{background:#16a34a;color:#fff}.mat-btn--success:hover{background:#15803d}
-.mat-btn--ghost{background:transparent;color:#1a237e;border:1px solid #e0e5ed}.mat-btn--ghost:hover{background:#f5f7fa}
-.mat-btn--sm{padding:4px 10px;font-size:10px}
-.mat-btn--filter{padding:4px 10px;font-size:10px;background:#e8eaf6;border:1px solid #c5cae9;color:#1a237e;cursor:pointer}
-.mat-btn--filter:hover{background:#c5cae9}
-.mat-btn--filter.active{background:#1a237e;color:#fff;border-color:#1a237e}
+/* --- filter bar -------------------------------------------------- */
+.mat-filters{display:flex;flex-wrap:wrap;align-items:flex-end;gap:10px;background:#fff;
+             padding:12px 14px;border:1px solid #e0e5ed;border-radius:4px;margin-bottom:12px}
+.mat-fg{display:flex;flex-direction:column;gap:4px;min-width:0}
+.mat-fg__label{font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:.4px;color:#555}
+.mat-fg input,.mat-fg select{padding:6px 8px;border:1px solid #cdd3de;border-radius:0;font-size:12px;
+                             font-family:inherit;color:#1a1a2e;background:#fff;min-width:132px;max-width:100%;box-sizing:border-box}
+.mat-fg input:focus,.mat-fg select:focus{outline:none;border-color:#174DA4}
+.mat-fg--grow{flex:1 1 200px}
+.mat-fg--grow input{width:100%;min-width:0}
+.mat-filters__end{display:flex;gap:8px;align-items:flex-end;margin-left:auto}
 
-/* ── Grid overrides ── */
-.mat-grid .dxgvHeader td{background:#f5f7fa!important;font-size:10px!important;font-weight:600!important;text-transform:uppercase!important;letter-spacing:.3px;padding:9px 8px!important;color:#555!important;border-bottom:2px solid #1a237e!important;white-space:nowrap}
-.mat-grid .dxgvDataRow td{font-size:11px!important;padding:7px 8px!important;border-bottom:1px solid #f0f2f5!important;vertical-align:middle!important;color:#1a1a2e}
-.mat-grid .dxgvDataRow:hover td{background:#eef2fc!important}
-.mat-grid .dxgvFocusedRow td{background:#c5cae9!important}
-.mat-grid .dxgvDataRow:nth-child(even) td{background:#f9fafb!important}
-.mat-grid .dxgvDataRow:nth-child(even):hover td{background:#eef2fc!important}
+/* --- buttons ----------------------------------------------------- */
+.mat-btn{padding:7px 14px;font-size:12px;font-weight:500;border:1px solid transparent;border-radius:0;
+         cursor:pointer;display:inline-flex;align-items:center;gap:5px;font-family:inherit;
+         text-decoration:none;white-space:nowrap;line-height:1.4}
+.mat-btn:hover{text-decoration:none}
+.mat-btn--primary{background:#05275C;color:#fff;border-color:#05275C}
+.mat-btn--primary:hover{background:#041d45;color:#fff}
+.mat-btn--ghost{background:#fff;color:#333;border-color:#cdd3de}
+.mat-btn--ghost:hover{background:#f5f7fa;color:#333}
+.mat-btn--inv{background:transparent;color:#fff;border-color:rgba(255,255,255,.5)}
+.mat-btn--inv:hover{background:rgba(255,255,255,.12);color:#fff}
+.mat-btn--sm{padding:4px 10px;font-size:11px}
 
-/* ── Badges — refined with icons ── */
-.mat-badge{display:inline-flex;align-items:center;gap:3px;padding:2px 8px;font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:.3px}
-.mat-badge::before{content:'';width:6px;height:6px;border-radius:50%;flex-shrink:0}
-.mat-badge--capture{background:#e3f2fd;color:#0d47a1;border:1px solid #90caf9}.mat-badge--capture::before{background:#1565c0}
-.mat-badge--edit{background:#fff8e1;color:#e65100;border:1px solid #ffcc02}.mat-badge--edit::before{background:#e65100}
-.mat-badge--cancel{background:#fef5f5;color:#991b1b;border:1px solid #f5c6cb}.mat-badge--cancel::before{background:#c62828}
-.mat-badge--autopass{background:#e6f4ea;color:#155724;border:1px solid #c3e6cb}.mat-badge--autopass::before{background:#2e7d32}
-.mat-badge--mgmt{background:#f3e5f5;color:#4a148c;border:1px solid #ce93d8}.mat-badge--mgmt::before{background:#6a1b9a}
+/* --- quick ranges ------------------------------------------------ */
+.mat-quick{display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-bottom:12px}
+.mat-quick__label{font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:.4px;color:#888;margin-right:2px}
+.mat-pill{padding:5px 11px;font-size:11px;font-weight:500;background:#fff;border:1px solid #e0e5ed;
+          color:#555;border-radius:0;cursor:pointer;text-decoration:none;font-family:inherit}
+.mat-pill:hover{background:#f5f7fa;color:#05275C;text-decoration:none}
+.mat-pill--active{background:#05275C;color:#fff;border-color:#05275C}
+.mat-pill--active:hover{background:#041d45;color:#fff}
 
-/* ── Severity dots — refined ── */
-.mat-sev{display:inline-flex;align-items:center;gap:4px;font-size:10px;font-weight:600}
-.mat-sev__dot{width:7px;height:7px;border-radius:50%;animation:none}
-.mat-sev--critical .mat-sev__dot{background:#d32f2f;box-shadow:0 0 0 2px rgba(211,47,47,.2)}.mat-sev--critical{color:#d32f2f}
-.mat-sev--high .mat-sev__dot{background:#f57c00;box-shadow:0 0 0 2px rgba(245,124,0,.2)}.mat-sev--high{color:#f57c00}
-.mat-sev--normal .mat-sev__dot{background:#388e3c;box-shadow:0 0 0 2px rgba(56,142,60,.2)}.mat-sev--normal{color:#388e3c}
+/* --- card + table ------------------------------------------------ */
+.mat-card{background:#fff;border:1px solid #e0e5ed;border-radius:4px;overflow:hidden;margin-bottom:14px}
+.mat-card__hdr{display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;
+               padding:11px 14px;border-bottom:1px solid #e0e5ed;background:#f5f7fa}
+.mat-card__title{font-size:13px;font-weight:600;color:#1a1a2e}
+.mat-card__meta{font-size:11px;color:#888}
+.mat-tablewrap{width:100%;overflow-x:auto;-webkit-overflow-scrolling:touch}
+.mat-table{width:100%;border-collapse:collapse;font-size:11px}
+.mat-table thead tr{background:#f5f7fa}
+.mat-table th{padding:8px 12px;text-align:left;font-size:10px;font-weight:600;text-transform:uppercase;
+              letter-spacing:.4px;color:#555;border-bottom:2px solid #e0e5ed;white-space:nowrap}
+.mat-table td{padding:8px 12px;border-bottom:1px solid #e0e5ed;color:#1a1a2e;vertical-align:top}
+.mat-table tbody tr:hover{background:#f9fafc}
+.mat-table tbody tr:last-child td{border-bottom:none}
+.mat-empty{text-align:center;padding:44px 20px;color:#888;font-size:12px}
+.mat-empty b{display:block;font-size:13px;color:#555;margin-bottom:4px;font-weight:600}
 
-/* ── User highlight ── */
-.mat-user{font-weight:700;color:#1a237e}
+/* --- cell pieces ------------------------------------------------- */
+.mat-when{white-space:nowrap}
+.mat-when__d{font-weight:600;color:#1a1a2e}
+.mat-when__t{color:#888;font-size:10px;display:block;margin-top:1px}
+.mat-who{font-weight:600;color:#05275C;word-break:break-word}
+.mat-who__sub{display:block;color:#888;font-weight:400;font-size:10px;margin-top:1px}
+.mat-code{font-family:Consolas,"Courier New",monospace;font-size:10.5px;font-weight:600;
+          background:rgba(23,77,164,.07);border:1px solid rgba(23,77,164,.15);color:#174DA4;padding:1px 5px;
+          border-radius:0;white-space:nowrap;display:inline-block}
+.mat-sub{display:block;color:#888;font-size:10px;margin-top:2px;line-height:1.4}
+.mat-nil{color:#c7cdd6}
 
-/* ── Two Column Layout ── */
-.mat-cols{display:grid;grid-template-columns:1fr 300px;gap:12px}
+/* old -> new mark movement */
+.mat-mv{white-space:nowrap;font-variant-numeric:tabular-nums}
+.mat-mv__o{color:#888;text-decoration:line-through}
+.mat-mv__a{color:#b0b8c4;margin:0 3px}
+.mat-mv__n{font-weight:700}
+.mat-mv--up .mat-mv__n{color:#15803d}
+.mat-mv--down .mat-mv__n{color:#b42318}
+.mat-mv--set .mat-mv__n{color:#05275C}
+.mat-mv__unset{color:#a9b2bf;font-style:italic;text-decoration:none}
 
-/* ── Sidebar panels — improved ── */
-.mat-side{background:#fff;border:1px solid #e0e5ed;overflow:hidden;margin-bottom:10px;transition:border-color .2s}
-.mat-side:hover{border-color:#c5cae9}
-.mat-side__hdr{padding:10px 14px;background:#f8f9fb;border-bottom:1px solid #e0e5ed;font-size:11px;font-weight:700;color:#1a237e;display:flex;align-items:center;gap:6px}
-.mat-side__hdr svg{width:14px;height:14px;fill:#1a237e;opacity:.6}
-.mat-side__body{padding:0}
-.mat-side-tbl{width:100%;border-collapse:collapse}
-.mat-side-tbl th{font-size:9px;text-transform:uppercase;color:#999;font-weight:600;padding:7px 10px;text-align:left;border-bottom:1px solid #e0e5ed;letter-spacing:.3px;background:#fafbfc}
-.mat-side-tbl td{font-size:11px;padding:7px 10px;border-bottom:1px solid #f5f5f5}
-.mat-side-tbl tr:hover td{background:#f5f7fa}
-.mat-rank{display:inline-flex;align-items:center;justify-content:center;width:22px;height:22px;border-radius:50%;font-size:9px;font-weight:800;color:#fff}
-.mat-rank--1{background:linear-gradient(135deg,#f59e0b,#d97706)}.mat-rank--2{background:linear-gradient(135deg,#94a3b8,#64748b)}.mat-rank--3{background:linear-gradient(135deg,#d4a574,#a1887f)}.mat-rank--other{background:#e2e8f0;color:#546e7a}
-.mat-bar{height:6px;border-radius:3px;background:#e3e8ef;overflow:hidden}
-.mat-bar__fill{height:100%;border-radius:3px;background:linear-gradient(90deg,#1a237e,#3949ab);transition:width .6s ease}
+/* --- badges ------------------------------------------------------ */
+.mat-badge{display:inline-block;font-size:9.5px;font-weight:600;padding:2px 6px;border-radius:0;
+           text-transform:uppercase;letter-spacing:.3px;white-space:nowrap}
+.mat-badge--navy{background:rgba(5,39,92,.08);color:#05275C;border:1px solid rgba(5,39,92,.18)}
+.mat-badge--blue{background:#e8f0fc;color:#174DA4;border:1px solid #c7d8f3}
+.mat-badge--green{background:#e6f4ea;color:#155724;border:1px solid #c3e6cb}
+.mat-badge--amber{background:#fff8e1;color:#b45309;border:1px solid #f4dba6}
+.mat-badge--red{background:#fef5f5;color:#912018;border:1px solid #f5c6cb}
+.mat-badge--grey{background:#f1f3f7;color:#667085;border:1px solid #e0e5ed}
 
-/* ── Action Breakdown — improved with mini bar ── */
-.mat-act-row{display:flex;justify-content:space-between;align-items:center;padding:8px 12px;border-bottom:1px solid #f5f5f5;font-size:11px;transition:background .15s}
-.mat-act-row:last-child{border-bottom:none}
-.mat-act-row:hover{background:#f8f9fb}
-.mat-act-left{display:flex;align-items:center;gap:6px}
-.mat-act-dot{width:8px;height:8px;display:inline-block;flex-shrink:0}
-.mat-act-cnt{font-weight:700;color:#263238;font-variant-numeric:tabular-nums}
+/* --- legend ------------------------------------------------------ */
+.mat-legend{display:flex;gap:18px;flex-wrap:wrap;align-items:center;padding:9px 14px;
+            background:#f9fafc;border-top:1px solid #e0e5ed;font-size:10.5px;color:#888;line-height:1.5}
+.mat-legend__g{display:inline-flex;align-items:center;gap:5px;flex-wrap:wrap}
+.mat-legend__g>b{color:#555;font-weight:600}
 
-/* ── Recent Activity — timeline style ── */
-.mat-recent{padding:8px 12px;border-bottom:1px solid #f0f0f0;position:relative;transition:background .15s}
-.mat-recent:last-child{border-bottom:none}
-.mat-recent:hover{background:#f8f9fb}
-.mat-recent__top{display:flex;justify-content:space-between;align-items:center}
-.mat-recent__time{color:#90a4ae;font-size:9px;font-weight:600;background:#f5f5f5;padding:1px 6px;letter-spacing:.2px}
-.mat-recent__desc{color:#555;margin-top:3px;font-size:10px;line-height:1.4}
-.mat-recent__badge{display:inline-block;font-size:8px;font-weight:700;text-transform:uppercase;letter-spacing:.3px;padding:1px 5px;margin-top:3px}
+/* --- pager ------------------------------------------------------- */
+.mat-pager{display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;
+           padding:10px 14px;border-top:1px solid #e0e5ed;background:#f9fafc}
+.mat-pager__info{font-size:11px;color:#888}
+.mat-pager__btns{display:flex;gap:4px;flex-wrap:wrap}
+.mat-pg{padding:5px 10px;font-size:11px;border:1px solid #cdd3de;background:#fff;color:#333;
+        text-decoration:none;border-radius:0;line-height:1.4}
+.mat-pg:hover{background:#f5f7fa;color:#05275C;text-decoration:none}
+.mat-pg--active{background:#05275C;color:#fff;border-color:#05275C;font-weight:600}
+.mat-pg--active:hover{background:#05275C;color:#fff}
+.mat-pg--off{color:#c7cdd6;pointer-events:none;background:#f9fafc}
 
-/* ── Alert ── */
-.mat-alert{padding:8px 14px;margin-bottom:10px;font-size:11px;border-left:3px solid;display:flex;align-items:center;gap:6px}
-.mat-alert--error{border-color:#dc3545;background:#fef5f5;color:#991b1b}
-.mat-alert--info{border-color:#174DA4;background:#e8f0fc;color:#0d47a1}
+/* --- detail modal ------------------------------------------------ */
+.mat-ov{display:none;position:fixed;top:0;right:0;bottom:0;left:0;background:rgba(0,0,0,.45);
+        z-index:1000;align-items:center;justify-content:center;padding:12px}
+.mat-ov.is-open{display:flex}
+.mat-modal{background:#fff;border-radius:2px;width:620px;max-width:100%;max-height:92vh;
+           overflow-y:auto;box-shadow:0 12px 40px rgba(0,0,0,.18)}
+.mat-modal__hdr{background:#05275C;color:#fff;padding:13px 18px;display:flex;align-items:center;
+                justify-content:space-between;gap:10px;position:sticky;top:0}
+.mat-modal__title{font-size:13px;font-weight:600}
+.mat-modal__close{background:none;border:none;color:#fff;font-size:22px;cursor:pointer;line-height:1;padding:0;opacity:.8}
+.mat-modal__close:hover{opacity:1}
+.mat-modal__body{padding:16px 18px}
+.mat-modal__foot{padding:12px 18px;border-top:1px solid #e0e5ed;display:flex;justify-content:flex-end;background:#f9fafc}
+.mat-sect{font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:.4px;color:#888;
+          margin:0 0 7px;padding-bottom:5px;border-bottom:1px solid #e0e5ed}
+.mat-sect+.mat-sect{margin-top:18px}
+.mat-dl{display:grid;grid-template-columns:132px minmax(0,1fr);gap:6px 12px;font-size:11.5px;margin-bottom:18px}
+.mat-dl dt{color:#888;font-weight:500}
+.mat-dl dd{margin:0;color:#1a1a2e;word-break:break-word}
+.mat-dl:last-child{margin-bottom:0}
+.mat-mvtable{width:100%;border-collapse:collapse;font-size:11.5px;margin-bottom:18px}
+.mat-mvtable th{text-align:left;font-size:10px;text-transform:uppercase;letter-spacing:.4px;color:#888;
+                font-weight:600;padding:5px 8px;border-bottom:1px solid #e0e5ed}
+.mat-mvtable td{padding:6px 8px;border-bottom:1px solid #f0f2f5;font-variant-numeric:tabular-nums}
+.mat-mvtable tr:last-child td{border-bottom:none}
+.mat-mvtable td:first-child{color:#555;font-weight:500}
 
-/* ── Page hero header ── */
-.mat-hero{background:linear-gradient(135deg,#05275C 0%,#174DA4 100%);color:#fff;padding:16px 20px;margin-bottom:14px;display:flex;align-items:center;justify-content:space-between;gap:16px;flex-wrap:wrap;border-radius:2px}
-.mat-hero__l{display:flex;align-items:center;gap:14px;min-width:0}
-.mat-hero__ic{width:44px;height:44px;border-radius:10px;background:rgba(255,255,255,.15);display:flex;align-items:center;justify-content:center;flex-shrink:0}
-.mat-hero__ic svg{width:24px;height:24px;fill:#fff}
-.mat-hero__t{font-size:18px;font-weight:800;line-height:1.15;display:flex;align-items:center;gap:9px;flex-wrap:wrap;margin:0}
-.mat-hero__tag{font-size:9px;font-weight:800;letter-spacing:.6px;text-transform:uppercase;background:#16a34a;color:#fff;padding:3px 9px;border-radius:10px}
-.mat-hero__s{font-size:11.5px;opacity:.88;margin-top:4px;max-width:660px;line-height:1.5}
-.mat-hero__r{display:flex;gap:20px;flex-wrap:wrap}
-.mat-hero__kv .n{font-size:19px;font-weight:800;line-height:1;font-variant-numeric:tabular-nums}
-.mat-hero__kv .l{font-size:9px;text-transform:uppercase;letter-spacing:.4px;opacity:.82;margin-top:3px}
-/* grid horizontal-scroll wrapper — keeps the fixed DX table from clipping on small screens */
-.mat-gridwrap{width:100%;overflow-x:auto;-webkit-overflow-scrolling:touch}
-/* legend under the grid */
-.mat-legend{display:flex;gap:16px;flex-wrap:wrap;align-items:center;padding:9px 14px;background:#f8f9fb;border-top:1px solid #eef2f7;font-size:10px;color:#64748b}
-.mat-legend__grp{display:inline-flex;align-items:center;gap:8px;flex-wrap:wrap}
-.mat-legend__grp>b{color:#334155;font-weight:700}
-.mat-legend__i{display:inline-flex;align-items:center;gap:4px}
-.mat-legend__dot{width:8px;height:8px;border-radius:50%;display:inline-block}
-
-/* ── Responsive ── */
-@media(max-width:1200px){.mat-cols{grid-template-columns:1fr}.mat-stats{grid-template-columns:repeat(2,1fr)}}
-@media(max-width:900px){.mat-hero__r{width:100%;justify-content:flex-start;gap:26px}}
-@media(max-width:768px){.mat-stats{grid-template-columns:1fr}.mat-hero{padding:14px}.mat-hero__t{font-size:16px}.mat-hero__ic{display:none}.mat-filtbar__row{gap:6px}.mat-fg select,.mat-fg input[type=text]{min-width:0;width:100%}.mat-fg{flex:1 1 130px}}
-@media print{.em-hdr,.em-tabs,.mat-qf,.mat-hero__r,.mat-card__hdr .mat-btn,.mat-card__hdr .mat-btn--filter{display:none!important}.mat-hero{background:#05275C!important;-webkit-print-color-adjust:exact;print-color-adjust:exact}}
+/* --- responsive -------------------------------------------------- */
+@media(max-width:1100px){.mat-stats{grid-template-columns:repeat(2,minmax(0,1fr))}}
+@media(max-width:760px){
+    .mat-head{padding:12px 14px}
+    .mat-head__ic{display:none}
+    .mat-head__s{font-size:11.5px}
+    .mat-tabs{padding:0 14px}
+    .mat-body{padding:12px 14px 20px}
+    .mat-stats{grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}
+    .mat-stat__value{font-size:19px}
+    .mat-fg{flex:1 1 140px}
+    .mat-fg input,.mat-fg select{min-width:0;width:100%}
+    .mat-filters__end{margin-left:0;width:100%}
+    .mat-filters__end .mat-btn{flex:1 1 auto;justify-content:center}
+    .mat-dl{grid-template-columns:1fr;gap:2px 0}
+    .mat-dl dd{margin-bottom:8px}
+}
+@media print{
+    .mat-tabs,.mat-filters,.mat-quick,.mat-pager,.mat-head__r,.mat-ov{display:none!important}
+    .mat-head{background:#05275C!important;-webkit-print-color-adjust:exact;print-color-adjust:exact}
+    .mat-card{border:none}
+}
 </style>
 </asp:Content>
 
 <asp:Content ID="MainContent" ContentPlaceHolderID="ContentPlaceHolder1" runat="server">
 
-<!-- ── Hero Header ── -->
-<div class="mat-hero">
-    <div class="mat-hero__l">
-        <div class="mat-hero__ic"><svg viewBox="0 0 24 24"><path d="M12 1L3 5v6c0 5.55 3.84 10.74 9 12 5.16-1.26 9-6.45 9-12V5l-9-4zm-2 16l-4-4 1.41-1.41L10 14.17l6.59-6.59L18 9l-8 8z"/></svg></div>
+<div class="mat-head">
+    <div class="mat-head__l">
+        <div class="mat-head__ic">
+            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M12 3l8 3.5v5c0 4.6-3.4 8.6-8 9.5-4.6-.9-8-4.9-8-9.5v-5L12 3z"/><path d="M9 12l2 2 4-4"/>
+            </svg>
+        </div>
         <div>
-            <h1 class="mat-hero__t">Marks Audit Trail <span class="mat-hero__tag">Advanced</span></h1>
-            <div class="mat-hero__s">Forensic record of every marks operation &mdash; captures, edits (old &rarr; new values), approvals &amp; cancellations, auto-pass and mark-request decisions &mdash; with the who, when, where (IP) and full detail. Read-only &amp; exportable.</div>
+            <div class="mat-head__t">Marks Audit Trail</div>
+            <div class="mat-head__s"><asp:Literal ID="litHeadSub" runat="server" /></div>
         </div>
     </div>
-    <div class="mat-hero__r">
-        <div class="mat-hero__kv"><div class="n"><asp:Literal ID="litHeroTotal" runat="server">0</asp:Literal></div><div class="l">Total events</div></div>
-        <div class="mat-hero__kv"><div class="n"><asp:Literal ID="litHeroWindow" runat="server">30</asp:Literal></div><div class="l">Day window</div></div>
+    <div class="mat-head__r">
+        <asp:Literal ID="litExportBtn" runat="server" />
     </div>
 </div>
 
-<!-- ── Stats — 2x4 grid with icons, trends, sub-values ── -->
-<div class="mat-stats">
-    <!-- Total Actions -->
-    <div class="mat-stat mat-stat--total">
-        <div class="mat-stat__top">
-            <div class="mat-stat__icon"><svg viewBox="0 0 24 24"><path d="M19 3H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm-5 14H7v-2h7v2zm3-4H7v-2h10v2zm0-4H7V7h10v2z"/></svg></div>
-            <div class="mat-stat__label">Total Actions</div>
-        </div>
-        <div class="mat-stat__val"><asp:Literal ID="litTotal" runat="server">0</asp:Literal></div>
-        <div class="mat-stat__foot"><span class="mat-sub">all time</span></div>
-    </div>
-    <!-- Today -->
-    <div class="mat-stat mat-stat--today">
-        <div class="mat-stat__top">
-            <div class="mat-stat__icon"><svg viewBox="0 0 24 24"><path d="M11.99 2C6.47 2 2 6.48 2 12s4.47 10 9.99 10C17.52 22 22 17.52 22 12S17.52 2 11.99 2zM12 20c-4.42 0-8-3.58-8-8s3.58-8 8-8 8 3.58 8 8-3.58 8-8 8zm.5-13H11v6l5.25 3.15.75-1.23-4.5-2.67z"/></svg></div>
-            <div class="mat-stat__label">Today</div>
-        </div>
-        <div class="mat-stat__val"><asp:Literal ID="litToday" runat="server">0</asp:Literal></div>
-        <div class="mat-stat__foot"><asp:Literal ID="litTodayTrend" runat="server" /></div>
-    </div>
-    <!-- This Week -->
-    <div class="mat-stat mat-stat--week">
-        <div class="mat-stat__top">
-            <div class="mat-stat__icon"><svg viewBox="0 0 24 24"><path d="M9 11H7v2h2v-2zm4 0h-2v2h2v-2zm4 0h-2v2h2v-2zm2-7h-1V2h-2v2H8V2H6v2H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V6c0-1.1-.9-2-2-2zm0 16H5V9h14v11z"/></svg></div>
-            <div class="mat-stat__label">This Week</div>
-        </div>
-        <div class="mat-stat__val"><asp:Literal ID="litWeek" runat="server">0</asp:Literal></div>
-        <div class="mat-stat__foot"><asp:Literal ID="litWeekTrend" runat="server" /></div>
-    </div>
-    <!-- This Month -->
-    <div class="mat-stat mat-stat--month">
-        <div class="mat-stat__top">
-            <div class="mat-stat__icon"><svg viewBox="0 0 24 24"><path d="M19 3h-1V1h-2v2H8V1H6v2H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm0 16H5V8h14v11zM9 10H7v2h2v-2zm4 0h-2v2h2v-2zm4 0h-2v2h2v-2z"/></svg></div>
-            <div class="mat-stat__label">This Month</div>
-        </div>
-        <div class="mat-stat__val"><asp:Literal ID="litMonth" runat="server">0</asp:Literal></div>
-        <div class="mat-stat__foot"><span class="mat-sub">since 1st</span></div>
-    </div>
-    <!-- Critical Actions -->
-    <div class="mat-stat mat-stat--critical">
-        <div class="mat-stat__top">
-            <div class="mat-stat__icon"><svg viewBox="0 0 24 24"><path d="M1 21h22L12 2 1 21zm12-3h-2v-2h2v2zm0-4h-2v-4h2v4z"/></svg></div>
-            <div class="mat-stat__label">Critical Actions</div>
-        </div>
-        <div class="mat-stat__val"><asp:Literal ID="litCritical" runat="server">0</asp:Literal></div>
-        <div class="mat-stat__foot"><span class="mat-sub" style="color:#c62828"><asp:Literal ID="litCriticalToday" runat="server">0 today</asp:Literal></span></div>
-    </div>
-    <!-- Unique Users -->
-    <div class="mat-stat mat-stat--users">
-        <div class="mat-stat__top">
-            <div class="mat-stat__icon"><svg viewBox="0 0 24 24"><path d="M16 11c1.66 0 2.99-1.34 2.99-3S17.66 5 16 5c-1.66 0-3 1.34-3 3s1.34 3 3 3zm-8 0c1.66 0 2.99-1.34 2.99-3S9.66 5 8 5C6.34 5 5 6.34 5 8s1.34 3 3 3zm0 2c-2.33 0-7 1.17-7 3.5V19h14v-2.5c0-2.33-4.67-3.5-7-3.5zm8 0c-.29 0-.62.02-.97.05 1.16.84 1.97 1.97 1.97 3.45V19h6v-2.5c0-2.33-4.67-3.5-7-3.5z"/></svg></div>
-            <div class="mat-stat__label">Unique Users</div>
-        </div>
-        <div class="mat-stat__val"><asp:Literal ID="litUniqueUsers" runat="server">0</asp:Literal></div>
-        <div class="mat-stat__foot"><span class="mat-sub"><asp:Literal ID="litActiveToday" runat="server">0 active today</asp:Literal></span></div>
-    </div>
-    <!-- Most Active -->
-    <div class="mat-stat mat-stat--top">
-        <div class="mat-stat__top">
-            <div class="mat-stat__icon"><svg viewBox="0 0 24 24"><path d="M5 16c0 3.87 3.13 7 7 7s7-3.13 7-7v-4H5v4zM16.12 4.37l2.1-2.1-.82-.83-2.3 2.31C14.16 3.28 13.12 3 12 3s-2.16.28-3.09.75L6.6 1.44l-.82.83 2.1 2.1C6.14 5.64 5 7.68 5 10v1h14v-1c0-2.32-1.14-4.36-2.88-5.63zM9 9c-.55 0-1-.45-1-1s.45-1 1-1 1 .45 1 1-.45 1-1 1zm6 0c-.55 0-1-.45-1-1s.45-1 1-1 1 .45 1 1-.45 1-1 1z"/></svg></div>
-            <div class="mat-stat__label">Most Active (30d)</div>
-        </div>
-        <div class="mat-stat__val" style="font-size:14px"><asp:Literal ID="litTopUser" runat="server">—</asp:Literal></div>
-        <div class="mat-stat__foot"><span class="mat-sub"><asp:Literal ID="litTopUserCount" runat="server">no data</asp:Literal></span></div>
-    </div>
-    <!-- Avg / Day -->
-    <div class="mat-stat mat-stat--avg">
-        <div class="mat-stat__top">
-            <div class="mat-stat__icon"><svg viewBox="0 0 24 24"><path d="M3.5 18.49l6-6.01 4 4L22 6.92l-1.41-1.41-7.09 7.97-4-4L2 16.99z"/></svg></div>
-            <div class="mat-stat__label">Avg / Day (30d)</div>
-        </div>
-        <div class="mat-stat__val"><asp:Literal ID="litAvgDay" runat="server">0</asp:Literal></div>
-        <div class="mat-stat__foot"><span class="mat-sub">actions per day</span></div>
-    </div>
-</div>
+<div class="mat-tabs"><asp:Literal ID="litTabs" runat="server" /></div>
 
-<!-- ── Quick-Filter Chips ── -->
-<div class="mat-qf">
-    <span class="mat-qf__label">Quick View:</span>
-    <button type="button" class="mat-chip mat-chip--active" id="qfAll" onclick="applyQuickFilter('all')">All Activity</button>
-    <button type="button" class="mat-chip" id="qfCaptures" onclick="applyQuickFilter('captures')">Captures</button>
-    <button type="button" class="mat-chip" id="qfEdits" onclick="applyQuickFilter('edits')">Mark Edits</button>
-    <button type="button" class="mat-chip" id="qfCancels" onclick="applyQuickFilter('cancels')">Cancellations</button>
-    <button type="button" class="mat-chip" id="qfAuto" onclick="applyQuickFilter('auto')">Auto Pass</button>
-</div>
+<div class="mat-body">
 
-<!-- ── Alert ── -->
-<asp:Panel ID="pnlMsg" runat="server" Visible="false" CssClass="mat-alert mat-alert--info">
-    <asp:Literal ID="litMsg" runat="server" />
-</asp:Panel>
+    <asp:Literal ID="litHealth" runat="server" />
+    <asp:Literal ID="litNotice" runat="server" />
 
-<!-- ── Main Content: Two-Column ── -->
-<div class="mat-cols">
-    <!-- LEFT: Grid Card -->
-    <div class="mat-card">
-        <div class="mat-card__hdr">
-            <span class="mat-card__title"><svg viewBox="0 0 24 24"><path d="M14 2H6c-1.1 0-2 .9-2 2v16c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2V8l-6-6zm-1 7V3.5L18.5 9H13zM6 20V4h5v7h7v9H6z"/></svg> Activity Log</span>
-            <div style="display:flex;gap:6px;align-items:center">
-                <span class="mat-card__meta"><asp:Literal ID="litRowCount" runat="server">0</asp:Literal> entries</span>
-                <button type="button" class="mat-btn--filter active" id="btnToggleFilter" onclick="toggleFilters()">&#9776; Filters</button>
-                <asp:Button ID="btnExportCsv" runat="server" Text="&#8681; Export" CssClass="mat-btn mat-btn--success mat-btn--sm" OnClick="btnExportCsv_Click" />
+    <!-- ============================ MARK CHANGES ============================ -->
+    <asp:Panel ID="pnlChanges" runat="server">
+
+        <div class="mat-stats">
+            <div class="mat-stat">
+                <div class="mat-stat__label">Recorded changes</div>
+                <div class="mat-stat__value"><asp:Literal ID="litKpiTotal" runat="server">0</asp:Literal></div>
+                <div class="mat-stat__sub"><asp:Literal ID="litKpiTotalSub" runat="server" /></div>
+            </div>
+            <div class="mat-stat">
+                <div class="mat-stat__label">Coursework marks moved</div>
+                <div class="mat-stat__value"><asp:Literal ID="litKpiCw" runat="server">0</asp:Literal></div>
+                <div class="mat-stat__sub">changes that touched coursework</div>
+            </div>
+            <div class="mat-stat">
+                <div class="mat-stat__label">Exam marks moved</div>
+                <div class="mat-stat__value"><asp:Literal ID="litKpiExam" runat="server">0</asp:Literal></div>
+                <div class="mat-stat__sub">changes that touched the exam mark</div>
+            </div>
+            <div class="mat-stat">
+                <div class="mat-stat__label">Students affected</div>
+                <div class="mat-stat__value"><asp:Literal ID="litKpiStudents" runat="server">0</asp:Literal></div>
+                <div class="mat-stat__sub"><asp:Literal ID="litKpiStaff" runat="server" /></div>
             </div>
         </div>
-        <div class="mat-filtbar show" id="matFilterBar">
-            <div class="mat-filtbar__row">
-                <div class="mat-fg">
-                    <span class="mat-fg__label">From</span>
-                    <dx:ASPxDateEdit ID="dtFrom" runat="server" Width="120px" DisplayFormatString="dd-MMM-yyyy" />
-                </div>
-                <div class="mat-fg">
-                    <span class="mat-fg__label">To</span>
-                    <dx:ASPxDateEdit ID="dtTo" runat="server" Width="120px" DisplayFormatString="dd-MMM-yyyy" />
-                </div>
-                <div class="mat-fg">
-                    <span class="mat-fg__label">Action Type</span>
-                    <asp:DropDownList ID="ddlAction" runat="server">
-                        <asp:ListItem Value="" Text="All Actions" />
-                        <asp:ListItem Value="Capture Results" Text="Old System Capture" />
-                        <asp:ListItem Value="Results Capture" Text="Faculty Capture" />
-                        <asp:ListItem Value="Faculty Exam Results Editor" Text="Marks Edit" />
-                        <asp:ListItem Value="Results Approval Cancel" Text="Approval Cancel" />
-                        <asp:ListItem Value="Results Management" Text="Results Management" />
-                        <asp:ListItem Value="Results Auto Pass" Text="Auto Pass" />
-                    </asp:DropDownList>
-                </div>
-                <div class="mat-fg">
-                    <span class="mat-fg__label">User</span>
-                    <asp:DropDownList ID="ddlUser" runat="server" />
-                </div>
-                <div class="mat-fg">
-                    <span class="mat-fg__label">Student / Teacher / Course</span>
-                    <asp:TextBox ID="txtSearch" runat="server" placeholder="e.g. MRU2024, staff name, EMP001..." />
-                </div>
-                <asp:Button ID="btnFilter" runat="server" Text="Search" CssClass="mat-btn mat-btn--primary mat-btn--sm" OnClick="btnFilter_Click" />
-                <asp:Button ID="btnClear" runat="server" Text="Clear" CssClass="mat-btn mat-btn--ghost mat-btn--sm" OnClick="btnClear_Click" />
+
+        <div class="mat-quick">
+            <span class="mat-quick__label">Period</span>
+            <asp:Literal ID="litQuickC" runat="server" />
+        </div>
+
+        <div class="mat-filters">
+            <div class="mat-fg">
+                <label class="mat-fg__label" for="cFrom">From</label>
+                <input type="date" id="cFrom" value="<asp:Literal ID='litCFrom' runat='server' />" />
+            </div>
+            <div class="mat-fg">
+                <label class="mat-fg__label" for="cTo">To</label>
+                <input type="date" id="cTo" value="<asp:Literal ID='litCTo' runat='server' />" />
+            </div>
+            <div class="mat-fg">
+                <label class="mat-fg__label" for="cWho">Changed by</label>
+                <select id="cWho"><asp:Literal ID="litCWhoOpts" runat="server" /></select>
+            </div>
+            <div class="mat-fg">
+                <label class="mat-fg__label" for="cChg">What changed</label>
+                <select id="cChg"><asp:Literal ID="litCChgOpts" runat="server" /></select>
+            </div>
+            <div class="mat-fg">
+                <label class="mat-fg__label" for="cSrc">Where from</label>
+                <select id="cSrc"><asp:Literal ID="litCSrcOpts" runat="server" /></select>
+            </div>
+            <div class="mat-fg mat-fg--grow">
+                <label class="mat-fg__label" for="cQ">Student, course or person</label>
+                <input type="text" id="cQ" placeholder="reg. number, course code or name"
+                       value="<asp:Literal ID='litCQ' runat='server' />" onkeydown="if(event.keyCode==13){matApply('changes');return false;}" />
+            </div>
+            <div class="mat-filters__end">
+                <button type="button" class="mat-btn mat-btn--primary" onclick="matApply('changes')">Search</button>
+                <a href="MarksAuditTrail.aspx" class="mat-btn mat-btn--ghost">Clear</a>
             </div>
         </div>
-        <div class="mat-gridwrap">
-        <dx:ASPxGridView ID="gvLog" runat="server" Width="100%" AutoGenerateColumns="False" KeyFieldName="logid" CssClass="mat-grid" ClientInstanceName="gvLog">
-            <SettingsPager PageSize="100" AlwaysShowPager="true">
-                <Summary Visible="true" Text="Page {0} of {1} ({2} items)" />
-                <PageSizeItemSettings Visible="true" Items="50, 100, 200, 500" />
-            </SettingsPager>
-            <SettingsBehavior AllowFocusedRow="true" />
-            <Settings ShowFilterRow="true" />
-            <SettingsSearchPanel Visible="true" ShowApplyButton="true" />
-            <Columns>
-                <dx:GridViewDataDateColumn FieldName="access_date" Caption="Date / Time" VisibleIndex="0" Width="130px">
-                    <PropertiesDateEdit DisplayFormatString="dd-MMM-yy HH:mm" />
-                </dx:GridViewDataDateColumn>
-                <dx:GridViewDataTextColumn FieldName="teacher_name" Caption="Teacher" VisibleIndex="1" Width="180px">
-                    <DataItemTemplate><%# FormatTeacher(Eval("user_id"), Eval("teacher_code"), Eval("teacher_name"), Eval("teacher_dept"), Eval("teacher_type"), Eval("teacher_email")) %></DataItemTemplate>
-                </dx:GridViewDataTextColumn>
-                <dx:GridViewDataTextColumn FieldName="user_id" Caption="Username" VisibleIndex="2" Width="100px">
-                    <DataItemTemplate><span class="mat-user"><%# Eval("user_id") %></span></DataItemTemplate>
-                </dx:GridViewDataTextColumn>
-                <dx:GridViewDataTextColumn FieldName="page_function" Caption="Action" VisibleIndex="3" Width="115px">
-                    <DataItemTemplate><%# GetActionBadge(Eval("page_function")) %></DataItemTemplate>
-                </dx:GridViewDataTextColumn>
-                <dx:GridViewDataTextColumn FieldName="page_function" Caption="" VisibleIndex="4" Width="65px">
-                    <DataItemTemplate><%# GetSeverityDot(Eval("page_function")) %></DataItemTemplate>
-                    <CellStyle HorizontalAlign="Center" />
-                    <Settings AllowAutoFilter="False" />
-                </dx:GridViewDataTextColumn>
-                <dx:GridViewDataTextColumn FieldName="student_regno" Caption="Student" VisibleIndex="5" Width="140px">
-                    <DataItemTemplate><%# FormatStudent(Eval("student_regno"), Eval("student_name")) %></DataItemTemplate>
-                </dx:GridViewDataTextColumn>
-                <dx:GridViewDataTextColumn FieldName="par" Caption="Details" VisibleIndex="6">
-                    <DataItemTemplate><%# ShortenDetails(Eval("par"), Eval("page_function")) %></DataItemTemplate>
-                    <CellStyle Wrap="True" />
-                </dx:GridViewDataTextColumn>
-                <dx:GridViewDataTextColumn FieldName="ip_address" Caption="IP Address" VisibleIndex="7" Width="110px">
-                    <DataItemTemplate><%# FormatIP(Eval("ip_address")) %></DataItemTemplate>
-                    <Settings AllowAutoFilter="True" />
-                </dx:GridViewDataTextColumn>
-                <dx:GridViewDataTextColumn FieldName="teacher_dept" Caption="Department" VisibleIndex="8" Width="120px" Visible="false" />
-                <dx:GridViewDataTextColumn FieldName="teacher_code" Caption="Staff Code" VisibleIndex="9" Width="90px" Visible="false" />
-                <dx:GridViewDataTextColumn FieldName="teacher_email" Caption="Email" VisibleIndex="10" Width="140px" Visible="false" />
-            </Columns>
-        </dx:ASPxGridView>
-        </div>
-        <div class="mat-legend">
-            <span class="mat-legend__grp"><b>Severity:</b>
-                <span class="mat-legend__i"><span class="mat-legend__dot" style="background:#d32f2f"></span>Critical</span>
-                <span class="mat-legend__i"><span class="mat-legend__dot" style="background:#f57c00"></span>High</span>
-                <span class="mat-legend__i"><span class="mat-legend__dot" style="background:#388e3c"></span>Normal</span>
-            </span>
-            <span class="mat-legend__grp"><b>Tip:</b> click a column header to sort, use the header filter row to narrow, or the Filters bar for date / user / search. Rows scroll horizontally on small screens.</span>
-        </div>
-        <dx:ASPxGridViewExporter ID="gvExporter" runat="server" GridViewID="gvLog" />
-    </div>
 
-    <!-- RIGHT: Sidebar -->
-    <div>
-        <div class="mat-side">
-            <div class="mat-side__hdr"><svg viewBox="0 0 24 24"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 15l-5-5 1.41-1.41L10 14.17l7.59-7.59L19 8l-9 9z"/></svg> Top Users (30 Days)</div>
-            <div class="mat-side__body">
-                <table class="mat-side-tbl">
-                    <thead><tr><th>#</th><th>User</th><th>Actions</th><th style="width:60px">Volume</th></tr></thead>
-                    <tbody>
-                        <asp:Repeater ID="rptTopUsers" runat="server">
-                            <ItemTemplate>
-                                <tr>
-                                    <td><span class='<%# GetRankClass(Container.ItemIndex) %>'><%# Container.ItemIndex + 1 %></span></td>
-                                    <td style="font-weight:600;color:#333"><%# Eval("user_id") %></td>
-                                    <td style="font-weight:700;font-variant-numeric:tabular-nums"><%# Eval("cnt") %></td>
-                                    <td><div class="mat-bar"><div class="mat-bar__fill" style='width:<%# Eval("pct") %>%'></div></div></td>
-                                </tr>
-                            </ItemTemplate>
-                        </asp:Repeater>
-                    </tbody>
+        <div class="mat-card">
+            <div class="mat-card__hdr">
+                <span class="mat-card__title">Mark changes</span>
+                <span class="mat-card__meta">
+                    <asp:Literal ID="litCMeta" runat="server" />
+                    &nbsp;&middot;&nbsp;Show
+                    <select id="matPageSize" onchange="matApply('changes')" style="border:1px solid #cdd3de;padding:2px 4px;font-size:11px;font-family:inherit">
+                        <asp:Literal ID="litCPsOpts" runat="server" />
+                    </select>
+                </span>
+            </div>
+            <div class="mat-tablewrap">
+                <table class="mat-table">
+                    <thead>
+                        <tr>
+                            <th style="width:96px">When</th>
+                            <th style="width:150px">Changed by</th>
+                            <th style="width:160px">Student</th>
+                            <th style="width:120px">Course</th>
+                            <th style="width:110px">Coursework</th>
+                            <th style="width:110px">Exam</th>
+                            <th style="width:110px">Total</th>
+                            <th style="width:120px">Where from</th>
+                            <th style="width:64px"></th>
+                        </tr>
+                    </thead>
+                    <tbody><asp:Literal ID="litCRows" runat="server" /></tbody>
                 </table>
             </div>
-        </div>
-
-        <div class="mat-side">
-            <div class="mat-side__hdr"><svg viewBox="0 0 24 24"><path d="M5 9.2h3V19H5zM10.6 5h2.8v14h-2.8zm5.6 8H19v6h-2.8z"/></svg> Action Breakdown</div>
-            <div class="mat-side__body">
-                <asp:Repeater ID="rptBreakdown" runat="server">
-                    <ItemTemplate>
-                        <div class="mat-act-row">
-                            <span class="mat-act-left"><span class="mat-act-dot" style='background:<%# Eval("color") %>'></span><%# Eval("label") %></span>
-                            <span class="mat-act-cnt"><%# Eval("cnt") %></span>
-                        </div>
-                    </ItemTemplate>
-                </asp:Repeater>
+            <div class="mat-legend">
+                <span class="mat-legend__g"><b>Where from</b>
+                    <span class="mat-badge mat-badge--navy">eAdmin</span>
+                    <span class="mat-badge mat-badge--green">Student portal</span>
+                    <span class="mat-badge mat-badge--blue">Mark request</span>
+                    <span class="mat-badge mat-badge--amber">ODEL</span>
+                    <span class="mat-badge mat-badge--red">Staff API</span>
+                </span>
+                <span class="mat-legend__g"><b>Reconstructed</b> rebuilt from the older activity log, not recorded by the database as it happened.</span>
+                <span class="mat-legend__g"><b>Not set / cleared</b> the mark had no value before the change, or has none after it.</span>
+            </div>
+            <div class="mat-pager">
+                <span class="mat-pager__info"><asp:Literal ID="litCPagerInfo" runat="server" /></span>
+                <span class="mat-pager__btns"><asp:Literal ID="litCPager" runat="server" /></span>
             </div>
         </div>
 
-        <div class="mat-side">
-            <div class="mat-side__hdr"><svg viewBox="0 0 24 24"><path d="M13 3c-4.97 0-9 4.03-9 9H1l3.89 3.89.07.14L9 12H6c0-3.87 3.13-7 7-7s7 3.13 7 7-3.13 7-7 7c-1.93 0-3.68-.79-4.94-2.06l-1.42 1.42C8.27 19.99 10.51 21 13 21c4.97 0 9-4.03 9-9s-4.03-9-9-9zm-1 5v5l4.28 2.54.72-1.21-3.5-2.08V8H12z"/></svg> Latest Activity</div>
-            <div class="mat-side__body">
-                <asp:Repeater ID="rptRecent" runat="server">
-                    <ItemTemplate>
-                        <div class="mat-recent">
-                            <div class="mat-recent__top">
-                                <span class="mat-user" style="font-size:11px"><%# Eval("user_id") %></span>
-                                <span class="mat-recent__time"><%# Eval("time_ago") %></span>
-                            </div>
-                            <div class="mat-recent__desc"><%# Eval("summary") %></div>
-                            <span class="mat-recent__badge" style='background:<%# Eval("badge_bg") %>;color:<%# Eval("badge_fg") %>'><%# Eval("badge_text") %></span>
-                        </div>
-                    </ItemTemplate>
-                </asp:Repeater>
+    </asp:Panel>
+
+    <!-- =========================== ACTIVITY LOG ============================ -->
+    <asp:Panel ID="pnlActivity" runat="server" Visible="false">
+
+        <div class="mat-quick">
+            <span class="mat-quick__label">Period</span>
+            <asp:Literal ID="litQuickA" runat="server" />
+        </div>
+
+        <div class="mat-filters">
+            <div class="mat-fg">
+                <label class="mat-fg__label" for="aFrom">From</label>
+                <input type="date" id="aFrom" value="<asp:Literal ID='litAFrom' runat='server' />" />
             </div>
+            <div class="mat-fg">
+                <label class="mat-fg__label" for="aTo">To</label>
+                <input type="date" id="aTo" value="<asp:Literal ID='litATo' runat='server' />" />
+            </div>
+            <div class="mat-fg">
+                <label class="mat-fg__label" for="aWho">User</label>
+                <select id="aWho"><asp:Literal ID="litAWhoOpts" runat="server" /></select>
+            </div>
+            <div class="mat-fg">
+                <label class="mat-fg__label" for="aAct">Action</label>
+                <select id="aAct"><asp:Literal ID="litAActOpts" runat="server" /></select>
+            </div>
+            <div class="mat-fg mat-fg--grow">
+                <label class="mat-fg__label" for="aQ">Search</label>
+                <input type="text" id="aQ" placeholder="student, staff name or staff code"
+                       value="<asp:Literal ID='litAQ' runat='server' />" onkeydown="if(event.keyCode==13){matApply('activity');return false;}" />
+            </div>
+            <div class="mat-filters__end">
+                <button type="button" class="mat-btn mat-btn--primary" onclick="matApply('activity')">Search</button>
+                <a href="MarksAuditTrail.aspx?view=activity" class="mat-btn mat-btn--ghost">Clear</a>
+            </div>
+        </div>
+
+        <div class="mat-card">
+            <div class="mat-card__hdr">
+                <span class="mat-card__title">Activity log</span>
+                <span class="mat-card__meta">
+                    <asp:Literal ID="litAMeta" runat="server" />
+                    &nbsp;&middot;&nbsp;Show
+                    <select id="matPageSize" onchange="matApply('activity')" style="border:1px solid #cdd3de;padding:2px 4px;font-size:11px;font-family:inherit">
+                        <asp:Literal ID="litAPsOpts" runat="server" />
+                    </select>
+                </span>
+            </div>
+            <div class="mat-tablewrap">
+                <table class="mat-table">
+                    <thead>
+                        <tr>
+                            <th style="width:96px">When</th>
+                            <th style="width:180px">User</th>
+                            <th style="width:140px">Action</th>
+                            <th style="width:160px">Student</th>
+                            <th>What was recorded</th>
+                            <th style="width:110px">IP address</th>
+                        </tr>
+                    </thead>
+                    <tbody><asp:Literal ID="litARows" runat="server" /></tbody>
+                </table>
+            </div>
+            <div class="mat-pager">
+                <span class="mat-pager__info"><asp:Literal ID="litAPagerInfo" runat="server" /></span>
+                <span class="mat-pager__btns"><asp:Literal ID="litAPager" runat="server" /></span>
+            </div>
+        </div>
+
+    </asp:Panel>
+
+</div>
+
+<!-- ============================ DETAIL MODAL ============================= -->
+<div class="mat-ov" id="matDetail" onclick="if(event.target===this)matCloseDetail()">
+    <div class="mat-modal" role="dialog" aria-modal="true" aria-labelledby="matDetailTitle">
+        <div class="mat-modal__hdr">
+            <span class="mat-modal__title" id="matDetailTitle">Change details</span>
+            <button type="button" class="mat-modal__close" onclick="matCloseDetail()" aria-label="Close">&#215;</button>
+        </div>
+        <div class="mat-modal__body" id="matDetailBody"></div>
+        <div class="mat-modal__foot">
+            <button type="button" class="mat-btn mat-btn--ghost" onclick="matCloseDetail()">Close</button>
         </div>
     </div>
 </div>
 
 <script type="text/javascript">
-function toggleFilters(){var b=document.getElementById('matFilterBar'),t=document.getElementById('btnToggleFilter');if(b.classList.contains('show')){b.classList.remove('show');t.classList.remove('active');}else{b.classList.add('show');t.classList.add('active');}}
-
-/* Quick-filter chips: apply column filter on the DevExpress grid */
-function applyQuickFilter(mode){
-    var chips=document.querySelectorAll('.mat-chip');
-    for(var i=0;i<chips.length;i++) chips[i].className='mat-chip';
-    var btn=document.getElementById('qf'+mode.charAt(0).toUpperCase()+mode.slice(1));
-    if(!btn){btn=document.getElementById('qfAll');}
-    btn.className='mat-chip mat-chip--active';
-
-    /* Use DevExpress client API to set filter on page_function column (index 2) */
-    if(typeof gvLog==='undefined') return;
-    try{
-        if(mode==='all'){
-            gvLog.AutoFilterByColumn(2,'');
-        }else if(mode==='captures'){
-            gvLog.AutoFilterByColumn(2,'Capture');
-        }else if(mode==='edits'){
-            gvLog.AutoFilterByColumn(2,'Editor');
-        }else if(mode==='cancels'){
-            gvLog.AutoFilterByColumn(2,'Cancel');
-        }else if(mode==='auto'){
-            gvLog.AutoFilterByColumn(2,'Auto Pass');
-        }
-    }catch(ex){}
+// --- filter submit ------------------------------------------------------
+// Built as a URL rather than a form post: the page is a GET-driven report, so
+// every view is a link somebody can bookmark, share or hit Back out of.
+function matApply(view){
+    var p = ['view=' + view];
+    function add(key, id){
+        var el = document.getElementById(id);
+        if (el && el.value) p.push(key + '=' + encodeURIComponent(el.value));
+    }
+    if (view === 'changes'){
+        add('from','cFrom'); add('to','cTo'); add('who','cWho');
+        add('chg','cChg');   add('src','cSrc'); add('q','cQ');
+    } else {
+        add('from','aFrom'); add('to','aTo'); add('who','aWho');
+        add('act','aAct');   add('q','aQ');
+    }
+    var ps = document.getElementById('matPageSize');
+    if (ps && ps.value) p.push('ps=' + encodeURIComponent(ps.value));
+    window.location.href = 'MarksAuditTrail.aspx?' + p.join('&');
 }
+
+// --- detail modal -------------------------------------------------------
+function matEsc(s){
+    return String(s === null || s === undefined ? '' : s)
+        .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+function matRow(label, value, raw){
+    if (value === null || value === undefined || value === '') return '';
+    return '<dt>' + matEsc(label) + '</dt><dd>' + (raw ? value : matEsc(value)) + '</dd>';
+}
+function matMove(oldV, newV){
+    var o = (oldV === '' || oldV === null || oldV === undefined) ? null : oldV;
+    var n = (newV === '' || newV === null || newV === undefined) ? null : newV;
+    if (o === null && n === null) return '<span class="mat-nil">not recorded</span>';
+    var cls = 'mat-mv--set';
+    if (o !== null && n !== null){
+        var a = parseFloat(o), b = parseFloat(n);
+        if (!isNaN(a) && !isNaN(b)) cls = (b > a) ? 'mat-mv--up' : (b < a ? 'mat-mv--down' : 'mat-mv--set');
+    }
+    return '<span class="mat-mv ' + cls + '">'
+         + (o === null ? '<span class="mat-mv__unset">not set</span>' : '<span class="mat-mv__o">' + matEsc(o) + '</span>')
+         + '<span class="mat-mv__a">&rarr;</span>'
+         + (n === null ? '<span class="mat-mv__unset">cleared</span>' : '<span class="mat-mv__n">' + matEsc(n) + '</span>')
+         + '</span>';
+}
+function matShowDetail(btn){
+    var d = btn.getAttribute.bind(btn);
+    var html = '';
+
+    html += '<div class="mat-sect">What moved</div>';
+    html += '<table class="mat-mvtable"><thead><tr><th>Mark</th><th>Before</th><th>After</th><th>Change</th></tr></thead><tbody>';
+    var parts = [['Coursework','ocw','ncw'],['Exam','oex','nex'],['Total','otot','ntot']];
+    for (var i = 0; i < parts.length; i++){
+        var o = d('data-' + parts[i][1]), n = d('data-' + parts[i][2]);
+        html += '<tr><td>' + parts[i][0] + '</td>'
+              + '<td>' + (o === '' || o === null ? '<span class="mat-mv__unset">not set</span>' : matEsc(o)) + '</td>'
+              + '<td>' + (n === '' || n === null ? '<span class="mat-mv__unset">cleared</span>' : matEsc(n)) + '</td>'
+              + '<td>' + matMove(o, n) + '</td></tr>';
+    }
+    html += '</tbody></table>';
+
+    html += '<div class="mat-sect">Who and when</div><dl class="mat-dl">';
+    html += matRow('Changed by',  d('data-by'));
+    html += matRow('Staff record', d('data-staff'));
+    html += matRow('Date and time', d('data-at'));
+    html += matRow('Came from',   d('data-src'));
+    html += matRow('IP address',  d('data-ip'));
+    html += matRow('Reason given', d('data-reason'));
+    html += '</dl>';
+
+    html += '<div class="mat-sect">Which mark</div><dl class="mat-dl">';
+    html += matRow('Student',       d('data-regno'));
+    html += matRow('Name',          d('data-sname'));
+    html += matRow('Course',        d('data-course'));
+    html += matRow('Course title',  d('data-ctitle'));
+    html += matRow('Programme',     d('data-prog'));
+    html += matRow('Academic year', d('data-year'));
+    html += matRow('Semester',      d('data-sem'));
+    html += matRow('Status',        matMove(d('data-ostat'), d('data-nstat')), true);
+    html += '</dl>';
+
+    html += '<div class="mat-sect">Record</div><dl class="mat-dl">';
+    html += matRow('Entry number',  '#' + d('data-id'));
+    html += matRow('Operation',     d('data-act'));
+    html += matRow('Table changed', d('data-table'));
+    html += matRow('Registration',  d('data-reg'));
+    html += '</dl>';
+
+    document.getElementById('matDetailBody').innerHTML = html;
+    document.getElementById('matDetailTitle').textContent = 'Change #' + d('data-id') + ' - ' + d('data-regno');
+    document.getElementById('matDetail').classList.add('is-open');
+}
+function matCloseDetail(){ document.getElementById('matDetail').classList.remove('is-open'); }
+document.addEventListener('keydown', function(e){ if (e.keyCode === 27) matCloseDetail(); });
 </script>
 
 </asp:Content>
