@@ -34,6 +34,10 @@ public partial class COOPERP_NewScreens_AllMarksController : System.Web.UI.Page
             // re-selected here from the same query string the grid read it from. Without this
             // it would clear itself the moment you turned a page.
             litChangedFilter.Text = MarksControllerShared.ReadChangeFilter(Request);
+
+            // If any database guard has gone missing, say so here rather than letting the
+            // Track column quietly report nothing for changes that did happen.
+            litAuditHealth.Text = MarksControllerShared.BuildAuditHealthWarning(conn);
         }
     }
 

@@ -71,6 +71,10 @@
 .pm-table .col-sem{width:76px;text-align:left;}
 .pm-table .col-mark{width:34px;text-align:center;}
 .pm-table .col-track{width:132px;}
+.pm-auditwarn{display:flex;gap:10px;align-items:flex-start;background:#fef2f2;border:1px solid #fecaca;border-left:3px solid #b42318;padding:10px 12px;margin-bottom:8px;}
+.pm-auditwarn b{display:block;font-size:12px;color:#7a271a;margin-bottom:2px;}
+.pm-auditwarn p{margin:0;font-size:11px;color:#912018;line-height:1.5;}
+.pm-auditwarn code{background:rgba(180,35,24,.08);padding:0 3px;}
 .pm-track{line-height:1.25;}
 .pm-track--none{color:#c7cdd6;}
 .pm-track__tags{display:flex;flex-wrap:wrap;gap:3px;margin-bottom:2px;}
@@ -374,6 +378,11 @@
 		<button type="button" class="pm-btn pm-btn--success" onclick="openBatchWizard('approved')">Wizard: Batch Approve</button>
 		<button type="button" class="pm-btn pm-btn--primary" onclick="openBatchWizard('published')">Wizard: Batch Publish</button>
 	</div>
+
+<%-- A dropped trigger fails silently: marks simply stop being recorded and nothing
+     complains. This says so, on the screen that depends on it, the moment it happens.
+     It renders nothing at all while every guard is in place. --%>
+<asp:Literal ID="litAuditHealth" runat="server" />
 
 <div style="display:none;">
 	<asp:Literal ID="litStatTotal" runat="server">0</asp:Literal>

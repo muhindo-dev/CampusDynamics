@@ -231,6 +231,54 @@ public static class MarksControllerShared
     //  untouched by it.
     // ─────────────────────────────────────────────────────────────────────
 
+    /// <summary>
+    /// Nothing when the audit is intact; a warning naming what is missing when it is not.
+    ///
+    /// The whole trail rests on database triggers. If one is dropped - by a restore, a schema
+    /// tool, or somebody tidying - marks stop being recorded and the Track column simply shows
+    /// dashes, which looks exactly like "nothing was changed". That is the worst possible
+    /// failure for an audit: silent, and indistinguishable from good news. So the page that
+    /// depends on it checks, on every load, and says so.
+    ///
+    /// Fails quiet in the other direction: if the health view itself cannot be read, no scare
+    /// banner is shown. An unreadable check is not evidence of a missing guard.
+    /// </summary>
+    public static string BuildAuditHealthWarning(MySqlConnection conn)
+    {
+        try
+        {
+            List<string> missing = new List<string>();
+            using (MySqlCommand cmd = new MySqlCommand(
+                "SELECT guard, protects FROM campus_dynamics_portal.v_marks_audit_health WHERE status <> 'ok'", conn))
+            {
+                cmd.CommandTimeout = 15;
+                using (MySqlDataReader r = cmd.ExecuteReader())
+                    while (r.Read()) missing.Add(r["protects"].ToString() + " (" + r["guard"].ToString() + ")");
+            }
+            if (missing.Count == 0) return string.Empty;
+
+            StringBuilder sb = new StringBuilder();
+            sb.Append("<div class='pm-auditwarn'><div>");
+            sb.AppendFormat("<b>Mark tracking is not fully active &mdash; {0} guard{1} missing</b>",
+                            missing.Count, missing.Count == 1 ? " is" : "s are");
+            // The guards live across two migrations, so the instruction names the folder
+            // rather than one file: being told to run the wrong file is worse than being told
+            // to run both, and both are safe to re-apply.
+            sb.Append("<p>Changes covered by the missing guard are <strong>not being recorded</strong>, and the Track column will show nothing for them. Re-apply <code>CampusDynamics_Portal/sql/marks_audit/</code> (10, then 11, then 12) &mdash; all three are safe to run again.</p><p>");
+            for (int i = 0; i < missing.Count; i++)
+            {
+                if (i > 0) sb.Append(" &middot; ");
+                sb.Append(HtmlEnc(missing[i]));
+            }
+            sb.Append("</p></div></div>");
+            return sb.ToString();
+        }
+        catch
+        {
+            return string.Empty;
+        }
+    }
+
     public const string ChangeFilterCw   = "cw";     // coursework changed at least once
     public const string ChangeFilterExam = "exam";   // exam mark changed at least once
     public const string ChangeFilterAny  = "any";    // either
