@@ -217,6 +217,50 @@ public static class MarksControllerShared
                  litPage, litPageCount, litPager, litPager2, kind);
     }
 
+    // ─────────────────────────────────────────────────────────────────────
+    //  TRACK - who last touched the coursework or the exam mark.
+    //
+    //  Read from acad_provisional_marks_audit, which a database trigger writes
+    //  on every change to acad_course_registration. The trigger is the only
+    //  honest place for it: eleven code paths across eadmin and the portal
+    //  write these two columns, and instrumenting eleven call sites is how you
+    //  get ten of them right.
+    //
+    //  The filter is read straight from the query string rather than through a
+    //  new control parameter, so the other pages that share BindGrid are
+    //  untouched by it.
+    // ─────────────────────────────────────────────────────────────────────
+
+    public const string ChangeFilterCw   = "cw";     // coursework changed at least once
+    public const string ChangeFilterExam = "exam";   // exam mark changed at least once
+    public const string ChangeFilterAny  = "any";    // either
+    public const string ChangeFilterNone = "none";   // never changed
+
+    /// <summary>The "mark changes" filter, normalised. Anything unrecognised means no filter.</summary>
+    public static string ReadChangeFilter(HttpRequest request)
+    {
+        string v = request != null ? (request.QueryString["chg"] ?? "").Trim().ToLowerInvariant() : "";
+        if (v == ChangeFilterCw || v == ChangeFilterExam || v == ChangeFilterAny || v == ChangeFilterNone) return v;
+        return "";
+    }
+
+    /// <summary>
+    /// The WHERE fragment for that filter. Built from constants only — nothing the caller
+    /// typed ever reaches the SQL.
+    /// </summary>
+    private static string ChangeFilterSql(string chg)
+    {
+        if (chg == ChangeFilterCw)
+            return " AND EXISTS (SELECT 1 FROM campus_dynamics_portal.acad_provisional_marks_audit a WHERE a.reg_id = cr.id AND a.changed_cw = 1)";
+        if (chg == ChangeFilterExam)
+            return " AND EXISTS (SELECT 1 FROM campus_dynamics_portal.acad_provisional_marks_audit a WHERE a.reg_id = cr.id AND a.changed_exam = 1)";
+        if (chg == ChangeFilterAny)
+            return " AND EXISTS (SELECT 1 FROM campus_dynamics_portal.acad_provisional_marks_audit a WHERE a.reg_id = cr.id)";
+        if (chg == ChangeFilterNone)
+            return " AND NOT EXISTS (SELECT 1 FROM campus_dynamics_portal.acad_provisional_marks_audit a WHERE a.reg_id = cr.id)";
+        return "";
+    }
+
     public static void BindGrid(HttpRequest request, MySqlConnection conn,
         DropDownList ddlYear, DropDownList ddlSemester, DropDownList ddlStatus, DropDownList ddlProg,
         DropDownList ddlLecturer, DropDownList ddlPageSize, TextBox txtSearch, TextBox txtCourse,
@@ -243,7 +287,7 @@ public static class MarksControllerShared
 
         if (string.IsNullOrEmpty(courseCol))
         {
-            litRows.Text = "<tr><td colspan='14' style='padding:16px;color:#b42318;font-size:11px;'>Course column not found on acad_course_registration.</td></tr>";
+            litRows.Text = "<tr><td colspan='" + (kind == AdminMarksPageKind.AllMarks ? 15 : 14) + "' style='padding:16px;color:#b42318;font-size:11px;'>Course column not found on acad_course_registration.</td></tr>";
             litFrom.Text = litTo.Text = litTotal.Text = litTotal2.Text = "0";
             litPage.Text = litPageCount.Text = "1";
             litPager.Text = litPager2.Text = "";
@@ -274,6 +318,9 @@ public static class MarksControllerShared
             where.Append(" AND (" + courseCol + " LIKE @qc OR COALESCE(c.courseName,'') LIKE @qc)");
         if (!string.IsNullOrEmpty(lect))
             where.Append(" AND EXISTS (SELECT 1 FROM acad_programmecourses pc2 WHERE pc2.lecturer_id = @lect AND pc2.course_code = " + courseCol + " AND pc2.progcode = cr.prog_id)");
+        // Sits beside the lecturer filter on purpose: together they answer "which of
+        // this lecturer's marks were changed after the fact, and by whom".
+        where.Append(ChangeFilterSql(ReadChangeFilter(request)));
 
         string joins = @"
             FROM campus_dynamics_portal.acad_course_registration cr
@@ -316,7 +363,17 @@ public static class MarksControllerShared
                      WHEN COALESCE(cr.provisional_marks_status,'pending') = 'published' THEN 'published'
                      WHEN cr.provisional_course_work_marks IS NULL AND cr.provisional_exam_marks IS NULL THEN 'not_entered'
                      ELSE COALESCE(cr.provisional_marks_status,'pending')
-                   END AS prov_status
+                   END AS prov_status,
+                   (SELECT CONCAT_WS('~|~', a.performed_by,
+                                     DATE_FORMAT(a.created_at,'%Y-%m-%d %H:%i'),
+                                     a.changed_cw, a.changed_exam, a.action_type,
+                                     IFNULL(a.old_cw,''), IFNULL(a.new_cw,''),
+                                     IFNULL(a.old_exam,''), IFNULL(a.new_exam,''))
+                      FROM campus_dynamics_portal.acad_provisional_marks_audit a
+                     WHERE a.reg_id = cr.id
+                     ORDER BY a.id DESC LIMIT 1) AS last_change,
+                   (SELECT COUNT(*) FROM campus_dynamics_portal.acad_provisional_marks_audit a2
+                     WHERE a2.reg_id = cr.id) AS change_count
             " + joins + " " + where.ToString() + @"
             ORDER BY cr.id DESC
             LIMIT @offset, @pageSize";
@@ -348,6 +405,8 @@ public static class MarksControllerShared
                     string totMarks = rdr.IsDBNull(rdr.GetOrdinal("provisional_total_marks")) ? null : rdr["provisional_total_marks"].ToString();
                     string pubMark = rdr.IsDBNull(rdr.GetOrdinal("published_mark")) ? "-" : rdr["published_mark"].ToString();
                     string pubGrade = rdr.IsDBNull(rdr.GetOrdinal("published_grade")) ? "-" : rdr["published_grade"].ToString();
+                    string lastChange = rdr.IsDBNull(rdr.GetOrdinal("last_change")) ? null : rdr["last_change"].ToString();
+                    int changeCount = rdr.IsDBNull(rdr.GetOrdinal("change_count")) ? 0 : Convert.ToInt32(rdr["change_count"]);
 
                     string pillCss = "pm-pill--pending";
                     string rowCss = "row--pending";
@@ -387,6 +446,11 @@ public static class MarksControllerShared
                     sb.AppendFormat("<td class='col-pub pm-center'><span class='pm-mark'>{0}</span></td>", HtmlEnc(pubMark));
                     sb.AppendFormat("<td class='col-grade pm-center'><span class='pm-mark'>{0}</span></td>", HtmlEnc(pubGrade));
                     sb.AppendFormat("<td class='col-status pm-center'><span class='pm-pill {0}'>{1}</span></td>", pillCss, HtmlEnc(provStatus.Replace("_", " ")));
+                    // Only AllMarks carries a Track column in its header. BindGrid is shared with
+                    // three other screens whose tables are fourteen columns wide, and emitting a
+                    // fifteenth cell into those would shift every row out of line with its header.
+                    if (kind == AdminMarksPageKind.AllMarks)
+                        sb.AppendFormat("<td class='col-track'>{0}</td>", BuildTrackCell(lastChange, changeCount));
                                         sb.AppendFormat(@"<td class='col-act pm-center'>
   <div class='pm-row-wrap'>
     <button type='button' class='pm-row-trigger' onclick='toggleRowMenu(this)' title='Actions' aria-label='Open row actions'>&#8942;</button>
@@ -398,7 +462,8 @@ public static class MarksControllerShared
         }
 
         if (sb.Length == 0)
-            sb.Append("<tr><td colspan='14' style='padding:14px;text-align:center;color:#6b7280;font-size:11px;'>No records found for the selected filters.</td></tr>");
+            sb.AppendFormat("<tr><td colspan='{0}' style='padding:14px;text-align:center;color:#6b7280;font-size:11px;'>No records found for the selected filters.</td></tr>",
+                            kind == AdminMarksPageKind.AllMarks ? 15 : 14);
 
         litRows.Text = sb.ToString();
         int displayFrom = total == 0 ? 0 : offset + 1;
@@ -531,6 +596,10 @@ public static class MarksControllerShared
                     LEFT JOIN hrm_employee e ON e.empID = pc.lecturer_id
                     WHERE cr.id = @id LIMIT 1";
 
+                // Declared outside the reader: the history needs another command on this
+                // same connection, which cannot run while a reader is open.
+                Dictionary<string, object> record = new Dictionary<string, object>();
+
                 using (MySqlCommand cmd = new MySqlCommand(sql, conn))
                 {
                     cmd.Parameters.AddWithValue("@id", id);
@@ -539,7 +608,6 @@ public static class MarksControllerShared
                         if (!rdr.Read())
                             return js.Serialize(new { success = false, message = "Record not found." });
 
-                        Dictionary<string, object> record = new Dictionary<string, object>();
                         record["id"] = Convert.ToInt32(rdr["id"]);
                         record["regno"] = rdr["regno"].ToString();
                         record["student_name"] = rdr["student_name"].ToString().Trim();
@@ -560,15 +628,106 @@ public static class MarksControllerShared
                         record["provisional_marks_review_date"] = rdr["provisional_marks_review_date"].ToString();
                         record["provisional_published_by"] = rdr["provisional_published_by"].ToString();
                         record["provisional_published_date"] = rdr["provisional_published_date"].ToString();
-                        return js.Serialize(new { success = true, record = record });
                     }
                 }
+
+                record["history"] = GetMarkHistory(conn, id,
+                    record.ContainsKey("regno") ? (string)record["regno"] : "",
+                    record.ContainsKey("courseID") ? (string)record["courseID"] : "",
+                    record.ContainsKey("acad_year") ? (string)record["acad_year"] : "",
+                    record.ContainsKey("semester") ? (string)record["semester"] : "");
+
+                return js.Serialize(new { success = true, record = record });
             }
         }
         catch (Exception ex)
         {
             return js.Serialize(new { success = false, message = "Error: " + ex.Message });
         }
+    }
+
+    /// <summary>
+    /// Every recorded change to this registration's coursework and exam marks, newest first.
+    ///
+    /// Matched on the registration id AND on the natural key, because several hundred entries
+    /// recovered from the old activity log describe registrations that no longer carry the same
+    /// row id. Dropping those would quietly shorten the history of exactly the oldest records,
+    /// which is where a trail is most often wanted.
+    /// </summary>
+    private static List<Dictionary<string, object>> GetMarkHistory(
+        MySqlConnection conn, int id, string regno, string courseId, string acadYear, string semester)
+    {
+        List<Dictionary<string, object>> list = new List<Dictionary<string, object>>();
+        const string sql = @"
+            SELECT a.id, a.action_type, a.changed_cw, a.changed_exam,
+                   a.old_cw, a.new_cw, a.old_exam, a.new_exam,
+                   a.old_total, a.new_total, a.old_status, a.new_status,
+                   a.performed_by, a.source_page, a.change_reason, a.ip_address,
+                   DATE_FORMAT(a.created_at, '%Y-%m-%d %H:%i:%s') AS at_
+              FROM campus_dynamics_portal.acad_provisional_marks_audit a
+             WHERE a.reg_id = @id
+                OR (@rg <> '' AND a.regno = @rg AND a.course_id = @cs
+                    AND a.acad_year = @ay AND a.semester = @sm)
+             ORDER BY a.created_at DESC, a.id DESC
+             LIMIT 200";
+        try
+        {
+            using (MySqlCommand cmd = new MySqlCommand(sql, conn))
+            {
+                cmd.Parameters.AddWithValue("@id", id);
+                cmd.Parameters.AddWithValue("@rg", regno ?? "");
+                cmd.Parameters.AddWithValue("@cs", courseId ?? "");
+                cmd.Parameters.AddWithValue("@ay", acadYear ?? "");
+                cmd.Parameters.AddWithValue("@sm", semester ?? "");
+                using (MySqlDataReader r = cmd.ExecuteReader())
+                {
+                    Dictionary<long, bool> seen = new Dictionary<long, bool>();
+                    while (r.Read())
+                    {
+                        long rid = Convert.ToInt64(r["id"]);
+                        if (seen.ContainsKey(rid)) continue;      // the OR can match one row twice
+                        seen[rid] = true;
+
+                        Dictionary<string, object> h = new Dictionary<string, object>();
+                        h["at"] = r["at_"].ToString();
+                        h["action"] = r["action_type"].ToString();
+                        h["by"] = r["performed_by"].ToString();
+                        h["source"] = Str(r, "source_page");
+                        h["reason"] = Str(r, "change_reason");
+                        h["ip"] = Str(r, "ip_address");
+                        h["cw"] = Convert.ToInt32(r["changed_cw"]) == 1;
+                        h["ex"] = Convert.ToInt32(r["changed_exam"]) == 1;
+                        h["oldCw"] = NumOrNull(r, "old_cw");
+                        h["newCw"] = NumOrNull(r, "new_cw");
+                        h["oldExam"] = NumOrNull(r, "old_exam");
+                        h["newExam"] = NumOrNull(r, "new_exam");
+                        h["oldTotal"] = NumOrNull(r, "old_total");
+                        h["newTotal"] = NumOrNull(r, "new_total");
+                        h["oldStatus"] = Str(r, "old_status");
+                        h["newStatus"] = Str(r, "new_status");
+                        list.Add(h);
+                    }
+                }
+            }
+        }
+        catch
+        {
+            // A history that will not read must never stop the details opening. The panel
+            // says so for itself when the list comes back empty.
+        }
+        return list;
+    }
+
+    private static object NumOrNull(MySqlDataReader r, string col)
+    {
+        int i = r.GetOrdinal(col);
+        return r.IsDBNull(i) ? null : (object)Convert.ToInt32(r[i]);
+    }
+
+    private static string Str(MySqlDataReader r, string col)
+    {
+        int i = r.GetOrdinal(col);
+        return r.IsDBNull(i) ? "" : r[i].ToString();
     }
 
     public static string ReviewProvisionalMarks(int id, string action, string comment)
@@ -787,6 +946,12 @@ public static class MarksControllerShared
                             "Withdrawn for an admin mark correction" + (string.IsNullOrWhiteSpace(note) ? "" : ": " + note.Trim()));
                         if (!un.Success) { tx.Rollback(); return js.Serialize(new { success = false, message = un.Message }); }
                     }
+
+                    // Name the actor for the audit trigger BEFORE the write, on this same
+                    // connection. Without it the trigger records the change honestly but
+                    // anonymously, as 'system'.
+                    SetMarkAuditContext(conn, tx, actor, "AllMarks:edit-marks",
+                        string.IsNullOrWhiteSpace(note) ? "Admin mark correction" : note.Trim());
 
                     string sql = @"UPDATE campus_dynamics_portal.acad_course_registration
                                    SET provisional_course_work_marks = @cw,
@@ -1475,6 +1640,68 @@ public static class MarksControllerShared
 
         return targetIds;
     }
+
+        /// <summary>
+        /// The Track cell: who last moved a mark on this row, when, and which mark it was.
+        ///
+        /// Two tags rather than prose, because the column is read by scanning a page of rows,
+        /// not by reading one: CW and EX light up only for the mark that actually moved, and
+        /// the arrow carries the old and new values so the common question — "changed from
+        /// what to what" — is answered without opening anything.
+        ///
+        /// A row with no entry says so plainly. "Never changed" and "changed by somebody we
+        /// cannot name" are different facts and must not look the same.
+        /// </summary>
+        private static string BuildTrackCell(string packed, int changeCount)
+        {
+            if (string.IsNullOrEmpty(packed))
+                return "<span class='pm-track pm-track--none' title='No change has been recorded for this row'>&mdash;</span>";
+
+            string[] p = packed.Split(new string[] { "~|~" }, StringSplitOptions.None);
+            string who    = p.Length > 0 ? p[0] : "";
+            string when   = p.Length > 1 ? p[1] : "";
+            bool cw       = p.Length > 2 && p[2] == "1";
+            bool ex       = p.Length > 3 && p[3] == "1";
+            string action = p.Length > 4 ? p[4] : "";
+            string oldCw  = p.Length > 5 ? p[5] : "";
+            string newCw  = p.Length > 6 ? p[6] : "";
+            string oldEx  = p.Length > 7 ? p[7] : "";
+            string newEx  = p.Length > 8 ? p[8] : "";
+
+            if (string.IsNullOrEmpty(who)) who = "system";
+
+            StringBuilder t = new StringBuilder();
+            t.Append("<div class='pm-track'>");
+
+            t.Append("<div class='pm-track__tags'>");
+            if (cw) t.AppendFormat("<span class='pm-chg pm-chg--cw' title='Coursework {0} &rarr; {1}'>CW {0}&rarr;{1}</span>",
+                                   HtmlEnc(Dash(oldCw)), HtmlEnc(Dash(newCw)));
+            if (ex) t.AppendFormat("<span class='pm-chg pm-chg--ex' title='Exam {0} &rarr; {1}'>EX {0}&rarr;{1}</span>",
+                                   HtmlEnc(Dash(oldEx)), HtmlEnc(Dash(newEx)));
+            if (!cw && !ex) t.Append("<span class='pm-chg pm-chg--other'>entered</span>");
+            t.Append("</div>");
+
+            string more = changeCount > 1 ? string.Format(" <span class='pm-track__n' title='{0} changes recorded in total'>+{1}</span>",
+                                                          changeCount, changeCount - 1) : "";
+            // MIGRATE means the entry was recovered from the old activity log rather than
+            // recorded first-hand. Saying so is the difference between a trail and a guess.
+            string src = action == "MIGRATE" ? "<span class='pm-track__hist' title='Recovered from the activity log, before first-hand recording began'>log</span>" : "";
+
+            t.AppendFormat("<div class='pm-track__who' title='{0}'>{1}{2}{3}</div>",
+                           HtmlEnc(who + " on " + when), HtmlEnc(Shorten(who, 16)), more, src);
+            t.AppendFormat("<div class='pm-track__when'>{0}</div>", HtmlEnc(when));
+            t.Append("</div>");
+            return t.ToString();
+        }
+
+        private static string Dash(string v) { return string.IsNullOrEmpty(v) ? "\u2013" : v; }
+
+        private static string Shorten(string v, int n)
+        {
+            if (string.IsNullOrEmpty(v)) return "";
+            v = v.Trim();
+            return v.Length <= n ? v : v.Substring(0, n - 1) + "\u2026";
+        }
 
         private static string BuildRowActions(AdminMarksPageKind kind, int id)
         {

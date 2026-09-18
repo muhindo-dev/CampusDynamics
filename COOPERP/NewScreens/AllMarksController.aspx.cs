@@ -29,6 +29,11 @@ public partial class COOPERP_NewScreens_AllMarksController : System.Web.UI.Page
             MarksControllerShared.LoadFilters(Request, conn, ddlYear, ddlSemester, ddlStatus, ddlProg, ddlLecturer, ddlPageSize, txtSearch, txtCourse, PageKind);
             MarksControllerShared.LoadStats(conn, litStatTotal, litPending, litApproved, litRejected, litPublished, litNotEntered);
             MarksControllerShared.BindGrid(Request, conn, ddlYear, ddlSemester, ddlStatus, ddlProg, ddlLecturer, ddlPageSize, txtSearch, txtCourse, litRows, litFrom, litTo, litTotal, litTotal2, litPage, litPageCount, litPager, litPager2, PageKind);
+
+            // The Mark-changes filter is a plain <select>, not a server control, so it is
+            // re-selected here from the same query string the grid read it from. Without this
+            // it would clear itself the moment you turned a page.
+            litChangedFilter.Text = MarksControllerShared.ReadChangeFilter(Request);
         }
     }
 

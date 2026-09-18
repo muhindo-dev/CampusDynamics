@@ -70,6 +70,35 @@
 .pm-table .col-yr{width:62px;}
 .pm-table .col-sem{width:76px;text-align:left;}
 .pm-table .col-mark{width:34px;text-align:center;}
+.pm-table .col-track{width:132px;}
+.pm-track{line-height:1.25;}
+.pm-track--none{color:#c7cdd6;}
+.pm-track__tags{display:flex;flex-wrap:wrap;gap:3px;margin-bottom:2px;}
+.pm-chg{display:inline-block;padding:0 4px;font-size:8.5px;font-weight:700;border-radius:2px;white-space:nowrap;}
+.pm-chg--cw{background:#eef2ff;color:#3730a3;}
+.pm-chg--ex{background:#fef3c7;color:#92400e;}
+.pm-chg--other{background:#f1f5f9;color:#64748b;}
+.pm-track__who{font-size:9.5px;font-weight:600;color:#334155;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.pm-track__when{font-size:8.5px;color:#94a3b8;white-space:nowrap;}
+.pm-track__n{display:inline-block;padding:0 3px;font-size:8px;font-weight:700;color:#475569;background:#e2e8f0;border-radius:2px;}
+.pm-track__hist{display:inline-block;margin-left:3px;padding:0 3px;font-size:8px;font-weight:700;color:#7c3aed;background:#f3e8ff;border-radius:2px;}
+/* history inside the details modal */
+.pm-hist{margin-top:10px;border-top:1px solid #e5e7eb;padding-top:8px;}
+.pm-hist__h{font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.4px;color:#6b7280;margin-bottom:6px;}
+.pm-hist__none{font-size:11px;color:#9ca3af;}
+.pm-hist__i{border-left:2px solid #e5e7eb;padding:0 0 9px 9px;position:relative;}
+.pm-hist__i:last-child{padding-bottom:0;}
+.pm-hist__i::before{content:'';position:absolute;left:-4px;top:3px;width:6px;height:6px;border-radius:50%;background:#94a3b8;}
+.pm-hist__i--cw::before{background:#4f46e5;}
+.pm-hist__i--ex::before{background:#d97706;}
+.pm-hist__top{display:flex;flex-wrap:wrap;gap:5px;align-items:baseline;}
+.pm-hist__when{font-size:10px;color:#111827;font-weight:700;}
+.pm-hist__by{font-size:10px;color:#374151;}
+.pm-hist__meta{font-size:9.5px;color:#9ca3af;margin-top:2px;word-break:break-word;}
+.pm-hist__move{font-size:11px;color:#111827;margin-top:2px;}
+.pm-hist__move b{font-weight:700;}
+.pm-hist__from{color:#b42318;}
+.pm-hist__to{color:#067647;}
 .pm-table .col-pub{width:42px;text-align:center;}
 .pm-table .col-grade{width:42px;text-align:center;}
 .pm-table .col-status{width:58px;text-align:center;}
@@ -361,6 +390,19 @@
 		<div class="pm-fg"><label>Status</label><asp:DropDownList ID="ddlStatus" runat="server" CssClass="pm-select" Enabled="false"><asp:ListItem Value="pending" Selected="True">Pending Approval Only</asp:ListItem></asp:DropDownList></div>
 		<div class="pm-fg"><label>Programme</label><asp:DropDownList ID="ddlProg" runat="server" CssClass="pm-select" /></div>
 		<div class="pm-fg"><label>Lecturer</label><asp:DropDownList ID="ddlLecturer" runat="server" CssClass="pm-select" /></div>
+		<%-- Beside the lecturer on purpose: the pair answers "which of this lecturer's marks
+		     were changed after they were entered, and by whom". Bound from the query string in
+		     Page_Load so it survives paging and the browser back button like every other filter. --%>
+		<div class="pm-fg"><label>Mark changes</label>
+			<asp:Literal ID="litChangedFilter" runat="server" Visible="false" />
+			<select id="ddlChanged" class="pm-select" onchange="applyFilters()">
+				<option value="">Any</option>
+				<option value="cw">Coursework changed</option>
+				<option value="exam">Exam changed</option>
+				<option value="any">Either changed</option>
+				<option value="none">Never changed</option>
+			</select>
+		</div>
 		<%-- Student and course are separate boxes so they can be combined: one student AND
 		     one paper. A single field could only ever OR them together. --%>
 		<div class="pm-fg"><label>Student</label><asp:TextBox ID="txtSearch" runat="server" CssClass="pm-input" placeholder="Reg no, entry no or name" onkeydown="if(event.key==='Enter')applyFilters();" /></div>
@@ -375,8 +417,8 @@
 
 	<div class="pm-table-wrap">
 		<table class="pm-table" id="pmTable">
-			<colgroup><col class="col-sel" /><col class="col-regno" /><col class="col-student" /><col class="col-course" /><col class="col-prog" /><col class="col-yr" /><col class="col-sem" /><col class="col-mark" /><col class="col-mark" /><col class="col-mark" /><col class="col-pub" /><col class="col-grade" /><col class="col-status" /><col class="col-act" /></colgroup>
-			<thead><tr><th class="col-sel"><input type="checkbox" id="chkAll" onclick="toggleAll(this)" title="Select all rows" /></th><th class="col-regno">Reg No</th><th class="col-student">Student</th><th class="col-course">Course</th><th class="col-prog">Prog</th><th class="col-yr">Acad Yr</th><th class="col-sem">Yr &amp; Sem</th><th class="col-mark">CW</th><th class="col-mark">Exam</th><th class="col-mark">Total</th><th class="col-pub">Pub Mk</th><th class="col-grade">Grade</th><th class="col-status">Status</th><th class="col-act">Action</th></tr></thead>
+			<colgroup><col class="col-sel" /><col class="col-regno" /><col class="col-student" /><col class="col-course" /><col class="col-prog" /><col class="col-yr" /><col class="col-sem" /><col class="col-mark" /><col class="col-mark" /><col class="col-mark" /><col class="col-pub" /><col class="col-grade" /><col class="col-status" /><col class="col-track" /><col class="col-act" /></colgroup>
+			<thead><tr><th class="col-sel"><input type="checkbox" id="chkAll" onclick="toggleAll(this)" title="Select all rows" /></th><th class="col-regno">Reg No</th><th class="col-student">Student</th><th class="col-course">Course</th><th class="col-prog">Prog</th><th class="col-yr">Acad Yr</th><th class="col-sem">Yr &amp; Sem</th><th class="col-mark">CW</th><th class="col-mark">Exam</th><th class="col-mark">Total</th><th class="col-pub">Pub Mk</th><th class="col-grade">Grade</th><th class="col-status">Status</th><th class="col-track" title="Who last changed the coursework or exam mark">Track</th><th class="col-act">Action</th></tr></thead>
 			<tbody><asp:Literal ID="litRows" runat="server" /></tbody>
 		</table>
 	</div>
@@ -404,13 +446,64 @@ function openModal(id){ qs('pmOverlay').classList.add('show'); qs(id).classList.
 window.closeModal=function(id){ qs('pmOverlay').classList.remove('show'); qs(id).classList.remove('show'); _id=null; };
 window.closeAllModals=function(){ ['modalDetails','modalReview','modalPublish','modalEdit','modalBulk','modalBatchWizard','modalSetStatus','modalCreateReg','modalDeleteReg'].forEach(function(m){ var el=qs(m); if(el) el.classList.remove('show'); }); qs('pmOverlay').classList.remove('show'); _id=null; };
 function goWithQuery(params){ var query = new URLSearchParams(); Object.keys(params).forEach(function(k){ if(params[k]!==undefined && params[k]!==null) query.set(k, params[k]); }); window.location.href='AllMarksController.aspx?'+query.toString(); }
-window.applyFilters=function(){ var year=qs('<%= ddlYear.ClientID %>').value, sem=qs('<%= ddlSemester.ClientID %>').value, status=qs('<%= ddlStatus.ClientID %>').value, prog=qs('<%= ddlProg.ClientID %>').value, lect=qs('<%= ddlLecturer.ClientID %>').value, ps=qs('<%= ddlPageSize.ClientID %>').value, q=qs('<%= txtSearch.ClientID %>').value, qc=qs('<%= txtCourse.ClientID %>').value; goWithQuery({pg:'1',year:year,sem:sem,status:status,prog:prog,lect:lect,ps:ps,q:q,qc:qc}); };
-window.filterByStatus=function(){ var year=qs('<%= ddlYear.ClientID %>').value, sem=qs('<%= ddlSemester.ClientID %>').value, status=qs('<%= ddlStatus.ClientID %>').value, prog=qs('<%= ddlProg.ClientID %>').value, lect=qs('<%= ddlLecturer.ClientID %>').value, ps=qs('<%= ddlPageSize.ClientID %>').value, q=qs('<%= txtSearch.ClientID %>').value, qc=qs('<%= txtCourse.ClientID %>').value; goWithQuery({pg:'1',year:year,sem:sem,status:status,prog:prog,lect:lect,ps:ps,q:q,qc:qc}); };
+// Restores the Mark-changes filter after a page turn. It is a plain <select>, so ASP.NET
+// does not do it for us.
+(function(){ var v='<%= litChangedFilter.Text %>'; var el=document.getElementById('ddlChanged'); if(el&&v) el.value=v; })();
+
+window.applyFilters=function(){ var year=qs('<%= ddlYear.ClientID %>').value, sem=qs('<%= ddlSemester.ClientID %>').value, status=qs('<%= ddlStatus.ClientID %>').value, prog=qs('<%= ddlProg.ClientID %>').value, lect=qs('<%= ddlLecturer.ClientID %>').value, ps=qs('<%= ddlPageSize.ClientID %>').value, q=qs('<%= txtSearch.ClientID %>').value, qc=qs('<%= txtCourse.ClientID %>').value, chg=(qs('ddlChanged')?qs('ddlChanged').value:''); goWithQuery({pg:'1',year:year,sem:sem,status:status,prog:prog,lect:lect,ps:ps,q:q,qc:qc,chg:chg}); };
+window.filterByStatus=function(){ var year=qs('<%= ddlYear.ClientID %>').value, sem=qs('<%= ddlSemester.ClientID %>').value, status=qs('<%= ddlStatus.ClientID %>').value, prog=qs('<%= ddlProg.ClientID %>').value, lect=qs('<%= ddlLecturer.ClientID %>').value, ps=qs('<%= ddlPageSize.ClientID %>').value, q=qs('<%= txtSearch.ClientID %>').value, qc=qs('<%= txtCourse.ClientID %>').value, chg=(qs('ddlChanged')?qs('ddlChanged').value:''); goWithQuery({pg:'1',year:year,sem:sem,status:status,prog:prog,lect:lect,ps:ps,q:q,qc:qc,chg:chg}); };
 function updateBulkBar(){ _selectedIds=[]; document.querySelectorAll('.pm-row-chk:checked').forEach(function(c){ _selectedIds.push(parseInt(c.value,10)); }); var bar=qs('bulkBar'); if(_selectedIds.length>0){ bar.classList.add('show'); qs('bulkCountLabel').textContent=_selectedIds.length+' selected'; } else bar.classList.remove('show'); }
 window.toggleAll=function(chk){ document.querySelectorAll('.pm-row-chk').forEach(function(c){ c.checked=chk.checked; }); updateBulkBar(); };
 document.addEventListener('change',function(e){ if(e.target&&e.target.classList.contains('pm-row-chk')) updateBulkBar(); });
 window.clearSelection=function(){ document.querySelectorAll('.pm-row-chk').forEach(function(c){ c.checked=false; }); if(qs('chkAll')) qs('chkAll').checked=false; updateBulkBar(); };
-window.openDetails=function(id){ _id=id; clearAlert('detailsAlert'); qs('detailsGrid').innerHTML='<dt style="font-size:10px;color:#6b7280;">Loading…</dt>'; qs('detailsMarksDisp').innerHTML=''; qs('detailsComment').innerHTML=''; openModal('modalDetails'); callAJAX('GetRecordDetails',{id:id},function(d){ if(!d.success){ showAlert('detailsAlert',d.message||'Unable to load details.','err'); return; } var r=d.record; qs('detailsModalTitle').textContent='Details: '+r.regno+' — '+r.courseID; qs('detailsGrid').innerHTML=dlRow('Reg No',r.regno)+dlRow('Student',r.student_name||'—')+dlRow('Course',r.courseID+' — '+(r.course_name||'—'))+dlRow('Programme',r.prog_id||'—')+dlRow('Academic Year',r.acad_year)+dlRow('Semester','Yr '+(r.study_year||'—')+', Sem '+r.semester)+dlRow('Submitted By',r.submitted_by||'—')+dlRow('Lecturer',r.lecturer_name||'—')+dlRow('Current Status',statusPill(r.provisional_marks_status))+dlRow('Reviewed By',r.provisional_marks_reviewed_by||'—')+dlRow('Review Date',r.provisional_marks_review_date||'—')+dlRow('Published By',r.provisional_published_by||'—')+dlRow('Published Date',r.provisional_published_date||'—'); qs('detailsMarksDisp').innerHTML=marksBanner(r.provisional_course_work_marks,r.provisional_exam_marks,r.provisional_total_marks); qs('detailsComment').innerHTML='<strong>Review Comment:</strong> '+(r.provisional_marks_review_comments||'—'); }); };
+window.openDetails=function(id){ _id=id; clearAlert('detailsAlert'); qs('detailsGrid').innerHTML='<dt style="font-size:10px;color:#6b7280;">Loading…</dt>'; qs('detailsMarksDisp').innerHTML=''; qs('detailsComment').innerHTML=''; openModal('modalDetails'); callAJAX('GetRecordDetails',{id:id},function(d){ if(!d.success){ showAlert('detailsAlert',d.message||'Unable to load details.','err'); return; } var r=d.record; qs('detailsModalTitle').textContent='Details: '+r.regno+' — '+r.courseID; qs('detailsGrid').innerHTML=dlRow('Reg No',r.regno)+dlRow('Student',r.student_name||'—')+dlRow('Course',r.courseID+' — '+(r.course_name||'—'))+dlRow('Programme',r.prog_id||'—')+dlRow('Academic Year',r.acad_year)+dlRow('Semester','Yr '+(r.study_year||'—')+', Sem '+r.semester)+dlRow('Submitted By',r.submitted_by||'—')+dlRow('Lecturer',r.lecturer_name||'—')+dlRow('Current Status',statusPill(r.provisional_marks_status))+dlRow('Reviewed By',r.provisional_marks_reviewed_by||'—')+dlRow('Review Date',r.provisional_marks_review_date||'—')+dlRow('Published By',r.provisional_published_by||'—')+dlRow('Published Date',r.provisional_published_date||'—'); qs('detailsMarksDisp').innerHTML=marksBanner(r.provisional_course_work_marks,r.provisional_exam_marks,r.provisional_total_marks); qs('detailsComment').innerHTML='<strong>Review Comment:</strong> '+(r.provisional_marks_review_comments||'—')+markHistory(r.history); }); };
+
+// Every recorded change to this row's coursework and exam marks, newest first.
+//
+// Written as a list of movements rather than a table of fields, because the question being
+// asked is nearly always "what happened to this mark, and who did it" - which reads as a
+// sequence. The old value and the new one are both shown on every line: a trail that only
+// records the new figure cannot answer whether a mark went up or down.
+window.markHistory=function(list){
+    if(!list) return '';
+    var h='<div class="pm-hist"><div class="pm-hist__h">Mark change history</div>';
+    if(!list.length){
+        return h+'<div class="pm-hist__none">No change has been recorded for this row. '
+              +'Marks entered before recording began appear only if they were captured in the activity log.</div></div>';
+    }
+    for(var i=0;i<list.length;i++){
+        var x=list[i];
+        var cls='pm-hist__i'+(x.cw?' pm-hist__i--cw':(x.ex?' pm-hist__i--ex':''));
+        h+='<div class="'+cls+'">';
+        h+='<div class="pm-hist__top"><span class="pm-hist__when">'+esc(x.at)+'</span>'
+          +'<span class="pm-hist__by">by <b>'+esc(x.by||'system')+'</b></span>';
+        if(x.action==='MIGRATE') h+='<span class="pm-track__hist" title="Recovered from the activity log">log</span>';
+        h+='</div>';
+
+        var moves=[];
+        if(x.cw) moves.push('<b>Coursework</b> <span class="pm-hist__from">'+mk(x.oldCw)+'</span> &rarr; <span class="pm-hist__to">'+mk(x.newCw)+'</span>');
+        if(x.ex) moves.push('<b>Exam</b> <span class="pm-hist__from">'+mk(x.oldExam)+'</span> &rarr; <span class="pm-hist__to">'+mk(x.newExam)+'</span>');
+        if(!moves.length) moves.push('<b>Marks entered</b>');
+        h+='<div class="pm-hist__move">'+moves.join(' &nbsp;&middot;&nbsp; ')+'</div>';
+
+        if(x.oldTotal!==null&&x.newTotal!==null&&x.oldTotal!==x.newTotal)
+            h+='<div class="pm-hist__move">Total <span class="pm-hist__from">'+mk(x.oldTotal)+'</span> &rarr; <span class="pm-hist__to">'+mk(x.newTotal)+'</span></div>';
+        if(x.oldStatus&&x.newStatus&&x.oldStatus!==x.newStatus)
+            h+='<div class="pm-hist__move">Status '+esc(x.oldStatus)+' &rarr; '+esc(x.newStatus)+'</div>';
+
+        var meta=[];
+        if(x.source) meta.push(esc(x.source));
+        if(x.ip) meta.push('IP '+esc(x.ip));
+        if(x.reason) meta.push(esc(x.reason));
+        if(meta.length) h+='<div class="pm-hist__meta">'+meta.join(' &middot; ')+'</div>';
+        h+='</div>';
+    }
+    return h+'</div>';
+};
+// A mark that was absent is a dash, not a zero. "0" and "never entered" are different facts.
+function mk(v){ return (v===null||v===undefined||v==='')?'&ndash;':esc(String(v)); }
+// esc() is the page's own, declared further down; function declarations hoist, so it is
+// available here. A second copy would only be a weaker one - the real one escapes quotes too.
 window.openReview=function(id){ _id=id; clearAlert('reviewAlert'); qs('reviewDetailGrid').innerHTML='<dt style="font-size:10px;color:#6b7280;">Loading…</dt>'; qs('reviewMarksDisp').innerHTML=''; qs('reviewComment').value=''; qs('reviewPrevComment').style.display='none'; openModal('modalReview'); callAJAX('GetProvisionalRecord',{id:id},function(d){ if(!d.success){showToast(d.message||'Error','err');window.closeModal('modalReview');return;} var r=d.record; qs('modalReviewTitle').textContent='Review: '+r.regno+' — '+r.courseID; qs('reviewDetailGrid').innerHTML=dlRow('Reg No',r.regno)+dlRow('Course',r.courseID)+dlRow('Programme',r.prog_id)+dlRow('Academic Year',r.acad_year)+dlRow('Semester','Yr '+(r.study_year||'—')+', Sem '+r.semester)+dlRow('Submitted By',r.submitted_by||'—')+dlRow('Current Status',statusPill(r.provisional_marks_status))+dlRow('Reviewed By',r.provisional_marks_reviewed_by||'—'); qs('reviewMarksDisp').innerHTML=marksBanner(r.provisional_course_work_marks,r.provisional_exam_marks,r.provisional_total_marks); if(r.provisional_marks_review_comments){ qs('reviewPrevComment').style.display='block'; qs('reviewPrevComment').innerHTML='<strong>Previous comment:</strong> '+r.provisional_marks_review_comments; qs('reviewComment').value=r.provisional_marks_review_comments; } }); };
 window.submitReview=function(action){ if(!_id)return; var comment=qs('reviewComment').value.trim(); if(action==='rejected'&&!comment){showAlert('reviewAlert','A comment is required when rejecting.','err');return;} clearAlert('reviewAlert'); qs('btnApprove').disabled=true; qs('btnReject').disabled=true; callAJAX('ReviewProvisionalMarks',{id:_id,action:action,comment:comment},function(d){ qs('btnApprove').disabled=false; qs('btnReject').disabled=false; if(d.success){showToast(action==='approved'?'Marks approved.':'Marks rejected.','ok');window.closeModal('modalReview');setTimeout(function(){location.reload();},800);} else showAlert('reviewAlert',d.message||'Operation failed.','err'); }); };
 window.openPublish=function(id){ _id=id; clearAlert('publishAlert'); qs('publishMarksDisp').innerHTML='<div style="padding:10px;color:#6b7280;font-size:11px;">Loading…</div>'; qs('publishInfo').innerHTML=''; openModal('modalPublish'); callAJAX('GetProvisionalRecord',{id:id},function(d){ if(!d.success){showToast(d.message||'Error','err');window.closeModal('modalPublish');return;} var r=d.record; qs('publishMarksDisp').innerHTML=marksBanner(r.provisional_course_work_marks,r.provisional_exam_marks,r.provisional_total_marks); qs('publishInfo').innerHTML='<strong>'+r.regno+'</strong> — '+r.courseID+' &nbsp;|&nbsp; '+r.acad_year+' · Yr '+(r.study_year||'—')+', Sem '+r.semester; }); };
