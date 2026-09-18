@@ -56,8 +56,10 @@
 .mat-fg input,.mat-fg select{padding:6px 8px;border:1px solid #cdd3de;border-radius:0;font-size:12px;
                              font-family:inherit;color:#1a1a2e;background:#fff;min-width:132px;max-width:100%;box-sizing:border-box}
 .mat-fg input:focus,.mat-fg select:focus{outline:none;border-color:#174DA4}
-.mat-fg--grow{flex:1 1 200px}
+.mat-fg--grow{flex:1 1 190px}
 .mat-fg--grow input{width:100%;min-width:0}
+.mat-fg--wide input{min-width:172px}
+.mat-fg__hint{font-weight:400;text-transform:none;letter-spacing:0;color:#a0a8b4;margin-left:4px}
 .mat-filters__end{display:flex;gap:8px;align-items:flex-end;margin-left:auto}
 
 /* --- buttons ----------------------------------------------------- */
@@ -110,6 +112,9 @@
           border-radius:0;white-space:nowrap;display:inline-block}
 .mat-sub{display:block;color:#888;font-size:10px;margin-top:2px;line-height:1.4}
 .mat-nil{color:#c7cdd6}
+a.mat-link{text-decoration:none;cursor:pointer;display:inline-block}
+a.mat-code.mat-link:hover{background:rgba(23,77,164,.14);border-color:rgba(23,77,164,.35);text-decoration:none}
+a.mat-who.mat-link:hover{text-decoration:underline}
 
 /* old -> new mark movement */
 .mat-mv{white-space:nowrap;font-variant-numeric:tabular-nums}
@@ -268,8 +273,8 @@
                 <input type="date" id="cTo" value="<asp:Literal ID='litCTo' runat='server' />" />
             </div>
             <div class="mat-fg">
-                <label class="mat-fg__label" for="cWho">Changed by</label>
-                <select id="cWho"><asp:Literal ID="litCWhoOpts" runat="server" /></select>
+                <label class="mat-fg__label" for="cWho">Lecturer / staff</label>
+                <select id="cWho" title="Whoever moved the mark"><asp:Literal ID="litCWhoOpts" runat="server" /></select>
             </div>
             <div class="mat-fg">
                 <label class="mat-fg__label" for="cChg">What changed</label>
@@ -279,9 +284,25 @@
                 <label class="mat-fg__label" for="cSrc">Where from</label>
                 <select id="cSrc"><asp:Literal ID="litCSrcOpts" runat="server" /></select>
             </div>
+            <div class="mat-fg mat-fg--wide">
+                <label class="mat-fg__label" for="cStu">Student
+                    <span class="mat-fg__hint"><asp:Literal ID="litCStuCount" runat="server" /></span>
+                </label>
+                <input type="text" id="cStu" list="matStuList" autocomplete="off" placeholder="reg. number or name"
+                       value="<asp:Literal ID='litCStu' runat='server' />" onkeydown="if(event.keyCode==13){matApply('changes');return false;}" />
+                <datalist id="matStuList"><asp:Literal ID="litCStuList" runat="server" /></datalist>
+            </div>
+            <div class="mat-fg mat-fg--wide">
+                <label class="mat-fg__label" for="cCrs">Course
+                    <span class="mat-fg__hint"><asp:Literal ID="litCCrsCount" runat="server" /></span>
+                </label>
+                <input type="text" id="cCrs" list="matCrsList" autocomplete="off" placeholder="course code or title"
+                       value="<asp:Literal ID='litCCrs' runat='server' />" onkeydown="if(event.keyCode==13){matApply('changes');return false;}" />
+                <datalist id="matCrsList"><asp:Literal ID="litCCrsList" runat="server" /></datalist>
+            </div>
             <div class="mat-fg mat-fg--grow">
-                <label class="mat-fg__label" for="cQ">Student, course or person</label>
-                <input type="text" id="cQ" placeholder="reg. number, course code or name"
+                <label class="mat-fg__label" for="cQ">Anything else</label>
+                <input type="text" id="cQ" placeholder="IP address, reason, programme, year..."
                        value="<asp:Literal ID='litCQ' runat='server' />" onkeydown="if(event.keyCode==13){matApply('changes');return false;}" />
             </div>
             <div class="mat-filters__end">
@@ -329,6 +350,7 @@
                 </span>
                 <span class="mat-legend__g"><b>Reconstructed</b> rebuilt from the older activity log, not recorded by the database as it happened.</span>
                 <span class="mat-legend__g"><b>Not set / cleared</b> the mark had no value before the change, or has none after it.</span>
+                <span class="mat-legend__g"><b>Tip</b> click a lecturer, a student or a course to filter by it.</span>
             </div>
             <div class="mat-pager">
                 <span class="mat-pager__info"><asp:Literal ID="litCPagerInfo" runat="server" /></span>
@@ -435,14 +457,16 @@ function matApply(view){
         if (el && el.value) p.push(key + '=' + encodeURIComponent(el.value));
     }
     if (view === 'changes'){
-        add('from','cFrom'); add('to','cTo'); add('who','cWho');
-        add('chg','cChg');   add('src','cSrc'); add('q','cQ');
+        add('from','cFrom'); add('to','cTo');  add('who','cWho');
+        add('chg','cChg');   add('src','cSrc');
+        add('stu','cStu');   add('crs','cCrs'); add('q','cQ');
     } else {
         add('from','aFrom'); add('to','aTo'); add('who','aWho');
         add('act','aAct');   add('q','aQ');
     }
+    // 50 is the default, so leave it out and keep the link clean
     var ps = document.getElementById('matPageSize');
-    if (ps && ps.value) p.push('ps=' + encodeURIComponent(ps.value));
+    if (ps && ps.value && ps.value !== '50') p.push('ps=' + encodeURIComponent(ps.value));
     window.location.href = 'MarksAuditTrail.aspx?' + p.join('&');
 }
 

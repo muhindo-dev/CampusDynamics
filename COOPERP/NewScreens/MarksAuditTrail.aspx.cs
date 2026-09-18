@@ -63,19 +63,29 @@ public partial class COOPERP_NewScreens_MarksAuditTrail : System.Web.UI.Page
 
     private static readonly int[] PageSizes = new int[] { 25, 50, 100, 200 };
 
+    /// <summary>What the page shows when nobody has chosen anything: the whole trail.</summary>
+    private const string DefaultRange = "all";
+    private const int DefaultPageSize = 50;
+    private const int PickListCap = 600;
+
     // ────────────────────────────────────────────────────────────────────
     //  Request state
     // ────────────────────────────────────────────────────────────────────
 
     private string _view = "changes";
-    private string _range = "365";     // all | today | 7 | 30 | 365 | "" when a custom date was typed
+    private string _range = "all";     // all | today | 7 | 30 | 365 | "" when a custom date was typed
     private string _from = "";         // yyyy-MM-dd, "" = open ended
     private string _to = "";
     private string _who = "";
     private string _chg = "";
     private string _src = "";
     private string _act = "";
-    private string _q = "";
+    private string _stu = "";          // reg. number or student name
+    private string _crs = "";          // course code or course title
+    private string _q = "";            // anything else
+    private string _stuIn = "";        // reg. numbers matched by student name
+    private string _crsIn = "";        // course codes matched by course title
+    private bool _lookupsDone;
     private int _page = 1;
     private int _pageSize = 50;
     private MarksScope _scope;
@@ -113,6 +123,7 @@ public partial class COOPERP_NewScreens_MarksAuditTrail : System.Web.UI.Page
                 "faculty. The <b>mark changes</b> view below is complete for every programme in your scope.</div>";
         }
 
+        DropInapplicableFilters();
         RenderTabs();
         RenderHeaderSub();
 
@@ -154,6 +165,23 @@ public partial class COOPERP_NewScreens_MarksAuditTrail : System.Web.UI.Page
         }
     }
 
+    /// <summary>
+    /// A filter that belongs to the other view is dropped once the view is settled, rather than
+    /// sitting in the URL looking as though it applies. Runs after the access check, because
+    /// that is what can send a dean asking for the activity log back to the mark changes.
+    /// </summary>
+    private void DropInapplicableFilters()
+    {
+        if (_view == "activity")
+        {
+            _chg = ""; _src = ""; _stu = ""; _crs = "";
+        }
+        else
+        {
+            _act = "";
+        }
+    }
+
     private void ReadRequest()
     {
         System.Collections.Specialized.NameValueCollection qs = Request.QueryString;
@@ -163,24 +191,28 @@ public partial class COOPERP_NewScreens_MarksAuditTrail : System.Web.UI.Page
         _chg = Low(qs["chg"]);
         _src = Trim(qs["src"], 100);
         _act = Trim(qs["act"], 60);
+        _stu = Trim(qs["stu"], 60);
+        _crs = Trim(qs["crs"], 60);
         _q = Trim(qs["q"], 60);
 
         if (_chg != "cw" && _chg != "exam" && _chg != "both") _chg = "";
 
-        // A typed date always wins over a preset range.
-        string from = Trim(qs["from"], 10);
-        string to = Trim(qs["to"], 10);
+        // No query string means no filter: the whole trail, newest first. A typed date always
+        // wins over a preset range; one that will not parse falls back to no filter rather than
+        // to half a range.
+        string from = ValidDate(Trim(qs["from"], 10));
+        string to = ValidDate(Trim(qs["to"], 10));
         if (from.Length > 0 || to.Length > 0)
         {
-            _from = ValidDate(from);
-            _to = ValidDate(to);
+            _from = from;
+            _to = to;
             _range = "";
         }
         else
         {
             _range = Low(qs["r"]);
             if (_range != "all" && _range != "today" && _range != "7" && _range != "30" && _range != "365")
-                _range = "365";
+                _range = DefaultRange;
             ApplyRange();
         }
 
@@ -189,7 +221,7 @@ public partial class COOPERP_NewScreens_MarksAuditTrail : System.Web.UI.Page
 
         int ps;
         int.TryParse(qs["ps"], out ps);
-        _pageSize = 50;
+        _pageSize = DefaultPageSize;
         for (int i = 0; i < PageSizes.Length; i++) if (PageSizes[i] == ps) _pageSize = ps;
     }
 
@@ -202,10 +234,8 @@ public partial class COOPERP_NewScreens_MarksAuditTrail : System.Web.UI.Page
             case "today": _from = Ymd(today); _to = Ymd(today); break;
             case "7": _from = Ymd(today.AddDays(-6)); _to = Ymd(today); break;
             case "30": _from = Ymd(today.AddDays(-29)); _to = Ymd(today); break;
-            // This calendar year is the default: a month of marks activity is often
-            // empty out of term, and an audit trail that opens empty teaches people
-            // to distrust it.
-            default: _from = Ymd(new DateTime(today.Year, 1, 1)); _to = Ymd(today); break;
+            case "365": _from = Ymd(new DateTime(today.Year, 1, 1)); _to = Ymd(today); break;
+            default: _from = ""; _to = ""; break;
         }
     }
 
@@ -257,6 +287,7 @@ public partial class COOPERP_NewScreens_MarksAuditTrail : System.Web.UI.Page
 
     private void RenderChanges(MySqlConnection conn)
     {
+        ResolveTermLookups(conn);
         string where = ChangesWhere();
 
         // ── headline numbers for the selected period ──
@@ -280,13 +311,17 @@ public partial class COOPERP_NewScreens_MarksAuditTrail : System.Web.UI.Page
             }
         }
 
-        litKpiTotalSub.Text = PeriodLabel() + " &middot; " + N(ScalarLong(conn,
-            "SELECT COUNT(*) FROM " + AuditTable + " a WHERE 1=1 " + ScopeSql())) + " on record in total";
+        litKpiTotalSub.Text = HasChangeFilter()
+            ? PeriodLabel() + " &middot; " + N(ScalarLong(conn,
+                  "SELECT COUNT(*) FROM " + AuditTable + " a WHERE 1=1 " + ScopeSql())) + " on record in total"
+            : "the whole trail, nothing filtered out";
 
         LoadChangeFilterOptions(conn);
         RenderQuickRanges(litQuickC, "changes");
         litCFrom.Text = Enc(_from);
         litCTo.Text = Enc(_to);
+        litCStu.Text = Enc(_stu);
+        litCCrs.Text = Enc(_crs);
         litCQ.Text = Enc(_q);
         litCPsOpts.Text = PageSizeOptions();
 
@@ -340,27 +375,97 @@ public partial class COOPERP_NewScreens_MarksAuditTrail : System.Web.UI.Page
 
     private bool HasChangeFilter()
     {
-        return _who.Length > 0 || _chg.Length > 0 || _src.Length > 0 || _q.Length > 0
+        return _who.Length > 0 || _chg.Length > 0 || _src.Length > 0
+            || _stu.Length > 0 || _crs.Length > 0 || _q.Length > 0
             || _from.Length > 0 || _to.Length > 0;
     }
 
-    private string ChangesWhere()
+    private string ChangesWhere() { return ChangesWhere(""); }
+
+    /// <summary>
+    /// The WHERE for the mark-change list. <paramref name="except"/> names one filter to leave
+    /// out, which is how each dropdown is counted over what is still reachable once the *other*
+    /// filters are in force — an option promising 40 rows that turn out to be none is worse
+    /// than no option at all.
+    /// </summary>
+    private string ChangesWhere(string except)
     {
         StringBuilder sb = new StringBuilder(" WHERE 1=1 ");
         if (_from.Length > 0) sb.Append(" AND a.created_at >= @dfrom ");
         if (_to.Length > 0) sb.Append(" AND a.created_at < @dto ");
-        if (_who.Length > 0) sb.Append(" AND a.performed_by = @who ");
-        if (_q.Length > 0) sb.Append(" AND (a.regno LIKE @q OR a.course_id LIKE @q OR a.performed_by LIKE @q) ");
 
-        if (_chg == "cw") sb.Append(" AND a.changed_cw = 1 ");
-        else if (_chg == "exam") sb.Append(" AND a.changed_exam = 1 ");
-        else if (_chg == "both") sb.Append(" AND a.changed_cw = 1 AND a.changed_exam = 1 ");
+        if (except != "who" && _who.Length > 0) sb.Append(" AND a.performed_by = @who ");
 
-        if (_src == "__none__") sb.Append(" AND (a.source_page IS NULL OR a.source_page = '') ");
-        else if (_src.Length > 0) sb.Append(" AND a.source_page = @src ");
+        // Student and course are separate filters on purpose: one blended box cannot answer
+        // "who has touched this student's marks" without also matching a course code that
+        // happens to share the letters. A name or a title is resolved to its codes first, so
+        // both boxes accept either spelling.
+        if (except != "stu" && _stu.Length > 0)
+            sb.Append(_stuIn.Length > 0
+                ? " AND (a.regno LIKE @stu OR a.regno IN (" + _stuIn + ")) "
+                : " AND a.regno LIKE @stu ");
+
+        if (except != "crs" && _crs.Length > 0)
+            sb.Append(_crsIn.Length > 0
+                ? " AND (a.course_id LIKE @crs OR a.course_id IN (" + _crsIn + ")) "
+                : " AND a.course_id LIKE @crs ");
+
+        if (except != "q" && _q.Length > 0)
+            sb.Append(" AND (a.regno LIKE @q OR a.course_id LIKE @q OR a.performed_by LIKE @q " +
+                      "OR a.source_page LIKE @q OR a.ip_address LIKE @q OR a.change_reason LIKE @q " +
+                      "OR a.prog_id LIKE @q OR a.acad_year LIKE @q) ");
+
+        if (except != "chg")
+        {
+            if (_chg == "cw") sb.Append(" AND a.changed_cw = 1 ");
+            else if (_chg == "exam") sb.Append(" AND a.changed_exam = 1 ");
+            else if (_chg == "both") sb.Append(" AND a.changed_cw = 1 AND a.changed_exam = 1 ");
+        }
+
+        if (except != "src")
+        {
+            if (_src == "__none__") sb.Append(" AND (a.source_page IS NULL OR a.source_page = '') ");
+            else if (_src.Length > 0) sb.Append(" AND a.source_page = @src ");
+        }
 
         sb.Append(ScopeSql());
         return sb.ToString();
+    }
+
+    /// <summary>
+    /// A student's name and a course's title live in other tables, so they are turned into the
+    /// codes the audit actually stores before any query runs. Done once per request.
+    /// </summary>
+    private void ResolveTermLookups(MySqlConnection conn)
+    {
+        if (_lookupsDone) return;
+        _lookupsDone = true;
+
+        if (_stu.Length > 0)
+            _stuIn = CodesMatching(conn,
+                "SELECT regno v FROM acad_student " +
+                "WHERE CONCAT(IFNULL(firstname,''),' ',IFNULL(othername,'')) LIKE @t LIMIT 500", _stu);
+
+        if (_crs.Length > 0)
+            _crsIn = CodesMatching(conn,
+                "SELECT courseID v FROM acad_course WHERE courseName LIKE @t LIMIT 500", _crs);
+    }
+
+    private string CodesMatching(MySqlConnection conn, string sql, string term)
+    {
+        List<string> found = new List<string>();
+        try
+        {
+            using (MySqlCommand cmd = new MySqlCommand(sql, conn))
+            {
+                cmd.Parameters.AddWithValue("@t", "%" + term + "%");
+                cmd.CommandTimeout = 30;
+                using (MySqlDataReader r = cmd.ExecuteReader())
+                    while (r.Read()) found.Add(Str(r["v"]));
+            }
+        }
+        catch { }
+        return InList(found);
     }
 
     /// <summary>Programme restriction for the viewer. Empty for an administrator.</summary>
@@ -369,60 +474,204 @@ public partial class COOPERP_NewScreens_MarksAuditTrail : System.Web.UI.Page
         return _scope.ProgFilter("a", "prog_id");
     }
 
-    private void BindChangeParams(MySqlCommand cmd)
+    private void BindChangeParams(MySqlCommand cmd) { BindChangeParams(cmd, ""); }
+
+    private void BindChangeParams(MySqlCommand cmd, string except)
     {
         if (_from.Length > 0) cmd.Parameters.AddWithValue("@dfrom", DateTime.Parse(_from, CultureInfo.InvariantCulture));
         if (_to.Length > 0) cmd.Parameters.AddWithValue("@dto", DateTime.Parse(_to, CultureInfo.InvariantCulture).AddDays(1));
-        if (_who.Length > 0) cmd.Parameters.AddWithValue("@who", _who);
-        if (_q.Length > 0) cmd.Parameters.AddWithValue("@q", "%" + _q + "%");
-        if (_src.Length > 0 && _src != "__none__") cmd.Parameters.AddWithValue("@src", _src);
+        if (except != "who" && _who.Length > 0) cmd.Parameters.AddWithValue("@who", _who);
+        if (except != "stu" && _stu.Length > 0) cmd.Parameters.AddWithValue("@stu", "%" + _stu + "%");
+        if (except != "crs" && _crs.Length > 0) cmd.Parameters.AddWithValue("@crs", "%" + _crs + "%");
+        if (except != "q" && _q.Length > 0) cmd.Parameters.AddWithValue("@q", "%" + _q + "%");
+        if (except != "src" && _src.Length > 0 && _src != "__none__") cmd.Parameters.AddWithValue("@src", _src);
     }
 
     private void LoadChangeFilterOptions(MySqlConnection conn)
     {
-        // Staff who have actually changed something — sorted by how much, so the busiest
-        // names are at the top of the list rather than buried alphabetically.
-        StringBuilder who = new StringBuilder("<option value=''>Anyone</option>");
-        using (MySqlCommand cmd = new MySqlCommand(
-            "SELECT a.performed_by, COUNT(*) n FROM " + AuditTable + " a WHERE 1=1 " + ScopeSql() +
-            " GROUP BY a.performed_by ORDER BY n DESC LIMIT 300", conn))
-        {
-            cmd.CommandTimeout = 30;
-            using (MySqlDataReader r = cmd.ExecuteReader())
-                while (r.Read())
-                {
-                    string v = Str(r["performed_by"]);
-                    if (v.Length == 0) continue;
-                    who.Append("<option value='").Append(Enc(v)).Append("'")
-                       .Append(v == _who ? " selected='selected'" : "").Append(">")
-                       .Append(Enc(v)).Append(" (").Append(N(r["n"])).Append(")</option>");
-                }
-        }
-        litCWhoOpts.Text = who.ToString();
+        // Each list is counted over the rows that survive every filter but its own, so the
+        // number on an option is the number of rows picking it will actually give you.
+        litCWhoOpts.Text = WhoOptions(conn);
+        litCSrcOpts.Text = SourceOptions(conn);
+        litCChgOpts.Text = ChangeOptions(conn);
+        BuildPickLists(conn);
+    }
 
-        litCChgOpts.Text =
-            Opt("", "Any change", _chg) +
-            Opt("cw", "Coursework mark", _chg) +
-            Opt("exam", "Exam mark", _chg) +
-            Opt("both", "Both at once", _chg);
+    /// <summary>Whoever moved a mark, busiest first: lecturers, and anyone else with the rights.</summary>
+    private string WhoOptions(MySqlConnection conn)
+    {
+        long total;
+        List<string[]> rows = FacetRows(conn, "IFNULL(a.performed_by,'')", "who", out total);
 
-        StringBuilder src = new StringBuilder("<option value=''>Anywhere</option>");
-        using (MySqlCommand cmd = new MySqlCommand(
-            "SELECT IFNULL(a.source_page,'') sp, COUNT(*) n FROM " + AuditTable + " a WHERE 1=1 " + ScopeSql() +
-            " GROUP BY sp ORDER BY n DESC LIMIT 100", conn))
+        StringBuilder sb = new StringBuilder();
+        sb.Append("<option value=''>Anyone (").Append(N(total)).Append(")</option>");
+
+        bool sawCurrent = false;
+        for (int i = 0; i < rows.Count; i++)
         {
-            cmd.CommandTimeout = 30;
-            using (MySqlDataReader r = cmd.ExecuteReader())
-                while (r.Read())
-                {
-                    string v = Str(r["sp"]);
-                    string value = v.Length == 0 ? "__none__" : v;
-                    src.Append("<option value='").Append(Enc(value)).Append("'")
-                       .Append(value == _src ? " selected='selected'" : "").Append(">")
-                       .Append(Enc(SourceLabel(v) + " - " + SourceDetail(v))).Append(" (").Append(N(r["n"])).Append(")</option>");
-                }
+            string v = rows[i][0];
+            if (v.Length == 0) continue;
+            bool on = v == _who;
+            if (on) sawCurrent = true;
+            sb.Append("<option value='").Append(Enc(v)).Append("'").Append(on ? " selected='selected'" : "")
+              .Append(">").Append(Enc(v)).Append(" (").Append(rows[i][1]).Append(")</option>");
         }
-        litCSrcOpts.Text = src.ToString();
+        if (_who.Length > 0 && !sawCurrent)
+            sb.Append("<option value='").Append(Enc(_who)).Append("' selected='selected'>")
+              .Append(Enc(_who)).Append(" (0)</option>");
+        return sb.ToString();
+    }
+
+    private string SourceOptions(MySqlConnection conn)
+    {
+        long total;
+        List<string[]> rows = FacetRows(conn, "IFNULL(a.source_page,'')", "src", out total);
+
+        StringBuilder sb = new StringBuilder();
+        sb.Append("<option value=''>Anywhere (").Append(N(total)).Append(")</option>");
+
+        bool sawCurrent = false;
+        for (int i = 0; i < rows.Count; i++)
+        {
+            string v = rows[i][0];
+            string value = v.Length == 0 ? "__none__" : v;
+            bool on = value == _src;
+            if (on) sawCurrent = true;
+            sb.Append("<option value='").Append(Enc(value)).Append("'").Append(on ? " selected='selected'" : "")
+              .Append(">").Append(Enc(SourceLabel(v) + " - " + SourceDetail(v)))
+              .Append(" (").Append(rows[i][1]).Append(")</option>");
+        }
+        if (_src.Length > 0 && !sawCurrent)
+            sb.Append("<option value='").Append(Enc(_src)).Append("' selected='selected'>")
+              .Append(Enc(_src)).Append(" (0)</option>");
+        return sb.ToString();
+    }
+
+    private string ChangeOptions(MySqlConnection conn)
+    {
+        long total = 0, cw = 0, ex = 0, both = 0;
+        try
+        {
+            using (MySqlCommand cmd = new MySqlCommand(
+                "SELECT COUNT(*) n, IFNULL(SUM(a.changed_cw=1),0) cw, IFNULL(SUM(a.changed_exam=1),0) ex, " +
+                "       IFNULL(SUM(a.changed_cw=1 AND a.changed_exam=1),0) bothn " +
+                "FROM " + AuditTable + " a " + ChangesWhere("chg"), conn))
+            {
+                BindChangeParams(cmd, "chg");
+                cmd.CommandTimeout = 45;
+                using (MySqlDataReader r = cmd.ExecuteReader())
+                    if (r.Read())
+                    {
+                        total = Num(r["n"]); cw = Num(r["cw"]); ex = Num(r["ex"]); both = Num(r["bothn"]);
+                    }
+            }
+        }
+        catch { }
+
+        return Opt("", "Any change (" + N(total) + ")", _chg) +
+               Opt("cw", "Coursework mark (" + N(cw) + ")", _chg) +
+               Opt("exam", "Exam mark (" + N(ex) + ")", _chg) +
+               Opt("both", "Both at once (" + N(both) + ")", _chg);
+    }
+
+    /// <summary>One GROUP BY with the named filter lifted. Busiest value first.</summary>
+    private List<string[]> FacetRows(MySqlConnection conn, string expr, string except, out long total)
+    {
+        List<string[]> rows = new List<string[]>();
+        total = 0;
+        try
+        {
+            using (MySqlCommand cmd = new MySqlCommand(
+                "SELECT " + expr + " k, COUNT(*) n FROM " + AuditTable + " a " + ChangesWhere(except) +
+                " GROUP BY k ORDER BY n DESC, k LIMIT 300", conn))
+            {
+                BindChangeParams(cmd, except);
+                cmd.CommandTimeout = 45;
+                using (MySqlDataReader r = cmd.ExecuteReader())
+                    while (r.Read())
+                    {
+                        long n = Num(r["n"]);
+                        total += n;
+                        rows.Add(new string[] { Str(r["k"]), N(n) });
+                    }
+            }
+        }
+        catch { }
+        return rows;
+    }
+
+    /// <summary>
+    /// Type-ahead values for the student and course boxes: the ones still reachable under the
+    /// other filters, carrying the name and the title so they are picked rather than guessed at.
+    /// </summary>
+    private void BuildPickLists(MySqlConnection conn)
+    {
+        List<string> regnos = DistinctValues(conn, "a.regno", "stu");
+        List<string> courses = DistinctValues(conn, "a.course_id", "crs");
+
+        Dictionary<string, string> names = LookupMap(conn, regnos,
+            "SELECT regno k, CONCAT(IFNULL(firstname,''),' ',IFNULL(othername,'')) v FROM acad_student WHERE regno IN (");
+        Dictionary<string, string> titles = LookupMap(conn, courses,
+            "SELECT courseID k, courseName v FROM acad_course WHERE courseID IN (");
+
+        litCStuList.Text = DataList(regnos, names);
+        litCCrsList.Text = DataList(courses, titles);
+        litCStuCount.Text = regnos.Count == 0 ? "" : N(regnos.Count) + " to pick from";
+        litCCrsCount.Text = courses.Count == 0 ? "" : N(courses.Count) + " to pick from";
+    }
+
+    private List<string> DistinctValues(MySqlConnection conn, string column, string except)
+    {
+        List<string> values = new List<string>();
+        try
+        {
+            using (MySqlCommand cmd = new MySqlCommand(
+                "SELECT DISTINCT " + column + " v FROM " + AuditTable + " a " + ChangesWhere(except) +
+                " ORDER BY v LIMIT " + PickListCap, conn))
+            {
+                BindChangeParams(cmd, except);
+                cmd.CommandTimeout = 45;
+                using (MySqlDataReader r = cmd.ExecuteReader())
+                    while (r.Read())
+                    {
+                        string v = Str(r["v"]);
+                        if (v.Length > 0) values.Add(v);
+                    }
+            }
+        }
+        catch { }
+        return values;
+    }
+
+    private Dictionary<string, string> LookupMap(MySqlConnection conn, List<string> keys, string sqlPrefix)
+    {
+        Dictionary<string, string> map = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        string inList = InList(keys);
+        if (inList.Length == 0) return map;
+        try
+        {
+            using (MySqlCommand cmd = new MySqlCommand(sqlPrefix + inList + ")", conn))
+            {
+                cmd.CommandTimeout = 45;
+                using (MySqlDataReader r = cmd.ExecuteReader())
+                    while (r.Read())
+                    {
+                        string k = Str(r["k"]);
+                        if (k.Length > 0 && !map.ContainsKey(k)) map[k] = Str(r["v"]).Trim();
+                    }
+            }
+        }
+        catch { }
+        return map;
+    }
+
+    private static string DataList(List<string> values, Dictionary<string, string> labels)
+    {
+        StringBuilder sb = new StringBuilder();
+        for (int i = 0; i < values.Count; i++)
+            sb.Append("<option value='").Append(Enc(values[i])).Append("'>")
+              .Append(Enc(Get(labels, values[i]))).Append("</option>");
+        return sb.ToString();
     }
 
     private sealed class ChangeRow
@@ -462,6 +711,15 @@ public partial class COOPERP_NewScreens_MarksAuditTrail : System.Web.UI.Page
         return c;
     }
 
+    /// <summary>A code badge that narrows the page to itself. The quickest route to "every
+    /// mark this lecturer has moved" is to click the lecturer.</summary>
+    private string CodeLink(string text, string key, string value, string cls)
+    {
+        if (text == null || text.Length == 0) return "";
+        return "<a class='" + cls + " mat-link' title='Filter by this' href='"
+             + Enc(Url(key, value, "p", null)) + "'>" + Enc(text) + "</a>";
+    }
+
     private string ChangeRowHtml(ChangeRow c, Dictionary<string, string> students,
                                  Dictionary<string, string> courses, Dictionary<string, Staff> staff)
     {
@@ -475,19 +733,20 @@ public partial class COOPERP_NewScreens_MarksAuditTrail : System.Web.UI.Page
         sb.Append("<td class='mat-when'><span class='mat-when__d'>").Append(Enc(c.At.ToString("dd MMM yy")))
           .Append("</span><span class='mat-when__t'>").Append(Enc(c.At.ToString("HH:mm"))).Append("</span></td>");
 
-        sb.Append("<td><span class='mat-who'>").Append(Enc(st != null && st.Name.Length > 0 ? st.Name : c.By)).Append("</span>");
+        sb.Append("<td>").Append(CodeLink(st != null && st.Name.Length > 0 ? st.Name : c.By,
+                                            "who", c.By, "mat-who"));
         if (st != null && st.Name.Length > 0 && !st.Name.Equals(c.By, StringComparison.OrdinalIgnoreCase))
             sb.Append("<span class='mat-who__sub'>").Append(Enc(c.By)).Append("</span>");
         else if (st != null && st.Code.Length > 0)
             sb.Append("<span class='mat-who__sub'>").Append(Enc(st.Code)).Append("</span>");
         sb.Append("</td>");
 
-        sb.Append("<td><span class='mat-code'>").Append(Enc(c.Regno)).Append("</span>");
+        sb.Append("<td>").Append(CodeLink(c.Regno, "stu", c.Regno, "mat-code"));
         if (sname.Length > 0) sb.Append("<span class='mat-sub'>").Append(Enc(sname)).Append("</span>");
         sb.Append("</td>");
 
-        sb.Append("<td><span class='mat-code'>").Append(Enc(c.CourseId)).Append("</span><span class='mat-sub'>")
-          .Append(Enc(CourseContext(c))).Append("</span></td>");
+        sb.Append("<td>").Append(CodeLink(c.CourseId, "crs", c.CourseId, "mat-code"))
+          .Append("<span class='mat-sub'>").Append(Enc(CourseContext(c))).Append("</span></td>");
 
         sb.Append("<td>").Append(Move(c.ChangedCw, c.OldCw, c.NewCw)).Append("</td>");
         sb.Append("<td>").Append(Move(c.ChangedExam, c.OldExam, c.NewExam)).Append("</td>");
@@ -566,12 +825,17 @@ public partial class COOPERP_NewScreens_MarksAuditTrail : System.Web.UI.Page
         if (src.StartsWith("Portal:", StringComparison.OrdinalIgnoreCase)) return "Student portal";
         if (src.StartsWith("ODEL:", StringComparison.OrdinalIgnoreCase)) return "ODEL";
         if (src.StartsWith("API/v2:", StringComparison.OrdinalIgnoreCase)) return "Staff API";
-        if (src.StartsWith("MarkEntry:", StringComparison.OrdinalIgnoreCase)) return "eAdmin";
         if (src.StartsWith("MarkRequests:", StringComparison.OrdinalIgnoreCase)) return "Mark request";
-        if (src.StartsWith("ProvisionalMarks:", StringComparison.OrdinalIgnoreCase)) return "eAdmin";
-        if (src.StartsWith("RetakeController:", StringComparison.OrdinalIgnoreCase)) return "eAdmin";
+        if (src.StartsWith("AllMarks:", StringComparison.OrdinalIgnoreCase)
+            || src.StartsWith("MarkEntry:", StringComparison.OrdinalIgnoreCase)
+            || src.StartsWith("ProvisionalMarks:", StringComparison.OrdinalIgnoreCase)
+            || src.StartsWith("RetakeController:", StringComparison.OrdinalIgnoreCase)) return "eAdmin";
         if (src.IndexOf("Mark Request", StringComparison.OrdinalIgnoreCase) >= 0) return "Mark request";
         if (src.IndexOf("Faculty Exam Results Editor", StringComparison.OrdinalIgnoreCase) >= 0) return "eAdmin";
+
+        // A source added later should read as wherever it came from, not as "Other".
+        int colon = src.IndexOf(':');
+        if (colon > 0) return src.Substring(0, colon);
         return "Other";
     }
 
@@ -595,14 +859,19 @@ public partial class COOPERP_NewScreens_MarksAuditTrail : System.Web.UI.Page
 
         switch (src)
         {
+            case "Portal:lecturer-marks-entry": return "lecturer entered the marks";
             case "Portal:lecturer-marks-edit": return "lecturer edited a mark";
             case "Portal:lecturer-marks-clear": return "lecturer cleared the marks";
             case "Portal:retake-registration": return "cleared for a retake";
             case "ODEL:push-coursework": return "coursework pushed from ODEL";
             case "MarkEntry:sheet": return "mark-entry sheet";
+            case "AllMarks:edit-marks": return "administrator edited the marks";
+            case "AllMarks:force-delete-registration": return "registration force-deleted";
             case "MarkRequests:apply-to-registration": return "mark request applied";
             case "MarkRequests:sync-marks": return "mark request synced";
             case "ProvisionalMarks:admin-override": return "administrator override";
+            case "ProvisionalMarks:publish": return "mark published";
+            case "ProvisionalMarks:unpublish": return "publication withdrawn";
             case "RetakeController:rollback": return "retake rolled back";
             case "Faculty Exam Results Editor": return "faculty results editor";
             case "Mark Request Marks Update": return "mark request update";
@@ -983,6 +1252,7 @@ public partial class COOPERP_NewScreens_MarksAuditTrail : System.Web.UI.Page
 
     private void ExportChanges(MySqlConnection conn)
     {
+        ResolveTermLookups(conn);
         StringBuilder csv = new StringBuilder();
         csv.AppendLine("Entry,Recorded at,Changed by,Source,IP address,Student,Name,Course,Programme," +
                        "Academic year,Semester,Operation,Coursework before,Coursework after," +
@@ -1174,15 +1444,17 @@ public partial class COOPERP_NewScreens_MarksAuditTrail : System.Web.UI.Page
     private string Url(params string[] overrides)
     {
         Dictionary<string, string> p = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
-        p["view"] = _view;
-        if (_range.Length > 0) p["r"] = _range;
+        if (_view != "changes") p["view"] = _view;
+        if (_range.Length > 0) { if (_range != DefaultRange) p["r"] = _range; }
         else { if (_from.Length > 0) p["from"] = _from; if (_to.Length > 0) p["to"] = _to; }
         if (_who.Length > 0) p["who"] = _who;
         if (_chg.Length > 0) p["chg"] = _chg;
         if (_src.Length > 0) p["src"] = _src;
         if (_act.Length > 0) p["act"] = _act;
+        if (_stu.Length > 0) p["stu"] = _stu;
+        if (_crs.Length > 0) p["crs"] = _crs;
         if (_q.Length > 0) p["q"] = _q;
-        if (_pageSize != 50) p["ps"] = _pageSize.ToString(CultureInfo.InvariantCulture);
+        if (_pageSize != DefaultPageSize) p["ps"] = _pageSize.ToString(CultureInfo.InvariantCulture);
         if (_page > 1) p["p"] = _page.ToString(CultureInfo.InvariantCulture);
 
         for (int i = 0; i + 1 < overrides.Length; i += 2)
@@ -1191,11 +1463,16 @@ public partial class COOPERP_NewScreens_MarksAuditTrail : System.Web.UI.Page
             if (v == null) p.Remove(k); else p[k] = v;
         }
 
-        StringBuilder sb = new StringBuilder("MarksAuditTrail.aspx?");
+        // The default period and the default view carry no parameter, so "Everything" and
+        // "Clear" lead to the same bare URL rather than two spellings of the same view.
+        if (p.ContainsKey("r") && p["r"] == DefaultRange) p.Remove("r");
+        if (p.ContainsKey("view") && p["view"] == "changes") p.Remove("view");
+
+        StringBuilder sb = new StringBuilder("MarksAuditTrail.aspx");
         bool firstPair = true;
         foreach (KeyValuePair<string, string> kv in p)
         {
-            if (!firstPair) sb.Append("&");
+            sb.Append(firstPair ? "?" : "&");
             sb.Append(HttpUtility.UrlEncode(kv.Key)).Append("=").Append(HttpUtility.UrlEncode(kv.Value));
             firstPair = false;
         }
@@ -1212,6 +1489,7 @@ public partial class COOPERP_NewScreens_MarksAuditTrail : System.Web.UI.Page
             if (_from.Length > 0) keep += "&from=" + HttpUtility.UrlEncode(_from);
             if (_to.Length > 0) keep += "&to=" + HttpUtility.UrlEncode(_to);
         }
+        if (_who.Length > 0) keep += "&who=" + HttpUtility.UrlEncode(_who);
         if (_q.Length > 0) keep += "&q=" + HttpUtility.UrlEncode(_q);
         return keep;
     }
