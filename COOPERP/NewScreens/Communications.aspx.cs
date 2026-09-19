@@ -386,6 +386,35 @@ public partial class COOPERP_NewScreens_Communications : System.Web.UI.Page
     // SAVE — Create or Update communication
     // ═══════════════════════════════════════════════════════════════════════
 
+    /// <summary>
+    /// Reads an expiry date from the form and returns the LAST MOMENT of that day.
+    ///
+    /// The field is a date, not a date and time, so a bare parse gives midnight - which means
+    /// "until the 20th" would actually stop at the very start of the 20th, a day earlier than
+    /// whoever typed it intended. Returning 23:59:59 makes the chosen day count.
+    ///
+    /// The date box posts yyyy-MM-dd, so that is tried first and exactly; the looser parse is
+    /// only a fallback for anything saved by an older version of the form.
+    /// </summary>
+    private static bool TryReadExpiry(string raw, out DateTime endOfDay)
+    {
+        endOfDay = DateTime.MinValue;
+        if (raw == null) return false;
+        raw = raw.Trim();
+        if (raw.Length == 0) return false;
+
+        DateTime parsed;
+        bool ok = DateTime.TryParseExact(raw, "yyyy-MM-dd",
+                      System.Globalization.CultureInfo.InvariantCulture,
+                      System.Globalization.DateTimeStyles.None, out parsed)
+               || DateTime.TryParse(raw, System.Globalization.CultureInfo.InvariantCulture,
+                      System.Globalization.DateTimeStyles.None, out parsed);
+        if (!ok) return false;
+
+        endOfDay = parsed.Date.AddDays(1).AddSeconds(-1);
+        return true;
+    }
+
     private void HandleSave()
     {
         Dictionary<string, object> body = ReadJsonBody();
@@ -419,15 +448,23 @@ public partial class COOPERP_NewScreens_Communications : System.Web.UI.Page
         if (priority != "NORMAL" && priority != "HIGH" && priority != "URGENT") priority = "NORMAL";
         if (status != "DRAFT" && status != "PUBLISHED" && status != "ARCHIVED") status = "DRAFT";
 
-        // Parse expiry date
+        // Parse expiry date.
+        //
+        // These used to fall back to DBNull whenever the text would not parse. For a force-read
+        // notice DBNull means "never expires" - ForceRead.aspx and PortalMaster both gate on
+        // "force_read_expiry IS NULL OR force_read_expiry > NOW()" - so a mistyped date quietly
+        // became an indefinite block on every student in the audience, and the save reported
+        // success. Now an unreadable date is refused and the admin is told which field.
         MySqlParameter expiryParam;
         if (forceRead == 1 && !string.IsNullOrEmpty(expiry))
         {
             DateTime expiryDate;
-            if (DateTime.TryParse(expiry, out expiryDate))
-                expiryParam = new MySqlParameter("@expiry", expiryDate);
-            else
-                expiryParam = new MySqlParameter("@expiry", DBNull.Value);
+            if (!TryReadExpiry(expiry, out expiryDate))
+            {
+                RespondJson(new { ok = false, error = "The force-read end date could not be read. Pick it from the date box." });
+                return;
+            }
+            expiryParam = new MySqlParameter("@expiry", expiryDate);
         }
         else
         {
@@ -439,10 +476,12 @@ public partial class COOPERP_NewScreens_Communications : System.Web.UI.Page
         if (showInMarquee == 1 && !string.IsNullOrEmpty(marqueeExpiry))
         {
             DateTime mExpDate;
-            if (DateTime.TryParse(marqueeExpiry, out mExpDate))
-                marqueeExpiryParam = new MySqlParameter("@marqueeExpiry", mExpDate);
-            else
-                marqueeExpiryParam = new MySqlParameter("@marqueeExpiry", DBNull.Value);
+            if (!TryReadExpiry(marqueeExpiry, out mExpDate))
+            {
+                RespondJson(new { ok = false, error = "The banner end date could not be read. Pick it from the date box." });
+                return;
+            }
+            marqueeExpiryParam = new MySqlParameter("@marqueeExpiry", mExpDate);
         }
         else
         {

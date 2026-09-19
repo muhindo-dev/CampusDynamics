@@ -97,6 +97,16 @@
 .cm-field input:focus, .cm-field select:focus, .cm-field textarea:focus { border-color:#174DA4; outline:none; }
 .cm-field--row { display: flex; gap: 12px; }
 .cm-field--row > .cm-field { flex: 1; margin-bottom: 0; }
+/* quick-pick dates, hints and the force-read warning */
+.cm-quick { display:flex; gap:6px; flex-wrap:wrap; margin-top:6px; }
+.cm-quick__b { padding:4px 10px; font-size:11px; font-weight:500; background:#fff; border:1px solid #cdd3de;
+               color:#174DA4; cursor:pointer; border-radius:0; font-family:inherit; }
+.cm-quick__b:hover { background:#eef3fb; border-color:#174DA4; }
+.cm-hint { font-size:11px; color:#888; margin-top:5px; line-height:1.45; }
+.cm-hint--warn { color:#b45309; font-weight:600; }
+.cm-warn { background:#fff8e1; border:1px solid #f4dba6; border-left:3px solid #d97706; color:#8a5a08;
+           padding:10px 14px; font-size:11.5px; line-height:1.55; margin-bottom:14px; border-radius:2px; }
+.cm-warn strong { display:block; color:#7a4e07; margin-bottom:2px; }
 .cm-field--check { display:flex; align-items:center; gap:8px; }
 .cm-field--check input[type=checkbox] { width:16px; height:16px; }
 .cm-field--check label { display:inline; margin-bottom:0; }
@@ -270,9 +280,23 @@
                 <label for="cmForceRead">Force-Read (users must confirm they read this)</label>
             </div>
             <div class="cm-field" id="cmExpiryWrap" style="display:none;">
-                <label>Force-Read Expiry Date</label>
-                <input type="text" id="cmExpiry" placeholder="YYYY-MM-DD" />
+                <label>Stop forcing it after</label>
+                <input type="date" id="cmExpiry" onchange="cmExpiryChanged()" />
+                <div class="cm-quick">
+                    <button type="button" class="cm-quick__b" onclick="cmSetExpiry('cmExpiry',7)">1 week</button>
+                    <button type="button" class="cm-quick__b" onclick="cmSetExpiry('cmExpiry',14)">2 weeks</button>
+                    <button type="button" class="cm-quick__b" onclick="cmSetExpiry('cmExpiry',30)">1 month</button>
+                    <button type="button" class="cm-quick__b" onclick="cmSetExpiry('cmExpiry',90)">1 term</button>
+                </div>
+                <div class="cm-hint" id="cmExpiryHint">Covers the whole of the day you pick.</div>
             </div>
+        </div>
+
+        <div id="cmForceWarn" class="cm-warn" style="display:none;">
+            <strong>This notice will block the portal until you remove it.</strong>
+            Every student in the audience has to open it and confirm before they can reach any
+            other page. With no end date that never stops on its own. Pick a date above unless
+            you really mean it to run indefinitely.
         </div>
 
         <div class="cm-field--row" style="margin-bottom:14px;">
@@ -281,8 +305,14 @@
                 <label for="cmShowMarquee">Show in Marquee (scrolling banner)</label>
             </div>
             <div class="cm-field" id="cmMarqueeExpiryWrap" style="display:none;">
-                <label>Marquee Display Until</label>
-                <input type="text" id="cmMarqueeExpiry" placeholder="YYYY-MM-DD" />
+                <label>Show in the banner until</label>
+                <input type="date" id="cmMarqueeExpiry" onchange="cmExpiryChanged()" />
+                <div class="cm-quick">
+                    <button type="button" class="cm-quick__b" onclick="cmSetExpiry('cmMarqueeExpiry',7)">1 week</button>
+                    <button type="button" class="cm-quick__b" onclick="cmSetExpiry('cmMarqueeExpiry',14)">2 weeks</button>
+                    <button type="button" class="cm-quick__b" onclick="cmSetExpiry('cmMarqueeExpiry',30)">1 month</button>
+                </div>
+                <div class="cm-hint">Leave empty to keep it in the banner until you remove it.</div>
             </div>
         </div>
 
@@ -574,6 +604,7 @@
         qs('#cmShowMarquee').checked = false;
         qs('#cmMarqueeExpiry').value = '';
         qs('#cmMarqueeExpiryWrap').style.display = 'none';
+        cmExpiryChanged();
         editingAttachments = [];
         renderAttachmentChips();
         qs('#cmFileInput').value = '';
@@ -588,11 +619,53 @@
     };
 
     window.cmToggleForceExpiry = function () {
-        qs('#cmExpiryWrap').style.display = qs('#cmForceRead').checked ? '' : 'none';
+        var on = qs('#cmForceRead').checked;
+        qs('#cmExpiryWrap').style.display = on ? '' : 'none';
+        // Ticking force-read with no date is the setting that blocks the portal indefinitely,
+        // so offer a sensible one rather than leaving it empty and hoping.
+        if (on && !qs('#cmExpiry').value) cmSetExpiry('cmExpiry', 14);
+        cmExpiryChanged();
     };
 
     window.cmToggleMarqueeExpiry = function () {
         qs('#cmMarqueeExpiryWrap').style.display = qs('#cmShowMarquee').checked ? '' : 'none';
+        cmExpiryChanged();
+    };
+
+    // Today + n days, as YYYY-MM-DD for a native date input.
+    window.cmSetExpiry = function (fieldId, days) {
+        var d = new Date();
+        d.setDate(d.getDate() + days);
+        var p = function (n) { return n < 10 ? '0' + n : '' + n; };
+        var el = qs('#' + fieldId);
+        if (el) { el.value = d.getFullYear() + '-' + p(d.getMonth() + 1) + '-' + p(d.getDate()); }
+        cmExpiryChanged();
+    };
+
+    // Say plainly what the chosen date means, and shout when there is none.
+    window.cmExpiryChanged = function () {
+        var forced = qs('#cmForceRead') && qs('#cmForceRead').checked;
+        var val = qs('#cmExpiry') ? qs('#cmExpiry').value : '';
+        var warn = qs('#cmForceWarn');
+        var hint = qs('#cmExpiryHint');
+
+        if (warn) warn.style.display = (forced && !val) ? '' : 'none';
+
+        if (hint) {
+            if (!val) {
+                hint.textContent = 'No end date - it keeps blocking until you remove it.';
+                hint.className = 'cm-hint cm-hint--warn';
+            } else {
+                var parts = val.split('-');
+                var d = new Date(+parts[0], +parts[1] - 1, +parts[2]);
+                var days = Math.ceil((d - new Date()) / 86400000);
+                var when = d.toDateString();
+                hint.textContent = days < 0
+                    ? 'That date has passed, so this will not be forced on anyone.'
+                    : 'Forced until the end of ' + when + (days <= 1 ? ' (today).' : ' - about ' + days + ' days.');
+                hint.className = days < 0 ? 'cm-hint cm-hint--warn' : 'cm-hint';
+            }
+        }
     };
 
     // ─── Edit ────────────────────────────────────────────────────
@@ -613,6 +686,9 @@
             qs('#cmShowMarquee').checked = !!c.show_in_marquee;
             qs('#cmMarqueeExpiry').value = c.marquee_expiry ? c.marquee_expiry.substring(0, 10) : '';
             qs('#cmMarqueeExpiryWrap').style.display = c.show_in_marquee ? '' : 'none';
+            // Reflect what was loaded: the hint and the no-end-date warning must describe the
+            // saved notice, not the state the form happened to be left in.
+            cmExpiryChanged();
             editingAttachments = (c.attachments || []).map(function (a) { return { id: a.ID, name: a.file_name, size: a.file_size, isNew: false }; });
             renderAttachmentChips();
             qs('#cmFileInput').value = '';
