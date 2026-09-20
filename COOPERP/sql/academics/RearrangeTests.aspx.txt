@@ -1,0 +1,1278 @@
+HOW TO RUN
+----------
+Copy this file to COOPERP/NewScreens/_RearrangeTests.aspx, request it from the server
+itself (it refuses non-local requests), read the results, then DELETE it again. It is
+kept here as text so it is preserved but not servable - the same arrangement as
+CourseCorrectionTests.cs in this folder.
+
+It builds its own fixtures on the test student MRU2027000002 (courses ZZRX101/ZZRX102)
+and removes them at the end. Log rows it creates cannot be removed: the append-only
+trigger blocks deletion, which is itself test 11.
+
+Last run: 20 September 2026 - PASS 58, FAIL 0.
+=HOW TO RUN
+----------
+Copy this file to COOPERP/NewScreens/_RearrangeTests.aspx, request it from the server
+itself (it refuses non-local requests), read the results, then DELETE it again. It is
+kept here as text so it is preserved but not servable - the same arrangement as
+CourseCorrectionTests.cs in this folder.
+
+It builds its own fixtures on the test student MRU2027000002 (courses ZZRX101/ZZRX102)
+and removes them at the end. Log rows it creates cannot be removed: the append-only
+trigger blocks deletion, which is itself test 11.
+
+Last run: 20 September 2026 - PASS 58, FAIL 0.
+=HOW TO RUN
+----------
+Copy this file to COOPERP/NewScreens/_RearrangeTests.aspx, request it from the server
+itself (it refuses non-local requests), read the results, then DELETE it again. It is
+kept here as text so it is preserved but not servable - the same arrangement as
+CourseCorrectionTests.cs in this folder.
+
+It builds its own fixtures on the test student MRU2027000002 (courses ZZRX101/ZZRX102)
+and removes them at the end. Log rows it creates cannot be removed: the append-only
+trigger blocks deletion, which is itself test 11.
+
+Last run: 20 September 2026 - PASS 58, FAIL 0.
+=HOW TO RUN
+----------
+Copy this file to COOPERP/NewScreens/_RearrangeTests.aspx, request it from the server
+itself (it refuses non-local requests), read the results, then DELETE it again. It is
+kept here as text so it is preserved but not servable - the same arrangement as
+CourseCorrectionTests.cs in this folder.
+
+It builds its own fixtures on the test student MRU2027000002 (courses ZZRX101/ZZRX102)
+and removes them at the end. Log rows it creates cannot be removed: the append-only
+trigger blocks deletion, which is itself test 11.
+
+Last run: 20 September 2026 - PASS 58, FAIL 0.
+=HOW TO RUN
+----------
+Copy this file to COOPERP/NewScreens/_RearrangeTests.aspx, request it from the server
+itself (it refuses non-local requests), read the results, then DELETE it again. It is
+kept here as text so it is preserved but not servable - the same arrangement as
+CourseCorrectionTests.cs in this folder.
+
+It builds its own fixtures on the test student MRU2027000002 (courses ZZRX101/ZZRX102)
+and removes them at the end. Log rows it creates cannot be removed: the append-only
+trigger blocks deletion, which is itself test 11.
+
+Last run: 20 September 2026 - PASS 58, FAIL 0.
+=HOW TO RUN
+----------
+Copy this file to COOPERP/NewScreens/_RearrangeTests.aspx, request it from the server
+itself (it refuses non-local requests), read the results, then DELETE it again. It is
+kept here as text so it is preserved but not servable - the same arrangement as
+CourseCorrectionTests.cs in this folder.
+
+It builds its own fixtures on the test student MRU2027000002 (courses ZZRX101/ZZRX102)
+and removes them at the end. Log rows it creates cannot be removed: the append-only
+trigger blocks deletion, which is itself test 11.
+
+Last run: 20 September 2026 - PASS 58, FAIL 0.
+=HOW TO RUN
+----------
+Copy this file to COOPERP/NewScreens/_RearrangeTests.aspx, request it from the server
+itself (it refuses non-local requests), read the results, then DELETE it again. It is
+kept here as text so it is preserved but not servable - the same arrangement as
+CourseCorrectionTests.cs in this folder.
+
+It builds its own fixtures on the test student MRU2027000002 (courses ZZRX101/ZZRX102)
+and removes them at the end. Log rows it creates cannot be removed: the append-only
+trigger blocks deletion, which is itself test 11.
+
+Last run: 20 September 2026 - PASS 58, FAIL 0.
+=HOW TO RUN
+----------
+Copy this file to COOPERP/NewScreens/_RearrangeTests.aspx, request it from the server
+itself (it refuses non-local requests), read the results, then DELETE it again. It is
+kept here as text so it is preserved but not servable - the same arrangement as
+CourseCorrectionTests.cs in this folder.
+
+It builds its own fixtures on the test student MRU2027000002 (courses ZZRX101/ZZRX102)
+and removes them at the end. Log rows it creates cannot be removed: the append-only
+trigger blocks deletion, which is itself test 11.
+
+Last run: 20 September 2026 - PASS 58, FAIL 0.
+=HOW TO RUN
+----------
+Copy this file to COOPERP/NewScreens/_RearrangeTests.aspx, request it from the server
+itself (it refuses non-local requests), read the results, then DELETE it again. It is
+kept here as text so it is preserved but not servable - the same arrangement as
+CourseCorrectionTests.cs in this folder.
+
+It builds its own fixtures on the test student MRU2027000002 (courses ZZRX101/ZZRX102)
+and removes them at the end. Log rows it creates cannot be removed: the append-only
+trigger blocks deletion, which is itself test 11.
+
+Last run: 20 September 2026 - PASS 58, FAIL 0.
+=HOW TO RUN
+----------
+Copy this file to COOPERP/NewScreens/_RearrangeTests.aspx, request it from the server
+itself (it refuses non-local requests), read the results, then DELETE it again. It is
+kept here as text so it is preserved but not servable - the same arrangement as
+CourseCorrectionTests.cs in this folder.
+
+It builds its own fixtures on the test student MRU2027000002 (courses ZZRX101/ZZRX102)
+and removes them at the end. Log rows it creates cannot be removed: the append-only
+trigger blocks deletion, which is itself test 11.
+
+Last run: 20 September 2026 - PASS 58, FAIL 0.
+=HOW TO RUN
+----------
+Copy this file to COOPERP/NewScreens/_RearrangeTests.aspx, request it from the server
+itself (it refuses non-local requests), read the results, then DELETE it again. It is
+kept here as text so it is preserved but not servable - the same arrangement as
+CourseCorrectionTests.cs in this folder.
+
+It builds its own fixtures on the test student MRU2027000002 (courses ZZRX101/ZZRX102)
+and removes them at the end. Log rows it creates cannot be removed: the append-only
+trigger blocks deletion, which is itself test 11.
+
+Last run: 20 September 2026 - PASS 58, FAIL 0.
+=HOW TO RUN
+----------
+Copy this file to COOPERP/NewScreens/_RearrangeTests.aspx, request it from the server
+itself (it refuses non-local requests), read the results, then DELETE it again. It is
+kept here as text so it is preserved but not servable - the same arrangement as
+CourseCorrectionTests.cs in this folder.
+
+It builds its own fixtures on the test student MRU2027000002 (courses ZZRX101/ZZRX102)
+and removes them at the end. Log rows it creates cannot be removed: the append-only
+trigger blocks deletion, which is itself test 11.
+
+Last run: 20 September 2026 - PASS 58, FAIL 0.
+=HOW TO RUN
+----------
+Copy this file to COOPERP/NewScreens/_RearrangeTests.aspx, request it from the server
+itself (it refuses non-local requests), read the results, then DELETE it again. It is
+kept here as text so it is preserved but not servable - the same arrangement as
+CourseCorrectionTests.cs in this folder.
+
+It builds its own fixtures on the test student MRU2027000002 (courses ZZRX101/ZZRX102)
+and removes them at the end. Log rows it creates cannot be removed: the append-only
+trigger blocks deletion, which is itself test 11.
+
+Last run: 20 September 2026 - PASS 58, FAIL 0.
+=HOW TO RUN
+----------
+Copy this file to COOPERP/NewScreens/_RearrangeTests.aspx, request it from the server
+itself (it refuses non-local requests), read the results, then DELETE it again. It is
+kept here as text so it is preserved but not servable - the same arrangement as
+CourseCorrectionTests.cs in this folder.
+
+It builds its own fixtures on the test student MRU2027000002 (courses ZZRX101/ZZRX102)
+and removes them at the end. Log rows it creates cannot be removed: the append-only
+trigger blocks deletion, which is itself test 11.
+
+Last run: 20 September 2026 - PASS 58, FAIL 0.
+=HOW TO RUN
+----------
+Copy this file to COOPERP/NewScreens/_RearrangeTests.aspx, request it from the server
+itself (it refuses non-local requests), read the results, then DELETE it again. It is
+kept here as text so it is preserved but not servable - the same arrangement as
+CourseCorrectionTests.cs in this folder.
+
+It builds its own fixtures on the test student MRU2027000002 (courses ZZRX101/ZZRX102)
+and removes them at the end. Log rows it creates cannot be removed: the append-only
+trigger blocks deletion, which is itself test 11.
+
+Last run: 20 September 2026 - PASS 58, FAIL 0.
+=HOW TO RUN
+----------
+Copy this file to COOPERP/NewScreens/_RearrangeTests.aspx, request it from the server
+itself (it refuses non-local requests), read the results, then DELETE it again. It is
+kept here as text so it is preserved but not servable - the same arrangement as
+CourseCorrectionTests.cs in this folder.
+
+It builds its own fixtures on the test student MRU2027000002 (courses ZZRX101/ZZRX102)
+and removes them at the end. Log rows it creates cannot be removed: the append-only
+trigger blocks deletion, which is itself test 11.
+
+Last run: 20 September 2026 - PASS 58, FAIL 0.
+=HOW TO RUN
+----------
+Copy this file to COOPERP/NewScreens/_RearrangeTests.aspx, request it from the server
+itself (it refuses non-local requests), read the results, then DELETE it again. It is
+kept here as text so it is preserved but not servable - the same arrangement as
+CourseCorrectionTests.cs in this folder.
+
+It builds its own fixtures on the test student MRU2027000002 (courses ZZRX101/ZZRX102)
+and removes them at the end. Log rows it creates cannot be removed: the append-only
+trigger blocks deletion, which is itself test 11.
+
+Last run: 20 September 2026 - PASS 58, FAIL 0.
+=HOW TO RUN
+----------
+Copy this file to COOPERP/NewScreens/_RearrangeTests.aspx, request it from the server
+itself (it refuses non-local requests), read the results, then DELETE it again. It is
+kept here as text so it is preserved but not servable - the same arrangement as
+CourseCorrectionTests.cs in this folder.
+
+It builds its own fixtures on the test student MRU2027000002 (courses ZZRX101/ZZRX102)
+and removes them at the end. Log rows it creates cannot be removed: the append-only
+trigger blocks deletion, which is itself test 11.
+
+Last run: 20 September 2026 - PASS 58, FAIL 0.
+=HOW TO RUN
+----------
+Copy this file to COOPERP/NewScreens/_RearrangeTests.aspx, request it from the server
+itself (it refuses non-local requests), read the results, then DELETE it again. It is
+kept here as text so it is preserved but not servable - the same arrangement as
+CourseCorrectionTests.cs in this folder.
+
+It builds its own fixtures on the test student MRU2027000002 (courses ZZRX101/ZZRX102)
+and removes them at the end. Log rows it creates cannot be removed: the append-only
+trigger blocks deletion, which is itself test 11.
+
+Last run: 20 September 2026 - PASS 58, FAIL 0.
+=HOW TO RUN
+----------
+Copy this file to COOPERP/NewScreens/_RearrangeTests.aspx, request it from the server
+itself (it refuses non-local requests), read the results, then DELETE it again. It is
+kept here as text so it is preserved but not servable - the same arrangement as
+CourseCorrectionTests.cs in this folder.
+
+It builds its own fixtures on the test student MRU2027000002 (courses ZZRX101/ZZRX102)
+and removes them at the end. Log rows it creates cannot be removed: the append-only
+trigger blocks deletion, which is itself test 11.
+
+Last run: 20 September 2026 - PASS 58, FAIL 0.
+=HOW TO RUN
+----------
+Copy this file to COOPERP/NewScreens/_RearrangeTests.aspx, request it from the server
+itself (it refuses non-local requests), read the results, then DELETE it again. It is
+kept here as text so it is preserved but not servable - the same arrangement as
+CourseCorrectionTests.cs in this folder.
+
+It builds its own fixtures on the test student MRU2027000002 (courses ZZRX101/ZZRX102)
+and removes them at the end. Log rows it creates cannot be removed: the append-only
+trigger blocks deletion, which is itself test 11.
+
+Last run: 20 September 2026 - PASS 58, FAIL 0.
+=HOW TO RUN
+----------
+Copy this file to COOPERP/NewScreens/_RearrangeTests.aspx, request it from the server
+itself (it refuses non-local requests), read the results, then DELETE it again. It is
+kept here as text so it is preserved but not servable - the same arrangement as
+CourseCorrectionTests.cs in this folder.
+
+It builds its own fixtures on the test student MRU2027000002 (courses ZZRX101/ZZRX102)
+and removes them at the end. Log rows it creates cannot be removed: the append-only
+trigger blocks deletion, which is itself test 11.
+
+Last run: 20 September 2026 - PASS 58, FAIL 0.
+=HOW TO RUN
+----------
+Copy this file to COOPERP/NewScreens/_RearrangeTests.aspx, request it from the server
+itself (it refuses non-local requests), read the results, then DELETE it again. It is
+kept here as text so it is preserved but not servable - the same arrangement as
+CourseCorrectionTests.cs in this folder.
+
+It builds its own fixtures on the test student MRU2027000002 (courses ZZRX101/ZZRX102)
+and removes them at the end. Log rows it creates cannot be removed: the append-only
+trigger blocks deletion, which is itself test 11.
+
+Last run: 20 September 2026 - PASS 58, FAIL 0.
+=HOW TO RUN
+----------
+Copy this file to COOPERP/NewScreens/_RearrangeTests.aspx, request it from the server
+itself (it refuses non-local requests), read the results, then DELETE it again. It is
+kept here as text so it is preserved but not servable - the same arrangement as
+CourseCorrectionTests.cs in this folder.
+
+It builds its own fixtures on the test student MRU2027000002 (courses ZZRX101/ZZRX102)
+and removes them at the end. Log rows it creates cannot be removed: the append-only
+trigger blocks deletion, which is itself test 11.
+
+Last run: 20 September 2026 - PASS 58, FAIL 0.
+=HOW TO RUN
+----------
+Copy this file to COOPERP/NewScreens/_RearrangeTests.aspx, request it from the server
+itself (it refuses non-local requests), read the results, then DELETE it again. It is
+kept here as text so it is preserved but not servable - the same arrangement as
+CourseCorrectionTests.cs in this folder.
+
+It builds its own fixtures on the test student MRU2027000002 (courses ZZRX101/ZZRX102)
+and removes them at the end. Log rows it creates cannot be removed: the append-only
+trigger blocks deletion, which is itself test 11.
+
+Last run: 20 September 2026 - PASS 58, FAIL 0.
+=HOW TO RUN
+----------
+Copy this file to COOPERP/NewScreens/_RearrangeTests.aspx, request it from the server
+itself (it refuses non-local requests), read the results, then DELETE it again. It is
+kept here as text so it is preserved but not servable - the same arrangement as
+CourseCorrectionTests.cs in this folder.
+
+It builds its own fixtures on the test student MRU2027000002 (courses ZZRX101/ZZRX102)
+and removes them at the end. Log rows it creates cannot be removed: the append-only
+trigger blocks deletion, which is itself test 11.
+
+Last run: 20 September 2026 - PASS 58, FAIL 0.
+=HOW TO RUN
+----------
+Copy this file to COOPERP/NewScreens/_RearrangeTests.aspx, request it from the server
+itself (it refuses non-local requests), read the results, then DELETE it again. It is
+kept here as text so it is preserved but not servable - the same arrangement as
+CourseCorrectionTests.cs in this folder.
+
+It builds its own fixtures on the test student MRU2027000002 (courses ZZRX101/ZZRX102)
+and removes them at the end. Log rows it creates cannot be removed: the append-only
+trigger blocks deletion, which is itself test 11.
+
+Last run: 20 September 2026 - PASS 58, FAIL 0.
+=HOW TO RUN
+----------
+Copy this file to COOPERP/NewScreens/_RearrangeTests.aspx, request it from the server
+itself (it refuses non-local requests), read the results, then DELETE it again. It is
+kept here as text so it is preserved but not servable - the same arrangement as
+CourseCorrectionTests.cs in this folder.
+
+It builds its own fixtures on the test student MRU2027000002 (courses ZZRX101/ZZRX102)
+and removes them at the end. Log rows it creates cannot be removed: the append-only
+trigger blocks deletion, which is itself test 11.
+
+Last run: 20 September 2026 - PASS 58, FAIL 0.
+=HOW TO RUN
+----------
+Copy this file to COOPERP/NewScreens/_RearrangeTests.aspx, request it from the server
+itself (it refuses non-local requests), read the results, then DELETE it again. It is
+kept here as text so it is preserved but not servable - the same arrangement as
+CourseCorrectionTests.cs in this folder.
+
+It builds its own fixtures on the test student MRU2027000002 (courses ZZRX101/ZZRX102)
+and removes them at the end. Log rows it creates cannot be removed: the append-only
+trigger blocks deletion, which is itself test 11.
+
+Last run: 20 September 2026 - PASS 58, FAIL 0.
+=HOW TO RUN
+----------
+Copy this file to COOPERP/NewScreens/_RearrangeTests.aspx, request it from the server
+itself (it refuses non-local requests), read the results, then DELETE it again. It is
+kept here as text so it is preserved but not servable - the same arrangement as
+CourseCorrectionTests.cs in this folder.
+
+It builds its own fixtures on the test student MRU2027000002 (courses ZZRX101/ZZRX102)
+and removes them at the end. Log rows it creates cannot be removed: the append-only
+trigger blocks deletion, which is itself test 11.
+
+Last run: 20 September 2026 - PASS 58, FAIL 0.
+=HOW TO RUN
+----------
+Copy this file to COOPERP/NewScreens/_RearrangeTests.aspx, request it from the server
+itself (it refuses non-local requests), read the results, then DELETE it again. It is
+kept here as text so it is preserved but not servable - the same arrangement as
+CourseCorrectionTests.cs in this folder.
+
+It builds its own fixtures on the test student MRU2027000002 (courses ZZRX101/ZZRX102)
+and removes them at the end. Log rows it creates cannot be removed: the append-only
+trigger blocks deletion, which is itself test 11.
+
+Last run: 20 September 2026 - PASS 58, FAIL 0.
+=HOW TO RUN
+----------
+Copy this file to COOPERP/NewScreens/_RearrangeTests.aspx, request it from the server
+itself (it refuses non-local requests), read the results, then DELETE it again. It is
+kept here as text so it is preserved but not servable - the same arrangement as
+CourseCorrectionTests.cs in this folder.
+
+It builds its own fixtures on the test student MRU2027000002 (courses ZZRX101/ZZRX102)
+and removes them at the end. Log rows it creates cannot be removed: the append-only
+trigger blocks deletion, which is itself test 11.
+
+Last run: 20 September 2026 - PASS 58, FAIL 0.
+=HOW TO RUN
+----------
+Copy this file to COOPERP/NewScreens/_RearrangeTests.aspx, request it from the server
+itself (it refuses non-local requests), read the results, then DELETE it again. It is
+kept here as text so it is preserved but not servable - the same arrangement as
+CourseCorrectionTests.cs in this folder.
+
+It builds its own fixtures on the test student MRU2027000002 (courses ZZRX101/ZZRX102)
+and removes them at the end. Log rows it creates cannot be removed: the append-only
+trigger blocks deletion, which is itself test 11.
+
+Last run: 20 September 2026 - PASS 58, FAIL 0.
+=HOW TO RUN
+----------
+Copy this file to COOPERP/NewScreens/_RearrangeTests.aspx, request it from the server
+itself (it refuses non-local requests), read the results, then DELETE it again. It is
+kept here as text so it is preserved but not servable - the same arrangement as
+CourseCorrectionTests.cs in this folder.
+
+It builds its own fixtures on the test student MRU2027000002 (courses ZZRX101/ZZRX102)
+and removes them at the end. Log rows it creates cannot be removed: the append-only
+trigger blocks deletion, which is itself test 11.
+
+Last run: 20 September 2026 - PASS 58, FAIL 0.
+=HOW TO RUN
+----------
+Copy this file to COOPERP/NewScreens/_RearrangeTests.aspx, request it from the server
+itself (it refuses non-local requests), read the results, then DELETE it again. It is
+kept here as text so it is preserved but not servable - the same arrangement as
+CourseCorrectionTests.cs in this folder.
+
+It builds its own fixtures on the test student MRU2027000002 (courses ZZRX101/ZZRX102)
+and removes them at the end. Log rows it creates cannot be removed: the append-only
+trigger blocks deletion, which is itself test 11.
+
+Last run: 20 September 2026 - PASS 58, FAIL 0.
+=HOW TO RUN
+----------
+Copy this file to COOPERP/NewScreens/_RearrangeTests.aspx, request it from the server
+itself (it refuses non-local requests), read the results, then DELETE it again. It is
+kept here as text so it is preserved but not servable - the same arrangement as
+CourseCorrectionTests.cs in this folder.
+
+It builds its own fixtures on the test student MRU2027000002 (courses ZZRX101/ZZRX102)
+and removes them at the end. Log rows it creates cannot be removed: the append-only
+trigger blocks deletion, which is itself test 11.
+
+Last run: 20 September 2026 - PASS 58, FAIL 0.
+=HOW TO RUN
+----------
+Copy this file to COOPERP/NewScreens/_RearrangeTests.aspx, request it from the server
+itself (it refuses non-local requests), read the results, then DELETE it again. It is
+kept here as text so it is preserved but not servable - the same arrangement as
+CourseCorrectionTests.cs in this folder.
+
+It builds its own fixtures on the test student MRU2027000002 (courses ZZRX101/ZZRX102)
+and removes them at the end. Log rows it creates cannot be removed: the append-only
+trigger blocks deletion, which is itself test 11.
+
+Last run: 20 September 2026 - PASS 58, FAIL 0.
+=HOW TO RUN
+----------
+Copy this file to COOPERP/NewScreens/_RearrangeTests.aspx, request it from the server
+itself (it refuses non-local requests), read the results, then DELETE it again. It is
+kept here as text so it is preserved but not servable - the same arrangement as
+CourseCorrectionTests.cs in this folder.
+
+It builds its own fixtures on the test student MRU2027000002 (courses ZZRX101/ZZRX102)
+and removes them at the end. Log rows it creates cannot be removed: the append-only
+trigger blocks deletion, which is itself test 11.
+
+Last run: 20 September 2026 - PASS 58, FAIL 0.
+=HOW TO RUN
+----------
+Copy this file to COOPERP/NewScreens/_RearrangeTests.aspx, request it from the server
+itself (it refuses non-local requests), read the results, then DELETE it again. It is
+kept here as text so it is preserved but not servable - the same arrangement as
+CourseCorrectionTests.cs in this folder.
+
+It builds its own fixtures on the test student MRU2027000002 (courses ZZRX101/ZZRX102)
+and removes them at the end. Log rows it creates cannot be removed: the append-only
+trigger blocks deletion, which is itself test 11.
+
+Last run: 20 September 2026 - PASS 58, FAIL 0.
+=HOW TO RUN
+----------
+Copy this file to COOPERP/NewScreens/_RearrangeTests.aspx, request it from the server
+itself (it refuses non-local requests), read the results, then DELETE it again. It is
+kept here as text so it is preserved but not servable - the same arrangement as
+CourseCorrectionTests.cs in this folder.
+
+It builds its own fixtures on the test student MRU2027000002 (courses ZZRX101/ZZRX102)
+and removes them at the end. Log rows it creates cannot be removed: the append-only
+trigger blocks deletion, which is itself test 11.
+
+Last run: 20 September 2026 - PASS 58, FAIL 0.
+=HOW TO RUN
+----------
+Copy this file to COOPERP/NewScreens/_RearrangeTests.aspx, request it from the server
+itself (it refuses non-local requests), read the results, then DELETE it again. It is
+kept here as text so it is preserved but not servable - the same arrangement as
+CourseCorrectionTests.cs in this folder.
+
+It builds its own fixtures on the test student MRU2027000002 (courses ZZRX101/ZZRX102)
+and removes them at the end. Log rows it creates cannot be removed: the append-only
+trigger blocks deletion, which is itself test 11.
+
+Last run: 20 September 2026 - PASS 58, FAIL 0.
+=HOW TO RUN
+----------
+Copy this file to COOPERP/NewScreens/_RearrangeTests.aspx, request it from the server
+itself (it refuses non-local requests), read the results, then DELETE it again. It is
+kept here as text so it is preserved but not servable - the same arrangement as
+CourseCorrectionTests.cs in this folder.
+
+It builds its own fixtures on the test student MRU2027000002 (courses ZZRX101/ZZRX102)
+and removes them at the end. Log rows it creates cannot be removed: the append-only
+trigger blocks deletion, which is itself test 11.
+
+Last run: 20 September 2026 - PASS 58, FAIL 0.
+=HOW TO RUN
+----------
+Copy this file to COOPERP/NewScreens/_RearrangeTests.aspx, request it from the server
+itself (it refuses non-local requests), read the results, then DELETE it again. It is
+kept here as text so it is preserved but not servable - the same arrangement as
+CourseCorrectionTests.cs in this folder.
+
+It builds its own fixtures on the test student MRU2027000002 (courses ZZRX101/ZZRX102)
+and removes them at the end. Log rows it creates cannot be removed: the append-only
+trigger blocks deletion, which is itself test 11.
+
+Last run: 20 September 2026 - PASS 58, FAIL 0.
+=HOW TO RUN
+----------
+Copy this file to COOPERP/NewScreens/_RearrangeTests.aspx, request it from the server
+itself (it refuses non-local requests), read the results, then DELETE it again. It is
+kept here as text so it is preserved but not servable - the same arrangement as
+CourseCorrectionTests.cs in this folder.
+
+It builds its own fixtures on the test student MRU2027000002 (courses ZZRX101/ZZRX102)
+and removes them at the end. Log rows it creates cannot be removed: the append-only
+trigger blocks deletion, which is itself test 11.
+
+Last run: 20 September 2026 - PASS 58, FAIL 0.
+=HOW TO RUN
+----------
+Copy this file to COOPERP/NewScreens/_RearrangeTests.aspx, request it from the server
+itself (it refuses non-local requests), read the results, then DELETE it again. It is
+kept here as text so it is preserved but not servable - the same arrangement as
+CourseCorrectionTests.cs in this folder.
+
+It builds its own fixtures on the test student MRU2027000002 (courses ZZRX101/ZZRX102)
+and removes them at the end. Log rows it creates cannot be removed: the append-only
+trigger blocks deletion, which is itself test 11.
+
+Last run: 20 September 2026 - PASS 58, FAIL 0.
+=HOW TO RUN
+----------
+Copy this file to COOPERP/NewScreens/_RearrangeTests.aspx, request it from the server
+itself (it refuses non-local requests), read the results, then DELETE it again. It is
+kept here as text so it is preserved but not servable - the same arrangement as
+CourseCorrectionTests.cs in this folder.
+
+It builds its own fixtures on the test student MRU2027000002 (courses ZZRX101/ZZRX102)
+and removes them at the end. Log rows it creates cannot be removed: the append-only
+trigger blocks deletion, which is itself test 11.
+
+Last run: 20 September 2026 - PASS 58, FAIL 0.
+=HOW TO RUN
+----------
+Copy this file to COOPERP/NewScreens/_RearrangeTests.aspx, request it from the server
+itself (it refuses non-local requests), read the results, then DELETE it again. It is
+kept here as text so it is preserved but not servable - the same arrangement as
+CourseCorrectionTests.cs in this folder.
+
+It builds its own fixtures on the test student MRU2027000002 (courses ZZRX101/ZZRX102)
+and removes them at the end. Log rows it creates cannot be removed: the append-only
+trigger blocks deletion, which is itself test 11.
+
+Last run: 20 September 2026 - PASS 58, FAIL 0.
+=HOW TO RUN
+----------
+Copy this file to COOPERP/NewScreens/_RearrangeTests.aspx, request it from the server
+itself (it refuses non-local requests), read the results, then DELETE it again. It is
+kept here as text so it is preserved but not servable - the same arrangement as
+CourseCorrectionTests.cs in this folder.
+
+It builds its own fixtures on the test student MRU2027000002 (courses ZZRX101/ZZRX102)
+and removes them at the end. Log rows it creates cannot be removed: the append-only
+trigger blocks deletion, which is itself test 11.
+
+Last run: 20 September 2026 - PASS 58, FAIL 0.
+=HOW TO RUN
+----------
+Copy this file to COOPERP/NewScreens/_RearrangeTests.aspx, request it from the server
+itself (it refuses non-local requests), read the results, then DELETE it again. It is
+kept here as text so it is preserved but not servable - the same arrangement as
+CourseCorrectionTests.cs in this folder.
+
+It builds its own fixtures on the test student MRU2027000002 (courses ZZRX101/ZZRX102)
+and removes them at the end. Log rows it creates cannot be removed: the append-only
+trigger blocks deletion, which is itself test 11.
+
+Last run: 20 September 2026 - PASS 58, FAIL 0.
+=HOW TO RUN
+----------
+Copy this file to COOPERP/NewScreens/_RearrangeTests.aspx, request it from the server
+itself (it refuses non-local requests), read the results, then DELETE it again. It is
+kept here as text so it is preserved but not servable - the same arrangement as
+CourseCorrectionTests.cs in this folder.
+
+It builds its own fixtures on the test student MRU2027000002 (courses ZZRX101/ZZRX102)
+and removes them at the end. Log rows it creates cannot be removed: the append-only
+trigger blocks deletion, which is itself test 11.
+
+Last run: 20 September 2026 - PASS 58, FAIL 0.
+=HOW TO RUN
+----------
+Copy this file to COOPERP/NewScreens/_RearrangeTests.aspx, request it from the server
+itself (it refuses non-local requests), read the results, then DELETE it again. It is
+kept here as text so it is preserved but not servable - the same arrangement as
+CourseCorrectionTests.cs in this folder.
+
+It builds its own fixtures on the test student MRU2027000002 (courses ZZRX101/ZZRX102)
+and removes them at the end. Log rows it creates cannot be removed: the append-only
+trigger blocks deletion, which is itself test 11.
+
+Last run: 20 September 2026 - PASS 58, FAIL 0.
+=HOW TO RUN
+----------
+Copy this file to COOPERP/NewScreens/_RearrangeTests.aspx, request it from the server
+itself (it refuses non-local requests), read the results, then DELETE it again. It is
+kept here as text so it is preserved but not servable - the same arrangement as
+CourseCorrectionTests.cs in this folder.
+
+It builds its own fixtures on the test student MRU2027000002 (courses ZZRX101/ZZRX102)
+and removes them at the end. Log rows it creates cannot be removed: the append-only
+trigger blocks deletion, which is itself test 11.
+
+Last run: 20 September 2026 - PASS 58, FAIL 0.
+=HOW TO RUN
+----------
+Copy this file to COOPERP/NewScreens/_RearrangeTests.aspx, request it from the server
+itself (it refuses non-local requests), read the results, then DELETE it again. It is
+kept here as text so it is preserved but not servable - the same arrangement as
+CourseCorrectionTests.cs in this folder.
+
+It builds its own fixtures on the test student MRU2027000002 (courses ZZRX101/ZZRX102)
+and removes them at the end. Log rows it creates cannot be removed: the append-only
+trigger blocks deletion, which is itself test 11.
+
+Last run: 20 September 2026 - PASS 58, FAIL 0.
+=HOW TO RUN
+----------
+Copy this file to COOPERP/NewScreens/_RearrangeTests.aspx, request it from the server
+itself (it refuses non-local requests), read the results, then DELETE it again. It is
+kept here as text so it is preserved but not servable - the same arrangement as
+CourseCorrectionTests.cs in this folder.
+
+It builds its own fixtures on the test student MRU2027000002 (courses ZZRX101/ZZRX102)
+and removes them at the end. Log rows it creates cannot be removed: the append-only
+trigger blocks deletion, which is itself test 11.
+
+Last run: 20 September 2026 - PASS 58, FAIL 0.
+=HOW TO RUN
+----------
+Copy this file to COOPERP/NewScreens/_RearrangeTests.aspx, request it from the server
+itself (it refuses non-local requests), read the results, then DELETE it again. It is
+kept here as text so it is preserved but not servable - the same arrangement as
+CourseCorrectionTests.cs in this folder.
+
+It builds its own fixtures on the test student MRU2027000002 (courses ZZRX101/ZZRX102)
+and removes them at the end. Log rows it creates cannot be removed: the append-only
+trigger blocks deletion, which is itself test 11.
+
+Last run: 20 September 2026 - PASS 58, FAIL 0.
+=HOW TO RUN
+----------
+Copy this file to COOPERP/NewScreens/_RearrangeTests.aspx, request it from the server
+itself (it refuses non-local requests), read the results, then DELETE it again. It is
+kept here as text so it is preserved but not servable - the same arrangement as
+CourseCorrectionTests.cs in this folder.
+
+It builds its own fixtures on the test student MRU2027000002 (courses ZZRX101/ZZRX102)
+and removes them at the end. Log rows it creates cannot be removed: the append-only
+trigger blocks deletion, which is itself test 11.
+
+Last run: 20 September 2026 - PASS 58, FAIL 0.
+=HOW TO RUN
+----------
+Copy this file to COOPERP/NewScreens/_RearrangeTests.aspx, request it from the server
+itself (it refuses non-local requests), read the results, then DELETE it again. It is
+kept here as text so it is preserved but not servable - the same arrangement as
+CourseCorrectionTests.cs in this folder.
+
+It builds its own fixtures on the test student MRU2027000002 (courses ZZRX101/ZZRX102)
+and removes them at the end. Log rows it creates cannot be removed: the append-only
+trigger blocks deletion, which is itself test 11.
+
+Last run: 20 September 2026 - PASS 58, FAIL 0.
+=HOW TO RUN
+----------
+Copy this file to COOPERP/NewScreens/_RearrangeTests.aspx, request it from the server
+itself (it refuses non-local requests), read the results, then DELETE it again. It is
+kept here as text so it is preserved but not servable - the same arrangement as
+CourseCorrectionTests.cs in this folder.
+
+It builds its own fixtures on the test student MRU2027000002 (courses ZZRX101/ZZRX102)
+and removes them at the end. Log rows it creates cannot be removed: the append-only
+trigger blocks deletion, which is itself test 11.
+
+Last run: 20 September 2026 - PASS 58, FAIL 0.
+=HOW TO RUN
+----------
+Copy this file to COOPERP/NewScreens/_RearrangeTests.aspx, request it from the server
+itself (it refuses non-local requests), read the results, then DELETE it again. It is
+kept here as text so it is preserved but not servable - the same arrangement as
+CourseCorrectionTests.cs in this folder.
+
+It builds its own fixtures on the test student MRU2027000002 (courses ZZRX101/ZZRX102)
+and removes them at the end. Log rows it creates cannot be removed: the append-only
+trigger blocks deletion, which is itself test 11.
+
+Last run: 20 September 2026 - PASS 58, FAIL 0.
+=HOW TO RUN
+----------
+Copy this file to COOPERP/NewScreens/_RearrangeTests.aspx, request it from the server
+itself (it refuses non-local requests), read the results, then DELETE it again. It is
+kept here as text so it is preserved but not servable - the same arrangement as
+CourseCorrectionTests.cs in this folder.
+
+It builds its own fixtures on the test student MRU2027000002 (courses ZZRX101/ZZRX102)
+and removes them at the end. Log rows it creates cannot be removed: the append-only
+trigger blocks deletion, which is itself test 11.
+
+Last run: 20 September 2026 - PASS 58, FAIL 0.
+=HOW TO RUN
+----------
+Copy this file to COOPERP/NewScreens/_RearrangeTests.aspx, request it from the server
+itself (it refuses non-local requests), read the results, then DELETE it again. It is
+kept here as text so it is preserved but not servable - the same arrangement as
+CourseCorrectionTests.cs in this folder.
+
+It builds its own fixtures on the test student MRU2027000002 (courses ZZRX101/ZZRX102)
+and removes them at the end. Log rows it creates cannot be removed: the append-only
+trigger blocks deletion, which is itself test 11.
+
+Last run: 20 September 2026 - PASS 58, FAIL 0.
+=HOW TO RUN
+----------
+Copy this file to COOPERP/NewScreens/_RearrangeTests.aspx, request it from the server
+itself (it refuses non-local requests), read the results, then DELETE it again. It is
+kept here as text so it is preserved but not servable - the same arrangement as
+CourseCorrectionTests.cs in this folder.
+
+It builds its own fixtures on the test student MRU2027000002 (courses ZZRX101/ZZRX102)
+and removes them at the end. Log rows it creates cannot be removed: the append-only
+trigger blocks deletion, which is itself test 11.
+
+Last run: 20 September 2026 - PASS 58, FAIL 0.
+=HOW TO RUN
+----------
+Copy this file to COOPERP/NewScreens/_RearrangeTests.aspx, request it from the server
+itself (it refuses non-local requests), read the results, then DELETE it again. It is
+kept here as text so it is preserved but not servable - the same arrangement as
+CourseCorrectionTests.cs in this folder.
+
+It builds its own fixtures on the test student MRU2027000002 (courses ZZRX101/ZZRX102)
+and removes them at the end. Log rows it creates cannot be removed: the append-only
+trigger blocks deletion, which is itself test 11.
+
+Last run: 20 September 2026 - PASS 58, FAIL 0.
+=HOW TO RUN
+----------
+Copy this file to COOPERP/NewScreens/_RearrangeTests.aspx, request it from the server
+itself (it refuses non-local requests), read the results, then DELETE it again. It is
+kept here as text so it is preserved but not servable - the same arrangement as
+CourseCorrectionTests.cs in this folder.
+
+It builds its own fixtures on the test student MRU2027000002 (courses ZZRX101/ZZRX102)
+and removes them at the end. Log rows it creates cannot be removed: the append-only
+trigger blocks deletion, which is itself test 11.
+
+Last run: 20 September 2026 - PASS 58, FAIL 0.
+=HOW TO RUN
+----------
+Copy this file to COOPERP/NewScreens/_RearrangeTests.aspx, request it from the server
+itself (it refuses non-local requests), read the results, then DELETE it again. It is
+kept here as text so it is preserved but not servable - the same arrangement as
+CourseCorrectionTests.cs in this folder.
+
+It builds its own fixtures on the test student MRU2027000002 (courses ZZRX101/ZZRX102)
+and removes them at the end. Log rows it creates cannot be removed: the append-only
+trigger blocks deletion, which is itself test 11.
+
+Last run: 20 September 2026 - PASS 58, FAIL 0.
+=HOW TO RUN
+----------
+Copy this file to COOPERP/NewScreens/_RearrangeTests.aspx, request it from the server
+itself (it refuses non-local requests), read the results, then DELETE it again. It is
+kept here as text so it is preserved but not servable - the same arrangement as
+CourseCorrectionTests.cs in this folder.
+
+It builds its own fixtures on the test student MRU2027000002 (courses ZZRX101/ZZRX102)
+and removes them at the end. Log rows it creates cannot be removed: the append-only
+trigger blocks deletion, which is itself test 11.
+
+Last run: 20 September 2026 - PASS 58, FAIL 0.
+=HOW TO RUN
+----------
+Copy this file to COOPERP/NewScreens/_RearrangeTests.aspx, request it from the server
+itself (it refuses non-local requests), read the results, then DELETE it again. It is
+kept here as text so it is preserved but not servable - the same arrangement as
+CourseCorrectionTests.cs in this folder.
+
+It builds its own fixtures on the test student MRU2027000002 (courses ZZRX101/ZZRX102)
+and removes them at the end. Log rows it creates cannot be removed: the append-only
+trigger blocks deletion, which is itself test 11.
+
+Last run: 20 September 2026 - PASS 58, FAIL 0.
+=HOW TO RUN
+----------
+Copy this file to COOPERP/NewScreens/_RearrangeTests.aspx, request it from the server
+itself (it refuses non-local requests), read the results, then DELETE it again. It is
+kept here as text so it is preserved but not servable - the same arrangement as
+CourseCorrectionTests.cs in this folder.
+
+It builds its own fixtures on the test student MRU2027000002 (courses ZZRX101/ZZRX102)
+and removes them at the end. Log rows it creates cannot be removed: the append-only
+trigger blocks deletion, which is itself test 11.
+
+Last run: 20 September 2026 - PASS 58, FAIL 0.
+=HOW TO RUN
+----------
+Copy this file to COOPERP/NewScreens/_RearrangeTests.aspx, request it from the server
+itself (it refuses non-local requests), read the results, then DELETE it again. It is
+kept here as text so it is preserved but not servable - the same arrangement as
+CourseCorrectionTests.cs in this folder.
+
+It builds its own fixtures on the test student MRU2027000002 (courses ZZRX101/ZZRX102)
+and removes them at the end. Log rows it creates cannot be removed: the append-only
+trigger blocks deletion, which is itself test 11.
+
+Last run: 20 September 2026 - PASS 58, FAIL 0.
+=HOW TO RUN
+----------
+Copy this file to COOPERP/NewScreens/_RearrangeTests.aspx, request it from the server
+itself (it refuses non-local requests), read the results, then DELETE it again. It is
+kept here as text so it is preserved but not servable - the same arrangement as
+CourseCorrectionTests.cs in this folder.
+
+It builds its own fixtures on the test student MRU2027000002 (courses ZZRX101/ZZRX102)
+and removes them at the end. Log rows it creates cannot be removed: the append-only
+trigger blocks deletion, which is itself test 11.
+
+Last run: 20 September 2026 - PASS 58, FAIL 0.
+=HOW TO RUN
+----------
+Copy this file to COOPERP/NewScreens/_RearrangeTests.aspx, request it from the server
+itself (it refuses non-local requests), read the results, then DELETE it again. It is
+kept here as text so it is preserved but not servable - the same arrangement as
+CourseCorrectionTests.cs in this folder.
+
+It builds its own fixtures on the test student MRU2027000002 (courses ZZRX101/ZZRX102)
+and removes them at the end. Log rows it creates cannot be removed: the append-only
+trigger blocks deletion, which is itself test 11.
+
+Last run: 20 September 2026 - PASS 58, FAIL 0.
+=HOW TO RUN
+----------
+Copy this file to COOPERP/NewScreens/_RearrangeTests.aspx, request it from the server
+itself (it refuses non-local requests), read the results, then DELETE it again. It is
+kept here as text so it is preserved but not servable - the same arrangement as
+CourseCorrectionTests.cs in this folder.
+
+It builds its own fixtures on the test student MRU2027000002 (courses ZZRX101/ZZRX102)
+and removes them at the end. Log rows it creates cannot be removed: the append-only
+trigger blocks deletion, which is itself test 11.
+
+Last run: 20 September 2026 - PASS 58, FAIL 0.
+=HOW TO RUN
+----------
+Copy this file to COOPERP/NewScreens/_RearrangeTests.aspx, request it from the server
+itself (it refuses non-local requests), read the results, then DELETE it again. It is
+kept here as text so it is preserved but not servable - the same arrangement as
+CourseCorrectionTests.cs in this folder.
+
+It builds its own fixtures on the test student MRU2027000002 (courses ZZRX101/ZZRX102)
+and removes them at the end. Log rows it creates cannot be removed: the append-only
+trigger blocks deletion, which is itself test 11.
+
+Last run: 20 September 2026 - PASS 58, FAIL 0.
+=HOW TO RUN
+----------
+Copy this file to COOPERP/NewScreens/_RearrangeTests.aspx, request it from the server
+itself (it refuses non-local requests), read the results, then DELETE it again. It is
+kept here as text so it is preserved but not servable - the same arrangement as
+CourseCorrectionTests.cs in this folder.
+
+It builds its own fixtures on the test student MRU2027000002 (courses ZZRX101/ZZRX102)
+and removes them at the end. Log rows it creates cannot be removed: the append-only
+trigger blocks deletion, which is itself test 11.
+
+Last run: 20 September 2026 - PASS 58, FAIL 0.
+=HOW TO RUN
+----------
+Copy this file to COOPERP/NewScreens/_RearrangeTests.aspx, request it from the server
+itself (it refuses non-local requests), read the results, then DELETE it again. It is
+kept here as text so it is preserved but not servable - the same arrangement as
+CourseCorrectionTests.cs in this folder.
+
+It builds its own fixtures on the test student MRU2027000002 (courses ZZRX101/ZZRX102)
+and removes them at the end. Log rows it creates cannot be removed: the append-only
+trigger blocks deletion, which is itself test 11.
+
+Last run: 20 September 2026 - PASS 58, FAIL 0.
+=HOW TO RUN
+----------
+Copy this file to COOPERP/NewScreens/_RearrangeTests.aspx, request it from the server
+itself (it refuses non-local requests), read the results, then DELETE it again. It is
+kept here as text so it is preserved but not servable - the same arrangement as
+CourseCorrectionTests.cs in this folder.
+
+It builds its own fixtures on the test student MRU2027000002 (courses ZZRX101/ZZRX102)
+and removes them at the end. Log rows it creates cannot be removed: the append-only
+trigger blocks deletion, which is itself test 11.
+
+Last run: 20 September 2026 - PASS 58, FAIL 0.
+=HOW TO RUN
+----------
+Copy this file to COOPERP/NewScreens/_RearrangeTests.aspx, request it from the server
+itself (it refuses non-local requests), read the results, then DELETE it again. It is
+kept here as text so it is preserved but not servable - the same arrangement as
+CourseCorrectionTests.cs in this folder.
+
+It builds its own fixtures on the test student MRU2027000002 (courses ZZRX101/ZZRX102)
+and removes them at the end. Log rows it creates cannot be removed: the append-only
+trigger blocks deletion, which is itself test 11.
+
+Last run: 20 September 2026 - PASS 58, FAIL 0.
+=HOW TO RUN
+----------
+Copy this file to COOPERP/NewScreens/_RearrangeTests.aspx, request it from the server
+itself (it refuses non-local requests), read the results, then DELETE it again. It is
+kept here as text so it is preserved but not servable - the same arrangement as
+CourseCorrectionTests.cs in this folder.
+
+It builds its own fixtures on the test student MRU2027000002 (courses ZZRX101/ZZRX102)
+and removes them at the end. Log rows it creates cannot be removed: the append-only
+trigger blocks deletion, which is itself test 11.
+
+Last run: 20 September 2026 - PASS 58, FAIL 0.
+=
+
+<%@ Page Language="C#" AutoEventWireup="true" ContentType="text/plain" %>
+<%@ Import Namespace="System" %>
+<%@ Import Namespace="System.Collections.Generic" %>
+<%@ Import Namespace="System.Text" %>
+<%@ Import Namespace="System.Web.Script.Serialization" %>
+<%@ Import Namespace="MySql.Data.MySqlClient" %>
+<script runat="server">
+/* ===========================================================================
+   Student Course Rearrangement — test harness.  TEMPORARY. Delete after use.
+
+   Runs in-process so HttpContext and Session exist: RoleAccessService reads the
+   session slugs, so setting them here exercises the real authorization path
+   rather than a stub of it.
+
+   Localhost only, test student only, and every fixture it creates is removed
+   at the end.
+   =========================================================================== */
+const string CS  = "Server=localhost;Database=campus_dynamics;Uid=root;Pwd=24thdecember1977;Allow User Variables=True;";
+const string STU = "MRU2027000002";          // BIIRA SABIA MUTHEKE, programme TEST
+const string C1  = "ZZRX101";
+const string C2  = "ZZRX102";
+
+static JavaScriptSerializer J = new JavaScriptSerializer();
+StringBuilder O = new StringBuilder();
+int pass = 0, fail = 0;
+
+void W(string s) { O.AppendLine(s); }
+void Ok(string what, bool cond, string detail)
+{
+    if (cond) { pass++; W("  PASS   " + what); }
+    else { fail++; W("  FAIL   " + what + (string.IsNullOrEmpty(detail) ? "" : "   -> " + detail)); }
+}
+void Ok(string what, bool cond) { Ok(what, cond, ""); }
+
+void Ex(string sql, params object[] ps)
+{
+    using (var c = new MySqlConnection(CS)) { c.Open();
+        using (var cmd = new MySqlCommand(sql, c)) { AddP(cmd, ps); cmd.ExecuteNonQuery(); } }
+}
+object Sc(string sql, params object[] ps)
+{
+    using (var c = new MySqlConnection(CS)) { c.Open();
+        using (var cmd = new MySqlCommand(sql, c)) { AddP(cmd, ps); return cmd.ExecuteScalar(); } }
+}
+void AddP(MySqlCommand cmd, object[] ps)
+{ for (int i = 0; i + 1 < ps.Length; i += 2) cmd.Parameters.AddWithValue((string)ps[i], ps[i + 1]); }
+int Num(string sql, params object[] ps) { object o = Sc(sql, ps); return o == null || o == DBNull.Value ? 0 : Convert.ToInt32(o); }
+double Dbl(string sql, params object[] ps) { object o = Sc(sql, ps); return o == null || o == DBNull.Value ? 0 : Convert.ToDouble(o); }
+string Str(string sql, params object[] ps) { object o = Sc(sql, ps); return o == null || o == DBNull.Value ? "" : Convert.ToString(o); }
+
+Dictionary<string, object> D(string json) { return J.Deserialize<Dictionary<string, object>>(json); }
+bool OkJson(string json) { var d = D(json); return d.ContainsKey("success") && Convert.ToBoolean(d["success"]); }
+string Msg(string json) { var d = D(json); return d.ContainsKey("message") ? Convert.ToString(d["message"]) : ""; }
+
+/* ── session simulation: exactly the keys RoleAccessService reads ───────── */
+void BeRole(string roleCode, string slugs)
+{
+    Session[RoleAccessService.SESSION_SLUGS]    = slugs;
+    Session[RoleAccessService.SESSION_ROLE]     = roleCode;
+    Session[RoleAccessService.SESSION_ROLE_NAME] = roleCode;
+    Session["username"]   = "test_" + roleCode;
+    Session["ScreenName"] = "Test " + roleCode;
+}
+void BeAdmin()     { BeRole("admin", "*"); Session["username"] = "muhindo"; Session["ScreenName"] = "Muhindo mubaraka"; }
+void BeRegistrar() { BeRole("registrar", "academics.rearrange.manage,academics.rearrange.logs,academics.rearrange.dashboard"); }
+void BeDean()      { BeRole("dean", "academics.rearrange.manage,academics.rearrange.logs,academics.rearrange.dashboard"); }
+void BeHod()       { BeRole("hod", "academics.rearrange.manage,academics.rearrange.logs,academics.rearrange.dashboard"); }
+void BeOutsider()  { BeRole("faculty_staff", "academics.exam.marks_dashboard"); }
+void BeNobody()    { Session[RoleAccessService.SESSION_SLUGS] = ""; Session[RoleAccessService.SESSION_ROLE] = "";
+                     Session["username"] = "test_nobody"; }
+
+/* ── fixtures ───────────────────────────────────────────────────────────── */
+void Cleanup()
+{
+    Ex("DELETE FROM campus_dynamics_portal.acad_course_registration WHERE regno=@r AND courseID IN (@a,@b)", "@r", STU, "@a", C1, "@b", C2);
+    Ex("DELETE FROM campus_dynamics.acad_results WHERE regno=@r AND courseid IN (@a,@b)", "@r", STU, "@a", C1, "@b", C2);
+    Ex("DELETE FROM campus_dynamics.acad_transcript_results WHERE regno=@r AND courseid IN (@a,@b)", "@r", STU, "@a", C1, "@b", C2);
+    Ex("DELETE FROM campus_dynamics.acad_course WHERE courseID IN (@a,@b)", "@a", C1, "@b", C2);
+    Ex("DELETE FROM campus_dynamics.acad_registration WHERE regno=@r AND acad_year='2099/2100'", "@r", STU);
+    // Sessions/batches/attempts from the harness go; log rows CANNOT be deleted (that is test 11).
+    Ex("DELETE FROM campus_dynamics.acad_rearrange_attempt WHERE COALESCE(actor_user,'') LIKE 'test_%'");
+    Ex("DELETE FROM campus_dynamics.acad_rearrange_batch WHERE actor_user LIKE 'test_%'");
+    Ex("DELETE FROM campus_dynamics.acad_rearrange_session WHERE actor_user LIKE 'test_%'");
+}
+
+int Fixture()
+{
+    Cleanup();
+    Ex("INSERT INTO campus_dynamics.acad_course (courseID, courseName, CreditUnit) VALUES (@a,'Rearrange Test Alpha',4),(@b,'Rearrange Test Beta',3)", "@a", C1, "@b", C2);
+    // Year 1 Semester 1 = 2025/2026 S1 on this student
+    Ex("INSERT INTO campus_dynamics_portal.acad_course_registration (regno,courseID,acad_year,semester,course_status,prog_id,stud_session) " +
+       "VALUES (@r,@a,'2025/2026',1,'Normal','TEST',''),(@r,@b,'2025/2026',1,'Normal','TEST','')", "@r", STU, "@a", C1, "@b", C2);
+    Ex("UPDATE campus_dynamics_portal.acad_course_registration SET provisional_course_work_marks=30, provisional_exam_marks=44, " +
+       "provisional_total_marks=74, mark_stage='ENTERED' WHERE regno=@r AND courseID=@a", "@r", STU, "@a", C1);
+    Ex("INSERT INTO campus_dynamics.acad_results (regno,courseid,semester,acad,studyyear,score,grade,gradept,gpa,CreditUnits,progid) " +
+       "VALUES (@r,@a,1,'2025/2026',1,74,'B',4.0,0,4,'TEST'),(@r,@b,1,'2025/2026',1,50,'D',2.0,0,3,'TEST')", "@r", STU, "@a", C1, "@b", C2);
+    return Num("SELECT ID FROM campus_dynamics_portal.acad_course_registration WHERE regno=@r AND courseID=@a", "@r", STU, "@a", C1);
+}
+
+long OpenOk(string reason)
+{
+    string j = StudentRearrangeService.OpenSession(STU, reason, true);
+    var d = D(j);
+    return d.ContainsKey("sessionId") ? Convert.ToInt64(d["sessionId"]) : 0;
+}
+string Checksum(long sid)
+{
+    var d = D(StudentRearrangeService.LoadWorkspace(sid));
+    return d.ContainsKey("checksum") ? Convert.ToString(d["checksum"]) : "";
+}
+string Ops(params string[] items) { return "[" + string.Join(",", items) + "]"; }
+string NewOpId() { return "test-" + Guid.NewGuid().ToString("N"); }
+
+const string R30 = "Test harness verification of the rearrangement module behaviour";
+
+protected void Page_Load(object sender, EventArgs e)
+{
+    if (!Request.IsLocal) { Response.Write("Local requests only."); Response.End(); return; }
+
+    W("Student Course Rearrangement — test results");
+    W("Run " + DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss") + " against " + STU);
+    W(new string('=', 78));
+
+    try { RunAll(); }
+    catch (Exception ex) { fail++; W("  HARNESS ERROR: " + ex.Message + "\n" + ex.StackTrace); }
+
+    try { BeAdmin(); Cleanup(); W(""); W("Fixtures removed."); }
+    catch (Exception ex) { W("Cleanup warning: " + ex.Message); }
+
+    W(new string('=', 78));
+    W("PASS " + pass + "    FAIL " + fail);
+    Response.Write(O.ToString());
+}
+
+void RunAll()
+{
+    /* ── 1. Access control, on the endpoint and not just the menu ──────── */
+    W("");
+    W("1. Role access");
+    BeAdmin();     Ok("super admin may use the module", StudentRearrangeService.CanUse());
+    BeRegistrar(); Ok("AR (registrar) may use the module", StudentRearrangeService.CanUse());
+    BeDean();      Ok("DEAN may use the module", StudentRearrangeService.CanUse());
+    BeHod();       Ok("HOD may use the module", StudentRearrangeService.CanUse());
+    BeOutsider();  Ok("faculty_staff is refused", !StudentRearrangeService.CanUse());
+    BeNobody();    Ok("a user with no slugs is refused", !StudentRearrangeService.CanUse());
+
+    BeOutsider();
+    Ok("refused role cannot OpenSession", !OkJson(StudentRearrangeService.OpenSession(STU, R30, true)));
+    Ok("refused role cannot LoadWorkspace", !OkJson(StudentRearrangeService.LoadWorkspace(1)));
+    Ok("refused role cannot Save", !OkJson(StudentRearrangeService.Save(1, NewOpId(), "[]", "")));
+    Ok("refused role cannot read Logs", !OkJson(StudentRearrangeService.Logs(null,null,null,null,null,null,null,null,1,20)));
+    Ok("refused role cannot read Dashboard", !OkJson(StudentRearrangeService.Dashboard(30)));
+    Ok("refused role cannot Reverse", !OkJson(StudentRearrangeService.ReverseEntry(1, "trying to reverse")));
+
+    BeAdmin();
+    Ok("HOD may NOT override a results lock", RoleGate("hod") == false);
+    Ok("AR may override a results lock", RoleGate("registrar"));
+    Ok("DEAN may override a results lock", RoleGate("dean"));
+    Ok("super admin may override a results lock", RoleGate("admin"));
+
+    /* ── 2. The gate ───────────────────────────────────────────────────── */
+    W("");
+    W("2. Session gate");
+    BeAdmin();
+    Ok("no reason is refused", !OkJson(StudentRearrangeService.OpenSession(STU, "", true)));
+    Ok("short reason is refused", !OkJson(StudentRearrangeService.OpenSession(STU, "too short", true)));
+    Ok("no acknowledgement is refused", !OkJson(StudentRearrangeService.OpenSession(STU, R30, false)));
+    Ok("unknown student is refused", !OkJson(StudentRearrangeService.OpenSession("NOSUCHSTUDENT", R30, true)));
+    string jOpen = StudentRearrangeService.OpenSession(STU, R30, true);
+    Ok("reason + acknowledgement is accepted", OkJson(jOpen), Msg(jOpen));
+
+    /* ── 3. Move: writes, logs, recalculates ───────────────────────────── */
+    W("");
+    W("3. Move between semesters");
+    int reg = Fixture();
+    BeAdmin();
+    double gpaY1S1before = Dbl("SELECT ROUND(SUM(gradept*CreditUnits)/SUM(CreditUnits),2) FROM acad_results WHERE regno=@r AND studyyear=1 AND semester=1", "@r", STU);
+    long s3 = OpenOk(R30);
+    string sum3 = Checksum(s3);
+    int logBefore = Num("SELECT COUNT(*) FROM acad_rearrange_log");
+    string j3 = StudentRearrangeService.Save(s3, NewOpId(),
+        Ops("{\"op\":\"MOVE\",\"regId\":" + reg + ",\"toYear\":1,\"toSem\":2}"), sum3);
+    Ok("the move is applied", OkJson(j3), Msg(j3));
+    Ok("registration now sits in semester 2",
+       Num("SELECT semester FROM campus_dynamics_portal.acad_course_registration WHERE ID=@i", "@i", reg) == 2);
+    Ok("acad_results followed the move",
+       Num("SELECT semester FROM acad_results WHERE regno=@r AND courseid=@c", "@r", STU, "@c", C1) == 2);
+    Ok("a log entry was written", Num("SELECT COUNT(*) FROM acad_rearrange_log") > logBefore);
+    double gpaY1S1after = Dbl("SELECT ROUND(SUM(gradept*CreditUnits)/SUM(CreditUnits),2) FROM acad_results WHERE regno=@r AND studyyear=1 AND semester=1", "@r", STU);
+    Ok("semester GPA was recalculated", Math.Abs(gpaY1S1after - gpaY1S1before) > 0.0001,
+       "before " + gpaY1S1before + " after " + gpaY1S1after);
+    Ok("the cached per-row gpa was rewritten",
+       Math.Abs(Dbl("SELECT gpa FROM acad_results WHERE regno=@r AND courseid=@c", "@r", STU, "@c", C1) -
+                Dbl("SELECT ROUND(SUM(gradept*CreditUnits)/SUM(CreditUnits),2) FROM acad_results WHERE regno=@r AND studyyear=1 AND semester=2", "@r", STU)) < 0.011);
+
+    /* ── 4. One bad change rolls the whole batch back ──────────────────── */
+    W("");
+    W("4. Batch rollback");
+    reg = Fixture();
+    BeAdmin();
+    long s4 = OpenOk(R30);
+    string sum4 = Checksum(s4);
+    int logB4 = Num("SELECT COUNT(*) FROM acad_rearrange_log");
+    int semB4 = Num("SELECT semester FROM campus_dynamics_portal.acad_course_registration WHERE ID=@i", "@i", reg);
+    string j4 = StudentRearrangeService.Save(s4, NewOpId(), Ops(
+        "{\"op\":\"MOVE\",\"regId\":" + reg + ",\"toYear\":1,\"toSem\":2}",
+        "{\"op\":\"MOVE\",\"regId\":" + reg + ",\"toYear\":9,\"toSem\":9}"     // no such semester
+    ), sum4);
+    Ok("the batch is refused", !OkJson(j4), Msg(j4));
+    Ok("the good change was rolled back too",
+       Num("SELECT semester FROM campus_dynamics_portal.acad_course_registration WHERE ID=@i", "@i", reg) == semB4);
+    Ok("no log rows survive the rollback", Num("SELECT COUNT(*) FROM acad_rearrange_log") == logB4);
+
+    /* ── 5. Optimistic locking ─────────────────────────────────────────── */
+    W("");
+    W("5. Concurrent edit");
+    reg = Fixture();
+    BeAdmin();
+    long s5a = OpenOk(R30); string sumA = Checksum(s5a);   // officer A loads
+    long s5b = OpenOk(R30); string sumB = Checksum(s5b);   // officer B loads the same record
+    string j5a = StudentRearrangeService.Save(s5a, NewOpId(),
+        Ops("{\"op\":\"MOVE\",\"regId\":" + reg + ",\"toYear\":1,\"toSem\":2}"), sumA);
+    Ok("the first save succeeds", OkJson(j5a), Msg(j5a));
+    string j5b = StudentRearrangeService.Save(s5b, NewOpId(),
+        Ops("{\"op\":\"MOVE\",\"regId\":" + reg + ",\"toYear\":2,\"toSem\":1}"), sumB);
+    Ok("the second save is rejected as a conflict", !OkJson(j5b), Msg(j5b));
+    Ok("the conflict message tells the user to reload", Msg(j5b).ToLower().Contains("reload"));
+
+    /* ── 6. Idempotency ────────────────────────────────────────────────── */
+    W("");
+    W("6. Duplicate submit");
+    reg = Fixture();
+    BeAdmin();
+    long s6 = OpenOk(R30); string sum6 = Checksum(s6);
+    string opId = NewOpId();
+    string ops6 = Ops("{\"op\":\"MOVE\",\"regId\":" + reg + ",\"toYear\":1,\"toSem\":2}");
+    int logB6 = Num("SELECT COUNT(*) FROM acad_rearrange_log");
+    string first = StudentRearrangeService.Save(s6, opId, ops6, sum6);
+    int logAfter1 = Num("SELECT COUNT(*) FROM acad_rearrange_log");
+    string second = StudentRearrangeService.Save(s6, opId, ops6, sum6);   // same op id, resent
+    int logAfter2 = Num("SELECT COUNT(*) FROM acad_rearrange_log");
+    Ok("the first submit applies", OkJson(first), Msg(first));
+    Ok("the replay does not write again", logAfter2 == logAfter1,
+       "log " + logB6 + " -> " + logAfter1 + " -> " + logAfter2);
+    Ok("only one batch exists for that operation id",
+       Num("SELECT COUNT(*) FROM acad_rearrange_batch WHERE client_op_id=@k", "@k", opId) == 1);
+
+    /* ── 7. Mark change needs its own reason ───────────────────────────── */
+    W("");
+    W("7. Mark change reason");
+    reg = Fixture();
+    BeAdmin();
+    long s7 = OpenOk(R30); string sum7 = Checksum(s7);
+    string j7 = StudentRearrangeService.Save(s7, NewOpId(),
+        Ops("{\"op\":\"MARK\",\"regId\":" + reg + ",\"field\":\"exam\",\"value\":54}"), sum7);
+    Ok("a mark change with no reason is refused", !OkJson(j7), Msg(j7));
+    Ok("the exam mark is unchanged",
+       Num("SELECT provisional_exam_marks FROM campus_dynamics_portal.acad_course_registration WHERE ID=@i", "@i", reg) == 44);
+    string j7b = StudentRearrangeService.Save(s7, NewOpId(),
+        Ops("{\"op\":\"MARK\",\"regId\":" + reg + ",\"field\":\"exam\",\"value\":54,\"reason\":\"Marks entry error confirmed by the lecturer\"}"), sum7);
+    Ok("with a reason it is applied", OkJson(j7b), Msg(j7b));
+    Ok("the exam mark is now 54",
+       Num("SELECT provisional_exam_marks FROM campus_dynamics_portal.acad_course_registration WHERE ID=@i", "@i", reg) == 54);
+    Ok("the published result followed the mark",
+       Num("SELECT score FROM acad_results WHERE regno=@r AND courseid=@c", "@r", STU, "@c", C1) == 84);
+    Ok("the grade was recomputed to A",
+       Str("SELECT grade FROM acad_results WHERE regno=@r AND courseid=@c", "@r", STU, "@c", C1) == "A");
+
+    /* ── 8 & 9. Delete archives, reversal restores exactly ─────────────── */
+    W("");
+    W("8/9. Delete, archive and reversal");
+    reg = Fixture();
+    BeAdmin();
+    long s8 = OpenOk(R30); string sum8 = Checksum(s8);
+    double cgpaBefore = Dbl("SELECT ROUND(SUM(gradept*CreditUnits)/SUM(CreditUnits),2) FROM acad_results WHERE regno=@r", "@r", STU);
+    string j8 = StudentRearrangeService.Save(s8, NewOpId(),
+        Ops("{\"op\":\"DELETE\",\"regId\":" + reg + ",\"reason\":\"Registered in error, confirmed with the faculty\",\"overrideReason\":\"Published result present and removal is intended, confirmed by AR\"}"), sum8);
+    Ok("the delete is applied", OkJson(j8), Msg(j8));
+    Ok("the registration row is gone from the live table",
+       Num("SELECT COUNT(*) FROM campus_dynamics_portal.acad_course_registration WHERE ID=@i", "@i", reg) == 0);
+    long delLog = Convert.ToInt64(Sc("SELECT id FROM acad_rearrange_log WHERE op_type='DELETE' AND pk_value=@p ORDER BY id DESC LIMIT 1", "@p", reg.ToString()));
+    Ok("the complete row was archived in the log",
+       Str("SELECT before_json FROM acad_rearrange_log WHERE id=@i", "@i", delLog).Contains(C1));
+
+    string j9 = StudentRearrangeService.ReverseEntry(delLog, "Removal was wrong, restoring the registration");
+    Ok("the reversal succeeds", OkJson(j9), Msg(j9));
+    Ok("the registration is back under its ORIGINAL primary key",
+       Num("SELECT COUNT(*) FROM campus_dynamics_portal.acad_course_registration WHERE ID=@i", "@i", reg) == 1);
+    Ok("the restored row has its original course",
+       Str("SELECT courseID FROM campus_dynamics_portal.acad_course_registration WHERE ID=@i", "@i", reg) == C1);
+    double cgpaAfter = Dbl("SELECT ROUND(SUM(gradept*CreditUnits)/SUM(CreditUnits),2) FROM acad_results WHERE regno=@r", "@r", STU);
+    Ok("CGPA is back to its prior value", Math.Abs(cgpaAfter - cgpaBefore) < 0.011,
+       "before " + cgpaBefore + " after " + cgpaAfter);
+    Ok("a reversal entry points at the original",
+       Num("SELECT COUNT(*) FROM acad_rearrange_log WHERE reverses_log_id=@i", "@i", delLog) == 1);
+    Ok("reversing the same entry twice is refused",
+       !OkJson(StudentRearrangeService.ReverseEntry(delLog, "Trying to reverse it a second time")));
+
+    /* ── 10. Reversal blocked when the record moved on ─────────────────── */
+    W("");
+    W("10. Reversal after later changes");
+    reg = Fixture();
+    BeAdmin();
+    long s10 = OpenOk(R30); string sum10 = Checksum(s10);
+    string j10 = StudentRearrangeService.Save(s10, NewOpId(),
+        Ops("{\"op\":\"MOVE\",\"regId\":" + reg + ",\"toYear\":1,\"toSem\":2}"), sum10);
+    Ok("the move is applied", OkJson(j10), Msg(j10));
+    long mvLog = Convert.ToInt64(Sc("SELECT id FROM acad_rearrange_log WHERE op_type='MOVE' AND table_name='acad_course_registration' AND pk_value=@p ORDER BY id DESC LIMIT 1", "@p", reg.ToString()));
+    // somebody else edits the record afterwards, outside this module
+    Ex("UPDATE campus_dynamics_portal.acad_course_registration SET semester=3 WHERE ID=@i", "@i", reg);
+    string j10b = StudentRearrangeService.ReverseEntry(mvLog, "Attempting to reverse after an outside change");
+    Ok("the reversal is blocked", !OkJson(j10b), Msg(j10b));
+    Ok("the message names what changed", Msg(j10b).ToLower().Contains("changed since"), Msg(j10b));
+    Ok("the newer value was not overwritten",
+       Num("SELECT semester FROM campus_dynamics_portal.acad_course_registration WHERE ID=@i", "@i", reg) == 3);
+
+    /* ── 11. The log is append only ────────────────────────────────────── */
+    W("");
+    W("11. Append-only log");
+    long anyLog = Convert.ToInt64(Sc("SELECT id FROM acad_rearrange_log ORDER BY id DESC LIMIT 1"));
+    bool updBlocked = false, delBlocked = false;
+    try { Ex("UPDATE campus_dynamics.acad_rearrange_log SET regno='TAMPERED' WHERE id=@i", "@i", anyLog); }
+    catch (MySqlException) { updBlocked = true; }
+    try { Ex("DELETE FROM campus_dynamics.acad_rearrange_log WHERE id=@i", "@i", anyLog); }
+    catch (MySqlException) { delBlocked = true; }
+    Ok("UPDATE on a log row is refused by the database", updBlocked);
+    Ok("DELETE on a log row is refused by the database", delBlocked);
+    Ok("the row is intact", Str("SELECT regno FROM acad_rearrange_log WHERE id=@i", "@i", anyLog) != "TAMPERED");
+}
+
+/// Exercises the real override gate for a role by putting that role in the session.
+bool RoleGate(string roleCode)
+{
+    object slugs = Session[RoleAccessService.SESSION_SLUGS], role = Session[RoleAccessService.SESSION_ROLE];
+    BeRole(roleCode, roleCode == "admin" ? "*" : "academics.rearrange.manage");
+    bool can = StudentRearrangeService.CanOverrideLock();
+    Session[RoleAccessService.SESSION_SLUGS] = slugs; Session[RoleAccessService.SESSION_ROLE] = role;
+    return can;
+}
+</script>

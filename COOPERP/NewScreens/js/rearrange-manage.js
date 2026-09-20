@@ -1,0 +1,850 @@
+/* ===========================================================================
+   Student Course Rearrangement — the workspace.
+
+   Nothing here writes to the database. Every change is held client-side until
+   the officer reviews and confirms, and the server then re-validates all of it
+   from scratch: this file's job is to make the intent clear and hard to get
+   wrong, not to be trusted.
+
+   Two ways to move a course, deliberately. Drag and drop is the fast path on a
+   mouse; the "Move to" select on every row is the real path on a tablet, on a
+   laptop with a poor trackpad, and for anyone working by keyboard. Neither is
+   a second-class citizen.
+
+   Vanilla JS, no dependencies, no build step — same as every other NewScreens
+   page.
+   =========================================================================== */
+(function () {
+'use strict';
+
+var PAGE = location.pathname;
+var DATA = null;          // last workspace payload from the server
+var SESSION = 0;
+var CHECKSUM = '';
+var SAVING = false;
+var OP_ID = null;         // one id per save attempt, so a retry cannot double-apply
+
+/* The pending set. Keyed by registration id so a second edit to the same row
+   replaces the first rather than stacking. */
+var PEND = { moves: {}, marks: {}, deletes: {}, adds: [], regsems: [] };
+var TEMP = -1;            // negative ids for not-yet-saved additions
+
+/* ── plumbing ─────────────────────────────────────────────────────────── */
+function qs(id) { return document.getElementById(id); }
+function esc(s) {
+    return s === null || s === undefined ? '' : String(s)
+        .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;');
+}
+function call(method, params, cb) {
+    var x = new XMLHttpRequest();
+    x.open('POST', PAGE + '/' + method, true);
+    x.setRequestHeader('Content-Type', 'application/json; charset=utf-8');
+    x.timeout = 290000;
+    x.ontimeout = function () { cb({ success: false, timedOut: true, message: 'The request took longer than expected. Reload to see whether it completed.' }); };
+    x.onload = function () {
+        try { var o = JSON.parse(x.responseText); cb(typeof o.d === 'string' ? JSON.parse(o.d) : o.d); }
+        catch (e) {
+            // A permission redirect or a session timeout arrives as HTML, not JSON.
+            cb({ success: false, message: x.status === 401 || x.status === 403
+                 ? 'You are not permitted to do that.'
+                 : 'The server response could not be read. Your session may have expired — reload the page.' });
+        }
+    };
+    x.onerror = function () { cb({ success: false, message: 'Network error. Nothing was saved.' }); };
+    x.send(JSON.stringify(params || {}));
+}
+function toast(msg, isErr) {
+    var t = document.createElement('div');
+    t.className = 'rx-toast' + (isErr ? ' rx-toast--err' : '');
+    t.textContent = msg;
+    document.body.appendChild(t);
+    setTimeout(function () {
+        t.style.transition = 'opacity .4s'; t.style.opacity = '0';
+        setTimeout(function () { if (t.parentNode) t.parentNode.removeChild(t); }, 400);
+    }, isErr ? 6000 : 3200);
+}
+function openModal(id) { qs(id).classList.add('is-open'); }
+function closeModal(id) { qs(id).classList.remove('is-open'); }
+function uuid() {
+    return 'rx-' + Date.now().toString(36) + '-' +
+           Math.random().toString(36).slice(2, 10) + Math.random().toString(36).slice(2, 6);
+}
+
+document.addEventListener('click', function (e) {
+    var c = e.target.getAttribute && e.target.getAttribute('data-close');
+    if (c) closeModal(c);
+});
+
+/* ── the gate ─────────────────────────────────────────────────────────── */
+var MIN_REASON = 30;
+
+function gateCheck() {
+    var rg = qs('rx-regno').value.trim();
+    var rs = qs('rx-reason').value.trim();
+    var ak = qs('rx-ack').checked;
+    var hint = qs('rx-reason-hint');
+
+    if (rs.length === 0) { hint.className = 'rx-hint'; hint.textContent = 'At least ' + MIN_REASON + ' characters.'; }
+    else if (rs.length < MIN_REASON) {
+        hint.className = 'rx-hint rx-hint--bad';
+        hint.textContent = (MIN_REASON - rs.length) + ' more character(s) needed.';
+    } else { hint.className = 'rx-hint rx-hint--ok'; hint.textContent = 'Reason accepted (' + rs.length + ' characters).'; }
+
+    qs('rx-open').disabled = !(rg.length > 0 && rs.length >= MIN_REASON && ak);
+}
+
+function openSession() {
+    var btn = qs('rx-open');
+    btn.disabled = true; btn.textContent = 'Opening…';
+    qs('rx-gate-msg').textContent = '';
+    call('OpenSession', {
+        regno: qs('rx-regno').value.trim(),
+        reason: qs('rx-reason').value.trim(),
+        acknowledged: qs('rx-ack').checked
+    }, function (d) {
+        btn.textContent = 'Load student record';
+        if (!d || !d.success) {
+            btn.disabled = false;
+            qs('rx-gate-msg').innerHTML = '<span class="rx-hint rx-hint--bad">' + esc(d && d.message || 'Could not open the session.') + '</span>';
+            return;
+        }
+        SESSION = d.sessionId;
+        qs('rx-gate').style.display = 'none';
+        qs('rx-boot').style.display = '';
+        loadWorkspace();
+    });
+}
+
+/* ── load ─────────────────────────────────────────────────────────────── */
+function loadWorkspace() {
+    // One call, not several. These PageMethods hold an exclusive ASP.NET session
+    // lock, so parallel requests would only queue behind each other anyway.
+    call('LoadWorkspace', { sessionId: SESSION }, function (d) {
+        qs('rx-boot').style.display = 'none';
+        if (!d || !d.success) {
+            qs('rx-boot').style.display = '';
+            qs('rx-boot').innerHTML = '<div class="rx-state rx-state--err"><div class="rx-state__t">Could not load the record</div>' +
+                                      esc(d && d.message || 'Unknown error') + '</div>';
+            return;
+        }
+        DATA = d; CHECKSUM = d.checksum;
+        qs('rx-actor').textContent = d.actor.name || d.actor.user;
+        qs('rx-role').textContent = d.actor.role || 'no role';
+        qs('rx-workspace').style.display = '';
+        renderStudent();
+        render();
+    });
+}
+
+function renderStudent() {
+    var s = DATA.student;
+    var photo = s.photo
+        ? '<img class="rx-student__photo" src="../StudentInfo/photos/' + esc(s.photo) + '" alt="" ' +
+          'onerror="this.outerHTML=&quot;<div class=\\&quot;rx-student__ph\\&quot;>' + esc((s.name || '?').charAt(0)) + '</div>&quot;" />'
+        : '<div class="rx-student__ph">' + esc((s.name || '?').charAt(0)) + '</div>';
+    qs('rx-student').innerHTML =
+        photo +
+        '<div style="flex:1 1 260px">' +
+          '<div class="rx-student__name">' + esc(s.name) + '</div>' +
+          '<div class="rx-student__meta">' +
+            '<b>' + esc(s.entryno) + '</b> &middot; ' + esc(s.regno) + '</div>' +
+          '<div class="rx-student__meta">' + esc(s.progName) + ' (' + esc(s.prog) + ')' +
+            (s.status ? ' &middot; ' + esc(s.status) : '') +
+            (s.entryYear ? ' &middot; entry ' + esc(s.entryYear) : '') + '</div>' +
+        '</div>' +
+        '<div style="font-size:10px;color:#64748b;text-align:right">' +
+          'Session <b>' + esc(DATA.session.sref) + '</b><br />opened ' + esc(DATA.session.openedAt) + '</div>';
+}
+
+/* ── the model: what a row looks like after pending changes ───────────── */
+function effective(c) {
+    var m = PEND.moves[c.regId];
+    return {
+        year: m ? m.toYear : c.studyYear,
+        sem: m ? m.toSem : c.semester
+    };
+}
+function allRows() {
+    var rows = DATA.courses.slice();
+    for (var i = 0; i < PEND.adds.length; i++) {
+        var a = PEND.adds[i];
+        rows.push({
+            regId: a.tempId, course: a.course, title: a.title, acadYear: '', semester: a.toSem,
+            studyYear: a.toYear, courseStatus: 'Normal', markStage: '', cw: null, exam: null, total: null,
+            resultId: 0, grade: '', creditUnits: a.creditUnits, isRetake: false,
+            lockStatus: 'DRAFT', locked: false, curriculum: a.curriculum || { year: 0, semester: 0 },
+            _isNew: true
+        });
+    }
+    return rows;
+}
+function pendingCount() {
+    var n = PEND.adds.length + PEND.regsems.length;
+    for (var k in PEND.moves) if (PEND.moves.hasOwnProperty(k)) n++;
+    for (var k2 in PEND.deletes) if (PEND.deletes.hasOwnProperty(k2)) n++;
+    for (var k3 in PEND.marks) if (PEND.marks.hasOwnProperty(k3)) {
+        var m = PEND.marks[k3];
+        if (m.cw) n++; if (m.exam) n++;
+    }
+    return n;
+}
+
+/* ── render ───────────────────────────────────────────────────────────── */
+function render() {
+    var rows = allRows();
+
+    // Every (year, semester) the student holds, plus any the pending set introduces.
+    var slots = {};
+    function slot(y, s) {
+        var k = y + '/' + s;
+        if (!slots[k]) slots[k] = { year: y, sem: s, rows: [], acadYear: '', closed: false, registered: false };
+        return slots[k];
+    }
+    for (var i = 0; i < DATA.semesters.length; i++) {
+        var sm = DATA.semesters[i];
+        var sl = slot(sm.studyYear, sm.semester);
+        sl.acadYear = sl.acadYear || sm.acadYear;
+        sl.registered = true;
+    }
+    for (var j = 0; j < PEND.regsems.length; j++) {
+        var rsm = PEND.regsems[j];
+        var sl2 = slot(rsm.toYear, rsm.toSem);
+        sl2.acadYear = rsm.acadYear; sl2.registered = true; sl2.isNew = true;
+    }
+    for (var k = 0; k < rows.length; k++) {
+        var eff = effective(rows[k]);
+        slot(eff.year, eff.sem).rows.push(rows[k]);
+    }
+    for (var ci = 0; ci < DATA.closedSemesters.length; ci++) {
+        var ck = DATA.closedSemesters[ci];
+        if (slots[ck]) slots[ck].closed = true;
+    }
+
+    var keys = Object.keys(slots).sort(function (a, b) {
+        var pa = a.split('/'), pb = b.split('/');
+        return (+pa[0] - +pb[0]) || (+pa[1] - +pb[1]);
+    });
+
+    // group by year
+    var years = {};
+    for (var y = 0; y < keys.length; y++) {
+        var sl3 = slots[keys[y]];
+        (years[sl3.year] = years[sl3.year] || []).push(sl3);
+    }
+
+    var h = '';
+    var yearKeys = Object.keys(years).sort(function (a, b) { return +a - +b; });
+    if (yearKeys.length === 0) {
+        h = '<div class="rx-card"><div class="rx-state"><div class="rx-state__t">No academic record</div>' +
+            'This student has no semester registrations and no course registrations yet.<br />' +
+            'Use <b>Register a new semester</b> to start one.</div></div>';
+    }
+    for (var yi = 0; yi < yearKeys.length; yi++) {
+        var yk = yearKeys[yi], sems = years[yk];
+        h += '<div class="rx-year">';
+        h += '<div class="rx-year__hd">Year ' + esc(yk) +
+             '<span class="rx-year__gpa">' + esc(sems[0].acadYear || '') + '</span></div>';
+        h += '<div class="rx-sems">';
+        for (var si = 0; si < sems.length; si++) h += renderSem(sems[si]);
+        h += '</div></div>';
+    }
+    qs('rx-groups').innerHTML = h;
+
+    var n = pendingCount();
+    var pill = qs('rx-pending');
+    pill.textContent = n === 0 ? 'No pending changes' : n + ' pending change' + (n === 1 ? '' : 's');
+    pill.className = 'rx-pending' + (n === 0 ? ' rx-pending--zero' : '');
+    qs('rx-save').disabled = n === 0 || SAVING;
+    qs('rx-discard').disabled = n === 0 || SAVING;
+
+    wire();
+}
+
+function renderSem(sl) {
+    var h = '<div class="rx-sem" data-year="' + sl.year + '" data-sem="' + sl.sem + '"' +
+            (sl.registered ? '' : ' data-unreg="1"') + '>';
+    h += '<div class="rx-sem__hd">Semester ' + esc(sl.sem) +
+         (sl.isNew ? ' <span class="rx-badge rx-badge--REGISTER_SEMESTER">new</span>' : '') +
+         (sl.closed ? ' <span class="rx-sem__closed" title="Holds finally published results">closed</span>' : '') +
+         (!sl.registered ? ' <span class="rx-offcur">not registered</span>' : '') +
+         '<span class="rx-sem__count">' + sl.rows.length + ' course' + (sl.rows.length === 1 ? '' : 's') + '</span>' +
+         '</div>';
+    h += '<div class="rx-sem__body">';
+    if (sl.rows.length === 0) h += '<div class="rx-sem__empty">Drop a course here</div>';
+    for (var i = 0; i < sl.rows.length; i++) h += renderCourse(sl.rows[i], sl);
+    h += '<div style="margin-top:6px"><button type="button" class="rx-btn rx-btn--ghost rx-btn--sm" ' +
+         'data-add-year="' + sl.year + '" data-add-sem="' + sl.sem + '">+ Add course</button></div>';
+    h += '</div></div>';
+    return h;
+}
+
+function renderCourse(c, sl) {
+    var moved = !!PEND.moves[c.regId];
+    var del = !!PEND.deletes[c.regId];
+    var mk = PEND.marks[c.regId];
+    var markChanged = !!(mk && (mk.cw || mk.exam));
+    var isNew = !!c._isNew;
+
+    var cls = 'rx-course';
+    var flag = '';
+    if (del) { cls += ' rx-is-deleted'; flag = '<span class="rx-flag rx-dot-deleted"></span>'; }
+    else if (isNew) { cls += ' rx-is-added'; flag = '<span class="rx-flag rx-dot-added"></span>'; }
+    else if (moved) { cls += ' rx-is-moved'; flag = '<span class="rx-flag rx-dot-moved"></span>'; }
+    else if (markChanged) { cls += ' rx-is-mark'; flag = '<span class="rx-flag rx-dot-mark"></span>'; }
+
+    var cw = mk && mk.cw ? mk.cw.to : c.cw;
+    var ex = mk && mk.exam ? mk.exam.to : c.exam;
+    var tot = (cw === null || cw === undefined ? 0 : +cw) + (ex === null || ex === undefined ? 0 : +ex);
+    var hasMarks = (cw !== null && cw !== undefined) || (ex !== null && ex !== undefined);
+
+    var offCur = c.curriculum && c.curriculum.year > 0 &&
+                 (c.curriculum.year !== sl.year || c.curriculum.semester !== sl.sem);
+
+    var h = '<div class="' + cls + '" draggable="' + (del ? 'false' : 'true') + '" data-reg="' + c.regId + '" ' +
+            'data-year="' + sl.year + '" data-sem="' + sl.sem + '">' + flag;
+
+    h += '<div class="rx-course__top">' +
+         '<span class="rx-course__code">' + esc(c.course) + '</span>' +
+         (c.isRetake ? '<span class="rx-retake" title="Retake — travels with the course, never changed by a move">RT</span>' : '') +
+         (c.locked ? '<span class="rx-lock' + (c.lockStatus === 'FINAL_PUBLISHED' ? ' rx-lock--final' : '') + '" title="Results status: ' + esc(c.lockStatus) + '">' + esc(c.lockStatus.replace(/_/g, ' ')) + '</span>' : '') +
+         (offCur ? '<span class="rx-offcur" title="Curriculum places this in Year ' + c.curriculum.year + ' Semester ' + c.curriculum.semester + '">off-curriculum</span>' : '') +
+         '<span class="rx-course__cu">' + (c.creditUnits ? esc(c.creditUnits) + ' CU' : '') + '</span>' +
+         '</div>';
+    h += '<div class="rx-course__title">' + esc(c.title) + '</div>';
+
+    h += '<div class="rx-course__marks">' +
+         '<span class="rx-mark">CW <input type="number" class="rx-mark__in" data-mark="cw" data-reg="' + c.regId + '" ' +
+             'min="0" max="40" value="' + (cw === null || cw === undefined ? '' : esc(cw)) + '"' +
+             (del || isNew ? ' disabled="disabled"' : '') + ' /></span>' +
+         '<span class="rx-mark">Exam <input type="number" class="rx-mark__in" data-mark="exam" data-reg="' + c.regId + '" ' +
+             'min="0" max="60" value="' + (ex === null || ex === undefined ? '' : esc(ex)) + '"' +
+             (del || isNew ? ' disabled="disabled"' : '') + ' /></span>' +
+         (hasMarks ? '<span class="rx-mark">Total <b>' + tot + '</b></span>' : '') +
+         (c.grade ? '<span class="rx-grade' + (c.grade === 'F' ? ' rx-grade--f' : '') + '">' + esc(c.grade) + '</span>' : '') +
+         '</div>';
+
+    // The keyboard and touch path. Not an afterthought — on a tablet it is the only path.
+    h += '<div class="rx-course__acts">';
+    h += '<label class="rx-lbl" style="margin:0 3px 0 0;font-size:9px">Move to</label>';
+    h += '<select class="rx-moveto" data-reg="' + c.regId + '"' + (del ? ' disabled="disabled"' : '') + '>';
+    h += '<option value="">— stay —</option>';
+    var opts = moveTargets();
+    for (var i = 0; i < opts.length; i++) {
+        var o = opts[i];
+        var sel = (o.year === sl.year && o.sem === sl.sem) ? ' selected="selected"' : '';
+        h += '<option value="' + o.year + '/' + o.sem + '"' + sel + '>Y' + o.year + ' S' + o.sem +
+             (o.acadYear ? ' (' + esc(o.acadYear) + ')' : '') + '</option>';
+    }
+    h += '</select>';
+    if (del) h += '<button type="button" class="rx-btn rx-btn--ghost rx-btn--sm" data-undel="' + c.regId + '">Keep</button>';
+    else if (isNew) h += '<button type="button" class="rx-x" data-unadd="' + c.regId + '">Remove</button>';
+    else h += '<button type="button" class="rx-x" data-del="' + c.regId + '">Remove…</button>';
+    h += '</div>';
+
+    var notes = [];
+    if (moved) notes.push('Moved from Year ' + PEND.moves[c.regId].fromYear + ' Semester ' + PEND.moves[c.regId].fromSem);
+    if (isNew) notes.push('New registration');
+    if (del) notes.push('To be removed — ' + esc(PEND.deletes[c.regId].reason));
+    if (mk && mk.cw) notes.push('Coursework ' + fmt(mk.cw.from) + ' → ' + fmt(mk.cw.to) + ' — ' + esc(mk.cw.reason));
+    if (mk && mk.exam) notes.push('Exam ' + fmt(mk.exam.from) + ' → ' + fmt(mk.exam.to) + ' — ' + esc(mk.exam.reason));
+    if (notes.length) h += '<div class="rx-note">' + notes.join('<br />') + '</div>';
+
+    h += '</div>';
+    return h;
+}
+
+function fmt(v) { return (v === null || v === undefined || v === '') ? 'blank' : v; }
+
+function moveTargets() {
+    var out = [], seen = {};
+    for (var i = 0; i < DATA.semesters.length; i++) {
+        var s = DATA.semesters[i], k = s.studyYear + '/' + s.semester;
+        if (seen[k]) continue; seen[k] = 1;
+        out.push({ year: s.studyYear, sem: s.semester, acadYear: s.acadYear });
+    }
+    for (var j = 0; j < PEND.regsems.length; j++) {
+        var r = PEND.regsems[j], k2 = r.toYear + '/' + r.toSem;
+        if (seen[k2]) continue; seen[k2] = 1;
+        out.push({ year: r.toYear, sem: r.toSem, acadYear: r.acadYear });
+    }
+    out.sort(function (a, b) { return (a.year - b.year) || (a.sem - b.sem); });
+    return out;
+}
+
+/* ── interaction ──────────────────────────────────────────────────────── */
+var dragReg = null, ghostEl = null;
+
+function wire() {
+    var courses = document.querySelectorAll('.rx-course[draggable="true"]');
+    for (var i = 0; i < courses.length; i++) {
+        courses[i].addEventListener('dragstart', onDragStart);
+        courses[i].addEventListener('dragend', onDragEnd);
+    }
+    var sems = document.querySelectorAll('.rx-sem');
+    for (var j = 0; j < sems.length; j++) {
+        sems[j].addEventListener('dragover', onDragOver);
+        sems[j].addEventListener('dragleave', onDragLeave);
+        sems[j].addEventListener('drop', onDrop);
+    }
+    bindAll('.rx-moveto', 'change', function (e) {
+        var v = e.target.value; if (!v) { render(); return; }
+        var p = v.split('/');
+        requestMove(+e.target.getAttribute('data-reg'), +p[0], +p[1]);
+    });
+    bindAll('.rx-mark__in', 'change', function (e) {
+        onMarkEdit(+e.target.getAttribute('data-reg'), e.target.getAttribute('data-mark'), e.target.value);
+    });
+    bindAll('[data-del]', 'click', function (e) { requestDelete(+e.target.getAttribute('data-del')); });
+    bindAll('[data-undel]', 'click', function (e) {
+        delete PEND.deletes[+e.target.getAttribute('data-undel')]; render();
+    });
+    bindAll('[data-unadd]', 'click', function (e) {
+        var id = +e.target.getAttribute('data-unadd');
+        PEND.adds = PEND.adds.filter(function (a) { return a.tempId !== id; });
+        render();
+    });
+    bindAll('[data-add-year]', 'click', function (e) {
+        openAdd(+e.target.getAttribute('data-add-year'), +e.target.getAttribute('data-add-sem'));
+    });
+}
+function bindAll(sel, ev, fn) {
+    var els = document.querySelectorAll(sel);
+    for (var i = 0; i < els.length; i++) els[i].addEventListener(ev, fn);
+}
+
+function onDragStart(e) {
+    var el = e.currentTarget;
+    dragReg = +el.getAttribute('data-reg');
+    el.classList.add('is-dragging');
+    // A ghost the officer can actually read — the default translucent snapshot of a
+    // dense row is unreadable, and ambiguity here costs student records.
+    ghostEl = document.createElement('div');
+    ghostEl.className = 'rx-ghost';
+    ghostEl.textContent = el.querySelector('.rx-course__code').textContent;
+    document.body.appendChild(ghostEl);
+    try { e.dataTransfer.setDragImage(ghostEl, 12, 12); } catch (x) { }
+    e.dataTransfer.effectAllowed = 'move';
+    try { e.dataTransfer.setData('text/plain', String(dragReg)); } catch (x2) { }
+}
+function onDragEnd(e) {
+    e.currentTarget.classList.remove('is-dragging');
+    if (ghostEl && ghostEl.parentNode) ghostEl.parentNode.removeChild(ghostEl);
+    ghostEl = null; dragReg = null;
+    clearTargets();
+}
+function clearTargets() {
+    var s = document.querySelectorAll('.rx-sem');
+    for (var i = 0; i < s.length; i++) s[i].classList.remove('is-drop-target', 'is-drop-invalid');
+}
+function onDragOver(e) {
+    if (dragReg === null) return;
+    e.preventDefault();
+    var sem = e.currentTarget;
+    var src = document.querySelector('.rx-course[data-reg="' + dragReg + '"]');
+    var same = src && src.getAttribute('data-year') === sem.getAttribute('data-year') &&
+                     src.getAttribute('data-sem') === sem.getAttribute('data-sem');
+    sem.classList.add(same ? 'is-drop-invalid' : 'is-drop-target');
+    e.dataTransfer.dropEffect = same ? 'none' : 'move';
+}
+function onDragLeave(e) { e.currentTarget.classList.remove('is-drop-target', 'is-drop-invalid'); }
+function onDrop(e) {
+    e.preventDefault();
+    var sem = e.currentTarget;
+    clearTargets();
+    if (dragReg === null) return;
+    requestMove(dragReg, +sem.getAttribute('data-year'), +sem.getAttribute('data-sem'));
+}
+
+function findCourse(regId) {
+    var rows = allRows();
+    for (var i = 0; i < rows.length; i++) if (rows[i].regId === regId) return rows[i];
+    return null;
+}
+
+function requestMove(regId, toYear, toSem) {
+    var c = findCourse(regId);
+    if (!c) return;
+    if (c._isNew) {
+        for (var i = 0; i < PEND.adds.length; i++)
+            if (PEND.adds[i].tempId === regId) { PEND.adds[i].toYear = toYear; PEND.adds[i].toSem = toSem; }
+        render(); settle(regId); return;
+    }
+    var eff = effective(c);
+    if (eff.year === toYear && eff.sem === toSem) { render(); return; }
+
+    var from = { y: c.studyYear, s: c.semester };
+    function commit(overrideReason) {
+        if (toYear === from.y && toSem === from.s) delete PEND.moves[regId];
+        else PEND.moves[regId] = { toYear: toYear, toSem: toSem, fromYear: from.y, fromSem: from.s,
+                                   overrideReason: overrideReason || '' };
+        render(); settle(regId);
+    }
+
+    if (c.locked) {
+        if (!DATA.canOverrideLock) {
+            toast('These results are at ' + c.lockStatus.replace(/_/g, ' ') + ' and are locked. ' +
+                  'Your role may not override a results lock.', true);
+            render(); return;
+        }
+        askReason({
+            title: 'Override a results lock',
+            context: '<div class="rx-err"><b>' + esc(c.course) + '</b> is at status <b>' +
+                     esc(c.lockStatus.replace(/_/g, ' ')) + '</b>.' +
+                     (c.lockStatus === 'FINAL_PUBLISHED'
+                        ? '<br /><br />These results have been <b>finally published by Senate</b>. Moving this course ' +
+                          'changes a published academic record and the student\'s semester GPA. Do not proceed unless ' +
+                          'you are certain and have the authority.'
+                        : '<br /><br />Moving it changes results that are no longer open for editing.') + '</div>',
+            min: DATA.minOverrideReason,
+            hint: 'At least ' + DATA.minOverrideReason + ' characters. Recorded as an override and reportable.'
+        }, commit);
+        return;
+    }
+    commit('');
+}
+
+function settle(regId) {
+    var el = document.querySelector('.rx-course[data-reg="' + regId + '"]');
+    if (!el) return;
+    el.classList.add('is-settling');
+    setTimeout(function () { el.classList.remove('is-settling'); }, 300);
+}
+
+function onMarkEdit(regId, field, raw) {
+    var c = findCourse(regId);
+    if (!c || c._isNew) return;
+    var was = field === 'cw' ? c.cw : c.exam;
+    var val = raw === '' ? null : parseInt(raw, 10);
+    if (raw !== '' && (isNaN(val) || val < 0 || val > (field === 'cw' ? 40 : 60))) {
+        toast((field === 'cw' ? 'Coursework' : 'Exam') + ' must be between 0 and ' + (field === 'cw' ? 40 : 60) + '.', true);
+        render(); return;
+    }
+    if (String(was === null || was === undefined ? '' : was) === String(val === null ? '' : val)) {
+        if (PEND.marks[regId]) { delete PEND.marks[regId][field]; }
+        render(); return;
+    }
+
+    function commit(reason, overrideReason) {
+        PEND.marks[regId] = PEND.marks[regId] || {};
+        PEND.marks[regId][field] = { from: was, to: val, reason: reason, overrideReason: overrideReason || '' };
+        render(); settle(regId);
+    }
+
+    if (c.locked) {
+        if (!DATA.canOverrideLock) {
+            toast('These results are at ' + c.lockStatus.replace(/_/g, ' ') + ' and are locked. ' +
+                  'Your role may not override a results lock.', true);
+            render(); return;
+        }
+        askReason({
+            title: 'Change a locked mark',
+            context: '<div class="rx-err"><b>' + esc(c.course) + '</b> is at status <b>' +
+                     esc(c.lockStatus.replace(/_/g, ' ')) + '</b>.' +
+                     (c.lockStatus === 'FINAL_PUBLISHED'
+                        ? '<br /><br />This mark has been <b>finally published by Senate</b>. Changing it alters a ' +
+                          'published result, the semester GPA and possibly the classification.'
+                        : '') + '</div>' +
+                     '<div class="rx-warn">' + esc(field === 'cw' ? 'Coursework' : 'Exam') + ': <b>' +
+                     fmt(was) + '</b> → <b>' + fmt(val) + '</b></div>',
+            min: DATA.minOverrideReason,
+            hint: 'At least ' + DATA.minOverrideReason + ' characters. Recorded as an override.'
+        }, function (ov) {
+            askReason({
+                title: 'Reason for this mark change',
+                context: '<div class="rx-warn">' + esc(c.course) + ' — ' + esc(field === 'cw' ? 'coursework' : 'exam') +
+                         ' <b>' + fmt(was) + '</b> → <b>' + fmt(val) + '</b></div>',
+                min: DATA.minOpReason,
+                hint: 'Every mark change carries its own reason.'
+            }, function (rsn) { commit(rsn, ov); });
+        });
+        return;
+    }
+
+    askReason({
+        title: 'Reason for this mark change',
+        context: '<div class="rx-warn">' + esc(c.course) + ' — ' + esc(field === 'cw' ? 'coursework' : 'exam') +
+                 ' <b>' + fmt(was) + '</b> → <b>' + fmt(val) + '</b></div>',
+        min: DATA.minOpReason,
+        hint: 'Every mark change carries its own reason. At least ' + DATA.minOpReason + ' characters.'
+    }, function (rsn) { commit(rsn, ''); }, function () { render(); });
+}
+
+function requestDelete(regId) {
+    var c = findCourse(regId);
+    if (!c) return;
+    var warn = '';
+    if (c.resultId) warn = '<div class="rx-err">' + esc(c.course) + ' has a <b>published result</b> (grade ' +
+                           esc(c.grade || '—') + '). Removing the registration leaves that result orphaned.</div>';
+    askReason({
+        title: 'Remove this course registration',
+        context: warn + '<div class="rx-warn">The registration is <b>archived, not destroyed</b>. ' +
+                 'It can be restored in full from the Rearrangement Logs at any time.</div>',
+        min: DATA.minOpReason,
+        hint: 'At least ' + DATA.minOpReason + ' characters.'
+    }, function (rsn) {
+        PEND.deletes[regId] = { reason: rsn };
+        delete PEND.moves[regId]; delete PEND.marks[regId];
+        render();
+    });
+}
+
+/* ── reason prompt ────────────────────────────────────────────────────── */
+var reasonCb = null, reasonCancel = null, reasonMin = 10;
+function askReason(opts, cb, onCancel) {
+    reasonCb = cb; reasonCancel = onCancel || null; reasonMin = opts.min || 10;
+    qs('rx-reason-title').textContent = opts.title;
+    qs('rx-reason-context').innerHTML = opts.context || '';
+    qs('rx-reason-text').value = '';
+    qs('rx-reason-hint2').className = 'rx-hint';
+    qs('rx-reason-hint2').textContent = opts.hint || '';
+    qs('rx-reason-ok').disabled = true;
+    openModal('rx-reason-modal');
+    setTimeout(function () { qs('rx-reason-text').focus(); }, 60);
+}
+qs('rx-reason-text').addEventListener('input', function () {
+    var v = this.value.trim();
+    qs('rx-reason-ok').disabled = v.length < reasonMin;
+    var h = qs('rx-reason-hint2');
+    if (v.length === 0) { h.className = 'rx-hint'; }
+    else if (v.length < reasonMin) { h.className = 'rx-hint rx-hint--bad'; h.textContent = (reasonMin - v.length) + ' more character(s) needed.'; }
+    else { h.className = 'rx-hint rx-hint--ok'; h.textContent = 'Reason accepted.'; }
+});
+qs('rx-reason-ok').addEventListener('click', function () {
+    var v = qs('rx-reason-text').value.trim();
+    if (v.length < reasonMin) return;
+    closeModal('rx-reason-modal');
+    var cb = reasonCb; reasonCb = null; reasonCancel = null;
+    if (cb) cb(v);
+});
+qs('rx-reason-modal').addEventListener('click', function (e) {
+    if (e.target.getAttribute && e.target.getAttribute('data-close')) {
+        var c = reasonCancel; reasonCb = null; reasonCancel = null;
+        if (c) c();
+    }
+});
+
+/* ── add a course ─────────────────────────────────────────────────────── */
+var addYear = 0, addSem = 0, addTimer = null;
+function openAdd(y, s) {
+    addYear = y; addSem = s;
+    qs('rx-add-title').textContent = 'Add a course to Year ' + y + ' Semester ' + s;
+    qs('rx-add-q').value = ''; qs('rx-add-reason').value = '';
+    qs('rx-add-results').innerHTML = '<div class="rx-state" style="padding:18px">Type to search the catalogue.</div>';
+    openModal('rx-add-modal');
+    setTimeout(function () { qs('rx-add-q').focus(); }, 60);
+}
+qs('rx-add-q').addEventListener('input', function () {
+    clearTimeout(addTimer);
+    var q = this.value.trim();
+    addTimer = setTimeout(function () {
+        call('SearchCourses', { q: q, progId: DATA.student.prog }, function (d) {
+            if (!d || !d.success) { qs('rx-add-results').innerHTML = '<div class="rx-err">' + esc(d && d.message || 'Search failed') + '</div>'; return; }
+            if (!d.rows.length) { qs('rx-add-results').innerHTML = '<div class="rx-state" style="padding:18px">No matching course.</div>'; return; }
+            var h = '';
+            for (var i = 0; i < d.rows.length; i++) {
+                var r = d.rows[i];
+                h += '<div class="rx-review__item' + (r.onCurriculum ? ' is-added' : '') + '" style="cursor:pointer" ' +
+                     'data-pick="' + esc(r.course) + '" data-title="' + esc(r.title) + '" data-cu="' + r.creditUnits + '" ' +
+                     'data-cy="' + r.curriculum.year + '" data-cs="' + r.curriculum.semester + '">' +
+                     '<div style="flex:1"><b>' + esc(r.course) + '</b> — ' + esc(r.title) +
+                     '<div class="rx-sub2">' + (r.creditUnits ? r.creditUnits + ' CU · ' : '') +
+                     (r.onCurriculum ? 'curriculum: Year ' + r.curriculum.year + ' Semester ' + r.curriculum.semester
+                                     : 'not on this programme\'s curriculum') + '</div></div></div>';
+            }
+            qs('rx-add-results').innerHTML = h;
+            bindAll('[data-pick]', 'click', pickCourse);
+        });
+    }, 220);
+});
+function pickCourse(e) {
+    var el = e.currentTarget;
+    var reason = qs('rx-add-reason').value.trim();
+    if (reason.length < (DATA.minOpReason || 10)) {
+        toast('Type a reason for adding the course first (at least ' + (DATA.minOpReason || 10) + ' characters).', true);
+        qs('rx-add-reason').focus(); return;
+    }
+    var cy = +el.getAttribute('data-cy'), cs = +el.getAttribute('data-cs');
+    if (cy > 0 && (cy !== addYear || cs !== addSem)) {
+        if (!confirm('The curriculum places ' + el.getAttribute('data-pick') + ' in Year ' + cy +
+                     ' Semester ' + cs + ', but you are adding it to Year ' + addYear + ' Semester ' + addSem +
+                     '.\n\nAdd it anyway? The deviation is recorded.')) return;
+    }
+    PEND.adds.push({
+        tempId: TEMP--, course: el.getAttribute('data-pick'), title: el.getAttribute('data-title'),
+        creditUnits: +el.getAttribute('data-cu'), toYear: addYear, toSem: addSem, reason: reason,
+        curriculum: { year: cy, semester: cs }
+    });
+    closeModal('rx-add-modal');
+    render();
+}
+
+/* ── register a semester ──────────────────────────────────────────────── */
+qs('rx-regsem').addEventListener('click', function () {
+    qs('rx-rs-acad').value = ''; qs('rx-rs-reason').value = ''; qs('rx-rs-bill').checked = false;
+    openModal('rx-regsem-modal');
+});
+qs('rx-rs-add').addEventListener('click', function () {
+    var acad = qs('rx-rs-acad').value.trim();
+    var y = +qs('rx-rs-year').value, s = +qs('rx-rs-sem').value;
+    var reason = qs('rx-rs-reason').value.trim();
+    if (!/^\d{4}\/\d{4}$/.test(acad)) { toast('Enter the academic year as 2026/2027.', true); return; }
+    if (reason.length < (DATA.minOpReason || 10)) { toast('Type a reason (at least ' + (DATA.minOpReason || 10) + ' characters).', true); return; }
+    PEND.regsems.push({ acadYear: acad, toYear: y, toSem: s, bill: qs('rx-rs-bill').checked, reason: reason });
+    closeModal('rx-regsem-modal');
+    render();
+});
+
+/* ── review & save ────────────────────────────────────────────────────── */
+function buildOps() {
+    var ops = [];
+    for (var i = 0; i < PEND.regsems.length; i++) {
+        var r = PEND.regsems[i];
+        ops.push({ op: 'REGSEM', toYear: r.toYear, toSem: r.toSem, acadYear: r.acadYear, bill: r.bill, reason: r.reason });
+    }
+    for (var j = 0; j < PEND.adds.length; j++) {
+        var a = PEND.adds[j];
+        ops.push({ op: 'ADD', course: a.course, toYear: a.toYear, toSem: a.toSem, reason: a.reason });
+    }
+    for (var k in PEND.moves) if (PEND.moves.hasOwnProperty(k)) {
+        var m = PEND.moves[k];
+        ops.push({ op: 'MOVE', regId: +k, toYear: m.toYear, toSem: m.toSem,
+                   reason: 'Moved from Year ' + m.fromYear + ' Semester ' + m.fromSem,
+                   overrideReason: m.overrideReason || '' });
+    }
+    for (var k2 in PEND.marks) if (PEND.marks.hasOwnProperty(k2)) {
+        var mm = PEND.marks[k2];
+        if (mm.cw) ops.push({ op: 'MARK', regId: +k2, field: 'cw', value: mm.cw.to, reason: mm.cw.reason, overrideReason: mm.cw.overrideReason || '' });
+        if (mm.exam) ops.push({ op: 'MARK', regId: +k2, field: 'exam', value: mm.exam.to, reason: mm.exam.reason, overrideReason: mm.exam.overrideReason || '' });
+    }
+    for (var k3 in PEND.deletes) if (PEND.deletes.hasOwnProperty(k3))
+        ops.push({ op: 'DELETE', regId: +k3, reason: PEND.deletes[k3].reason });
+    return ops;
+}
+
+function plain(op) {
+    var c;
+    switch (op.op) {
+        case 'REGSEM':
+            return 'Register the student into ' + op.acadYear + ' Year ' + op.toYear + ' Semester ' + op.toSem +
+                   (op.bill ? ' — and create fee billing' : ' — without creating fee billing');
+        case 'ADD':
+            return op.course + ' registered into Year ' + op.toYear + ' Semester ' + op.toSem;
+        case 'MOVE':
+            c = findCourse(op.regId);
+            return (c ? c.course : 'Course ' + op.regId) + ' moved from Year ' + PEND.moves[op.regId].fromYear +
+                   ' Semester ' + PEND.moves[op.regId].fromSem + ' to Year ' + op.toYear + ' Semester ' + op.toSem;
+        case 'MARK':
+            c = findCourse(op.regId);
+            var mk = PEND.marks[op.regId][op.field];
+            return (c ? c.course : 'Course ' + op.regId) + ' ' + (op.field === 'cw' ? 'coursework' : 'exam') +
+                   ' mark changed from ' + fmt(mk.from) + ' to ' + fmt(mk.to) + ', reason: ' + op.reason;
+        case 'DELETE':
+            c = findCourse(op.regId);
+            return (c ? c.course : 'Course ' + op.regId) + ' registration removed (archived and reversible), reason: ' + op.reason;
+    }
+    return op.op;
+}
+var CLS = { MOVE: 'is-moved', ADD: 'is-added', DELETE: 'is-deleted', MARK: 'is-mark', REGSEM: 'is-regsem' };
+var GROUP = { REGSEM: 'Semester registrations', ADD: 'Courses added', MOVE: 'Courses moved',
+              MARK: 'Mark changes', DELETE: 'Registrations removed' };
+
+qs('rx-save').addEventListener('click', function () {
+    var ops = buildOps();
+    if (!ops.length) return;
+
+    var h = '<div class="rx-review__reason"><b>Reason for this sitting</b>' + esc(DATA.session.reason) + '</div>';
+
+    var warns = [];
+    for (var i = 0; i < ops.length; i++) {
+        if (ops[i].overrideReason) {
+            var cc = findCourse(ops[i].regId);
+            warns.push('<b>' + esc(cc ? cc.course : '') + '</b> overrides a results lock' +
+                       (cc && cc.lockStatus === 'FINAL_PUBLISHED' ? ' on <b>finally published</b> results' : '') +
+                       ' — ' + esc(ops[i].overrideReason));
+        }
+        if (ops[i].op === 'REGSEM' && ops[i].bill) warns.push('A semester registration will <b>create fee billing</b>.');
+    }
+    if (warns.length) h += '<div class="rx-warn"><b>Warnings</b><br />• ' + warns.join('<br />• ') + '</div>';
+
+    var order = ['REGSEM', 'ADD', 'MOVE', 'MARK', 'DELETE'], n = 0;
+    for (var g = 0; g < order.length; g++) {
+        var kind = order[g];
+        var items = ops.filter(function (o) { return o.op === kind; });
+        if (!items.length) continue;
+        h += '<div class="rx-review__group"><div class="rx-review__gh">' + GROUP[kind] + ' (' + items.length + ')</div>';
+        for (var m = 0; m < items.length; m++) {
+            n++;
+            h += '<div class="rx-review__item ' + CLS[kind] + '"><span class="rx-review__n">' + n + '</span>' +
+                 '<span>' + esc(plain(items[m])) + '</span></div>';
+        }
+        h += '</div>';
+    }
+    h += '<div class="rx-warn" style="background:#f8fafc;border-color:#e0e5ed;border-left-color:#05275C;color:#1a1a2e">' +
+         'Saving applies all ' + ops.length + ' change(s) in a single database transaction. ' +
+         'If any one of them fails, <b>none</b> is written. Semester GPA and CGPA are recalculated afterwards ' +
+         'and the old and new values are recorded in the log.</div>';
+
+    qs('rx-review-body').innerHTML = h;
+    qs('rx-confirm').disabled = false;
+    qs('rx-confirm').textContent = 'Confirm and save ' + ops.length + ' change(s)';
+    OP_ID = uuid();      // one id per review; a retry of THIS save cannot double-apply
+    openModal('rx-review-modal');
+});
+
+qs('rx-confirm').addEventListener('click', function () {
+    if (SAVING) return;
+    SAVING = true;
+    var btn = this; btn.disabled = true; btn.textContent = 'Saving…';
+    call('Save', {
+        sessionId: SESSION, clientOpId: OP_ID,
+        opsJson: JSON.stringify(buildOps()), checksum: CHECKSUM
+    }, function (d) {
+        SAVING = false; btn.disabled = false;
+        if (!d || !d.success) {
+            qs('rx-review-body').insertAdjacentHTML('afterbegin',
+                '<div class="rx-err">' + esc(d && d.message || 'The save failed. Nothing was written.') + '</div>');
+            qs('rx-review-body').scrollTop = 0;
+            btn.textContent = 'Try again';
+            return;
+        }
+        closeModal('rx-review-modal');
+        PEND = { moves: {}, marks: {}, deletes: {}, adds: [], regsems: [] };
+        var msg = d.message;
+        if (d.recalculated && d.recalculated.cgpaBefore !== d.recalculated.cgpaAfter)
+            msg += ' CGPA ' + d.recalculated.cgpaBefore + ' → ' + d.recalculated.cgpaAfter + '.';
+        toast(msg);
+        qs('rx-boot').style.display = ''; qs('rx-workspace').style.display = 'none';
+        loadWorkspace();
+    });
+});
+
+qs('rx-discard').addEventListener('click', function () {
+    if (!confirm('Discard all pending changes?\n\nNothing has been written to the database, so this simply clears the screen.')) return;
+    PEND = { moves: {}, marks: {}, deletes: {}, adds: [], regsems: [] };
+    render();
+});
+qs('rx-reload').addEventListener('click', function () {
+    if (pendingCount() > 0 && !confirm('You have unsaved changes. Reloading from the database will discard them.\n\nContinue?')) return;
+    PEND = { moves: {}, marks: {}, deletes: {}, adds: [], regsems: [] };
+    qs('rx-boot').style.display = ''; qs('rx-workspace').style.display = 'none';
+    loadWorkspace();
+});
+
+window.addEventListener('beforeunload', function (e) {
+    if (pendingCount() === 0 || SAVING) return;
+    e.preventDefault(); e.returnValue = '';
+    return '';
+});
+
+/* ── boot ─────────────────────────────────────────────────────────────── */
+qs('rx-regno').addEventListener('input', gateCheck);
+qs('rx-reason').addEventListener('input', gateCheck);
+qs('rx-ack').addEventListener('change', gateCheck);
+qs('rx-open').addEventListener('click', openSession);
+qs('rx-regno').addEventListener('keydown', function (e) {
+    if ((e.key === 'Enter' || e.keyCode === 13) && !qs('rx-open').disabled) { e.preventDefault(); openSession(); }
+});
+gateCheck();
+
+})();
