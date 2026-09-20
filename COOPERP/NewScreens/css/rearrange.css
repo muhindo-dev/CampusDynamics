@@ -73,6 +73,79 @@
 .rx-gate__ack input { width: 18px; height: 18px; flex: 0 0 auto; margin: 1px 0 0; accent-color: #c62828; cursor: pointer; }
 .rx-gate__ack label { font-size: 11.5px; line-height: 1.55; color: #1a1a2e; cursor: pointer; }
 
+/* ── type-ahead picker ────────────────────────────────────────
+   Officers know students by name at least as often as by number. The list
+   carries enough to tell two similar names apart without opening anything. */
+.rx-sugg {
+    display: none; position: absolute; left: 0; right: 0; top: 100%; z-index: 40;
+    background: #fff; border: 1px solid #174DA4; border-top: none;
+    max-height: 280px; overflow-y: auto; box-shadow: 0 8px 22px rgba(5,39,92,.14);
+}
+.rx-sugg.is-open { display: block; }
+.rx-sugg__row {
+    display: block; width: 100%; text-align: left; border: none; background: #fff;
+    border-bottom: 1px solid #eef2f6; padding: 7px 11px; cursor: pointer; font-family: inherit;
+}
+.rx-sugg__row:last-child { border-bottom: none; }
+.rx-sugg__row:hover, .rx-sugg__row.is-on { background: #f5f9ff; }
+.rx-sugg__row:focus-visible { outline: 2px solid #174DA4; outline-offset: -2px; }
+.rx-sugg__main { display: block; font-size: 12px; font-weight: 600; color: #05275C; }
+.rx-sugg__sub { display: block; font-size: 10px; color: #64748b; margin-top: 1px; }
+.rx-sugg__none { padding: 10px 12px; font-size: 11px; color: #94a3b8; font-style: italic; }
+
+/* the student you settled on, confirmed back to you before anything is loaded */
+.rx-picked {
+    margin-top: 7px; padding: 8px 11px; background: #f3faf5; border: 1px solid #a5d6a7;
+    border-left: 3px solid #2e7d32; font-size: 11px; line-height: 1.5; color: #1a1a2e;
+}
+.rx-picked b { color: #05275C; }
+
+/* ── click-to-fill reasons ────────────────────────────────────
+   The reasons this module is actually opened for. Faster to use, and it keeps
+   the log searchable: one correction stops being written six different ways. */
+.rx-chips { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 7px; }
+.rx-chip {
+    border: 1px dashed #cbd5e1; background: #fff; color: #64748b; border-radius: 0;
+    padding: 3px 8px; font-size: 10px; font-family: inherit; cursor: pointer; line-height: 1.4;
+    text-align: left; max-width: 100%;
+}
+.rx-chip:hover { border-style: solid; border-color: #174DA4; color: #174DA4; background: #f5f9ff; }
+.rx-chip:focus-visible { outline: 2px solid #174DA4; outline-offset: 1px; }
+
+/* ── live validation ─────────────────────────────────────────
+   The server refuses a duplicate anyway; saying so here means the officer
+   never builds a batch around one. */
+.rx-check {
+    margin-top: 10px; padding: 8px 11px; font-size: 11px; line-height: 1.5;
+    border: 1px solid #e0e5ed; border-left: 3px solid #94a3b8; background: #f8fafc; color: #64748b;
+}
+.rx-check--ok { border-left-color: #2e7d32; background: #f3faf5; color: #1e6b3a; }
+.rx-check--warn { border-left-color: #e65100; background: #fff8e1; color: #7a5200; }
+.rx-check--bad { border-left-color: #c62828; background: #fff5f5; color: #b42318; }
+
+/* ── course picker rows ───────────────────────────────────── */
+.rx-pickrow {
+    display: flex; gap: 9px; align-items: center; padding: 8px 10px;
+    border: 1px solid #e8edf3; border-left: 3px solid #cbd5e1; margin-bottom: 5px;
+    font-size: 11.5px; line-height: 1.5; cursor: pointer; background: #fff;
+    transition: border-color .15s, background .15s;
+}
+.rx-pickrow:hover { border-color: #174DA4; background: #f5f9ff; }
+.rx-pickrow.is-oncur { border-left-color: #2e7d32; }
+/* already held in this term — shown, not hidden, so its absence is never a mystery */
+.rx-pickrow.is-held {
+    cursor: not-allowed; opacity: .55; background: #f8fafc; border-left-color: #cbd5e1;
+}
+.rx-pickrow.is-held:hover { border-color: #e8edf3; background: #f8fafc; }
+.rx-pickrow__go {
+    flex: 0 0 auto; font-size: 10px; font-weight: 700; color: #174DA4;
+    text-transform: uppercase; letter-spacing: .4px;
+}
+.rx-pickrow__no {
+    flex: 0 0 auto; font-size: 9px; font-weight: 700; color: #94a3b8;
+    text-transform: uppercase; letter-spacing: .3px;
+}
+
 /* ── student header ──────────────────────────────────────────────────────── */
 .rx-student { display: flex; gap: 14px; align-items: center; flex-wrap: wrap; }
 .rx-student__photo {

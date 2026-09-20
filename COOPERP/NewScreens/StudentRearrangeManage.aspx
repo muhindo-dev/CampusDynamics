@@ -1,14 +1,14 @@
 <%@ Page Language="C#" MasterPageFile="~/COOPERP/NewScreens/SidebarMaster.master" AutoEventWireup="true" CodeFile="StudentRearrangeManage.aspx.cs" Inherits="COOPERP_NewScreens_StudentRearrangeManage" Title="Rearrange Student Record - Campus Dynamics" %>
 <asp:Content ID="HeadContent" ContentPlaceHolderID="HeadContent" runat="server">
-    <link href="css/rearrange.css?v=20260921c" rel="stylesheet" type="text/css" />
+    <link href="css/rearrange.css?v=20260921d" rel="stylesheet" type="text/css" />
 </asp:Content>
 <asp:Content ID="MainContent" ContentPlaceHolderID="ContentPlaceHolder1" runat="server">
 <div class="rx-wrap">
 
   <!-- Who you are acting as. Permanent, not dismissible. -->
   <div class="rx-actorbar">
-    <span class="rx-actorbar__who" id="rx-actor">…</span>
-    <span class="rx-actorbar__role" id="rx-role">…</span>
+    <span class="rx-actorbar__who" id="rx-actor"><%= Server.HtmlEncode(StudentRearrangeService.ActorName()) %></span>
+    <span class="rx-actorbar__role" id="rx-role"><%= Server.HtmlEncode(StudentRearrangeService.ActorRole()) %></span>
     <span class="rx-actorbar__note">Every change on this page is recorded under your account and can be reversed.</span>
   </div>
 
@@ -21,15 +21,20 @@
   <div id="rx-gate" class="rx-card rx-gate">
     <div class="rx-card__hd">Open a rearrangement session</div>
     <div class="rx-card__bd">
-      <div style="margin-bottom:12px">
-        <label class="rx-lbl" for="rx-regno">Student number</label>
-        <input type="text" id="rx-regno" class="rx-in" placeholder="e.g. MRU2027000002" autocomplete="off" style="max-width:280px" />
+      <div style="margin-bottom:12px; position:relative; max-width:460px">
+        <label class="rx-lbl" for="rx-regno">Student</label>
+        <input type="text" id="rx-regno" class="rx-in" autocomplete="off" role="combobox"
+               aria-autocomplete="list" aria-expanded="false" aria-controls="rx-stu-list"
+               placeholder="Registration number, entry number, or name" />
+        <div class="rx-sugg" id="rx-stu-list" role="listbox"></div>
+        <div class="rx-picked" id="rx-picked" style="display:none"></div>
       </div>
 
       <div>
         <label class="rx-lbl" for="rx-reason">Reason for this rearrangement</label>
         <textarea id="rx-reason" class="rx-ta" placeholder="Explain why this student's record is being rearranged. This is recorded permanently against your name and shown on every change you make in this sitting."></textarea>
         <div class="rx-hint" id="rx-reason-hint">At least 30 characters.</div>
+        <div class="rx-chips" id="rx-reason-chips" aria-label="Common reasons"></div>
       </div>
 
       <div class="rx-gate__ack">
@@ -105,7 +110,8 @@
       <div id="rx-add-results" style="margin-top:10px; max-height:280px; overflow-y:auto"></div>
       <div style="margin-top:12px">
         <label class="rx-lbl" for="rx-add-reason">Reason</label>
-        <input type="text" id="rx-add-reason" class="rx-in" placeholder="Why is this course being added?" />
+        <input type="text" id="rx-add-reason" class="rx-in" placeholder="Why is this course being added?" autocomplete="off" />
+        <div class="rx-chips" id="rx-add-chips"></div>
       </div>
     </div>
     <div class="rx-modal__ft">
@@ -122,15 +128,17 @@
     <div class="rx-modal__bd">
       <div style="display:flex; gap:10px; flex-wrap:wrap">
         <div style="flex:1 1 150px"><label class="rx-lbl" for="rx-rs-acad">Academic year</label>
-          <input type="text" id="rx-rs-acad" class="rx-in" placeholder="2026/2027" /></div>
+          <select id="rx-rs-acad" class="rx-sel"></select></div>
         <div style="flex:0 0 110px"><label class="rx-lbl" for="rx-rs-year">Year of study</label>
-          <select id="rx-rs-year" class="rx-sel"><option>1</option><option>2</option><option>3</option><option>4</option><option>5</option></select></div>
+          <select id="rx-rs-year" class="rx-sel"></select></div>
         <div style="flex:0 0 110px"><label class="rx-lbl" for="rx-rs-sem">Semester</label>
-          <select id="rx-rs-sem" class="rx-sel"><option>1</option><option>2</option><option>3</option></select></div>
+          <select id="rx-rs-sem" class="rx-sel"></select></div>
       </div>
+      <div class="rx-check" id="rx-rs-check"></div>
       <div style="margin-top:12px">
         <label class="rx-lbl" for="rx-rs-reason">Reason</label>
-        <input type="text" id="rx-rs-reason" class="rx-in" placeholder="Why is this semester being registered?" />
+        <input type="text" id="rx-rs-reason" class="rx-in" placeholder="Why is this semester being registered?" autocomplete="off" />
+        <div class="rx-chips" id="rx-rs-chips"></div>
       </div>
       <div class="rx-gate__ack" style="margin-top:12px; background:#fff8e1; border-color:#ffe08a; border-left-color:#e65100">
         <input type="checkbox" id="rx-rs-bill" />
@@ -156,6 +164,7 @@
       <label class="rx-lbl" for="rx-reason-text" style="margin-top:10px">Typed reason</label>
       <textarea id="rx-reason-text" class="rx-ta" style="min-height:70px"></textarea>
       <div class="rx-hint" id="rx-reason-hint2"></div>
+      <div class="rx-chips" id="rx-prompt-chips"></div>
     </div>
     <div class="rx-modal__ft">
       <button type="button" class="rx-btn rx-btn--ghost" data-close="rx-reason-modal">Cancel</button>
@@ -164,5 +173,5 @@
   </div>
 </div>
 
-<script src="js/rearrange-manage.js?v=20260921c" type="text/javascript"></script>
+<script src="js/rearrange-manage.js?v=20260921d" type="text/javascript"></script>
 </asp:Content>

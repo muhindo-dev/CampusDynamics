@@ -1,13 +1,13 @@
 <%@ Page Language="C#" MasterPageFile="~/COOPERP/NewScreens/SidebarMaster.master" AutoEventWireup="true" CodeFile="StudentRearrangeDashboard.aspx.cs" Inherits="COOPERP_NewScreens_StudentRearrangeDashboard" Title="Rearrangement Dashboard - Campus Dynamics" %>
 <asp:Content ID="HeadContent" ContentPlaceHolderID="HeadContent" runat="server">
-    <link href="css/rearrange.css?v=20260921c" rel="stylesheet" type="text/css" />
+    <link href="css/rearrange.css?v=20260921d" rel="stylesheet" type="text/css" />
 </asp:Content>
 <asp:Content ID="MainContent" ContentPlaceHolderID="ContentPlaceHolder1" runat="server">
 <div class="rx-wrap">
 
   <div class="rx-actorbar">
-    <span class="rx-actorbar__who" id="rx-actor">…</span>
-    <span class="rx-actorbar__role" id="rx-role">…</span>
+    <span class="rx-actorbar__who" id="rx-actor"><%= Server.HtmlEncode(StudentRearrangeService.ActorName()) %></span>
+    <span class="rx-actorbar__role" id="rx-role"><%= Server.HtmlEncode(StudentRearrangeService.ActorRole()) %></span>
     <span class="rx-actorbar__note">Refused and blocked attempts are listed below — often more telling than the successful ones.</span>
   </div>
 
@@ -71,5 +71,5 @@
   </div>
 </div>
 
-<script src="js/rearrange-dashboard.js?v=20260921c" type="text/javascript"></script>
+<script src="js/rearrange-dashboard.js?v=20260921d" type="text/javascript"></script>
 </asp:Content>

@@ -567,14 +567,22 @@ public static partial class StudentRearrangeService
     //  Course picker, filter options, CSV export
     // ═════════════════════════════════════════════════════════════════════════
 
-    /// <summary>Courses available to add. Restricted to the student's own programme curriculum
-    /// first — that is the valid set — with a catalogue-wide fallback so a genuinely
-    /// off-curriculum correction is still possible, clearly marked as such.</summary>
-    public static string SearchCourses(string q, string progId)
+    /// <summary>
+    /// Courses available to add. The student's own programme curriculum first — that is the
+    /// valid set — with a catalogue-wide fallback so a genuinely off-curriculum correction is
+    /// still possible, clearly marked as such.
+    ///
+    /// Each row also says whether the student ALREADY holds that course in the destination
+    /// term. The unique key would reject such an add anyway; telling the officer up front is
+    /// better than letting them build a batch that fails at save time.
+    /// </summary>
+    public static string SearchCourses(string q, string progId, string regno, string acadYear, int semester)
     {
         if (!CanUse()) return Err("Not permitted.");
         q = (q ?? "").Trim();
         progId = (progId ?? "").Trim();
+        regno = (regno ?? "").Trim();
+        acadYear = (acadYear ?? "").Trim();
         var rows = new List<object>();
         using (var c = new MySqlConnection(ConnStr()))
         {
@@ -583,14 +591,24 @@ public static partial class StudentRearrangeService
                 "SELECT co.courseID, COALESCE(NULLIF(co.courseName,''),co.courseID) nm, " +
                 "  COALESCE(co.CreditUnit,0) cu, " +
                 "  COALESCE(pc.study_year,0) cy, COALESCE(pc.semester,0) cs, " +
-                "  (pc.course_code IS NOT NULL) on_curriculum " +
+                "  (pc.course_code IS NOT NULL) on_curriculum, " +
+                // Held in the destination term - the same shape the unique key uses.
+                "  EXISTS(SELECT 1 FROM campus_dynamics_portal.acad_course_registration hr " +
+                "         WHERE hr.regno=@r AND hr.courseID=co.courseID " +
+                "           AND hr.acad_year=@ay AND hr.semester=@sem) held_here, " +
+                // Held anywhere at all - worth knowing before adding a second copy elsewhere.
+                "  (SELECT COUNT(*) FROM campus_dynamics_portal.acad_course_registration ha " +
+                "   WHERE ha.regno=@r AND ha.courseID=co.courseID) held_any " +
                 "FROM campus_dynamics.acad_course co " +
                 "LEFT JOIN campus_dynamics.acad_programmecourses pc " +
                 "       ON pc.course_code=co.courseID AND pc.progcode=@p " +
                 "WHERE (@q='' OR co.courseID LIKE @like OR co.courseName LIKE @like) " +
-                "ORDER BY (pc.course_code IS NULL), co.courseID LIMIT 40", c, null))
+                "ORDER BY held_here, (pc.course_code IS NULL), co.courseID LIMIT 40", c, null))
             {
                 cmd.Parameters.AddWithValue("@p", progId);
+                cmd.Parameters.AddWithValue("@r", regno);
+                cmd.Parameters.AddWithValue("@ay", acadYear);
+                cmd.Parameters.AddWithValue("@sem", semester);
                 cmd.Parameters.AddWithValue("@q", q);
                 cmd.Parameters.AddWithValue("@like", "%" + q + "%");
                 using (var r = cmd.ExecuteReader())
@@ -600,7 +618,57 @@ public static partial class StudentRearrangeService
                             course = S(r, 0), title = S(r, 1),
                             creditUnits = r.IsDBNull(2) ? 0 : Convert.ToDouble(r[2]),
                             curriculum = new { year = I(r, 3), semester = I(r, 4) },
-                            onCurriculum = I(r, 5) == 1
+                            onCurriculum = I(r, 5) == 1,
+                            heldHere = I(r, 6) == 1,
+                            heldElsewhere = I(r, 7)
+                        });
+            }
+        }
+        return Json.Serialize(new { success = true, rows });
+    }
+
+    /// <summary>
+    /// Finds a student by number, entry number or name, so the officer can open a session from
+    /// what they actually have in front of them instead of looking a number up elsewhere first.
+    ///
+    /// Scoped exactly as OpenSession is: a HOD cannot find a student outside their department
+    /// here any more than they could open one.
+    /// </summary>
+    public static string SearchStudents(string q)
+    {
+        if (!CanUse()) return Err("Not permitted.");
+        q = (q ?? "").Trim();
+        if (q.Length < 2) return Json.Serialize(new { success = true, rows = new List<object>() });
+
+        MarksScope scope = MarksScopeResolver.Resolve();
+        if (!scope.HasAccess) return Json.Serialize(new { success = true, rows = new List<object>() });
+
+        var rows = new List<object>();
+        using (var c = new MySqlConnection(ConnStr()))
+        {
+            c.Open();
+            using (var cmd = Cmd(
+                "SELECT s.regno, COALESCE(NULLIF(TRIM(s.entryno),''), s.regno) eno, " +
+                "  TRIM(CONCAT(COALESCE(s.firstname,''),' ',COALESCE(s.othername,''))) nm, " +
+                "  COALESCE(s.progid,'') prog, COALESCE(NULLIF(p.progname,''),s.progid) pn, " +
+                "  COALESCE(s.stud_status,'') st, " +
+                "  (SELECT COUNT(*) FROM campus_dynamics_portal.acad_course_registration cr " +
+                "   WHERE cr.regno=s.regno) regs " +
+                "FROM campus_dynamics.acad_student s " +
+                "LEFT JOIN campus_dynamics.acad_programme p ON p.progcode=s.progid " +
+                "WHERE (s.regno LIKE @like OR TRIM(IFNULL(s.entryno,'')) LIKE @like " +
+                "   OR CONCAT(COALESCE(s.firstname,''),' ',COALESCE(s.othername,'')) LIKE @like)" +
+                scope.ProgFilter("s", "progid") +
+                " ORDER BY s.regno LIMIT 15", c, null))
+            {
+                cmd.Parameters.AddWithValue("@like", "%" + q + "%");
+                using (var r = cmd.ExecuteReader())
+                    while (r.Read())
+                        rows.Add(new
+                        {
+                            regno = S(r, 0), entryno = S(r, 1), name = S(r, 2),
+                            prog = S(r, 3), progName = S(r, 4), status = S(r, 5),
+                            registrations = I(r, 6)
                         });
             }
         }

@@ -446,6 +446,17 @@ public static partial class StudentRearrangeService
                 if (cw.lockStatus == ResultsStatusService.STATUS_FINAL_PUBLISHED)
                     closed.Add(cw.studyYear + "/" + cw.semester);
 
+            // The academic years the institution actually runs, newest first, so registering a
+            // semester is a choice from real values rather than a free-text box that accepts
+            // "2026/27" and fails later.
+            var acadYears = new List<string>();
+            using (var cmd = Cmd(
+                "SELECT acad_year FROM campus_dynamics.acad_registration " +
+                "WHERE IFNULL(acad_year,'') NOT IN ('','-') " +
+                "GROUP BY acad_year ORDER BY acad_year DESC LIMIT 12", c, null))
+            using (var r = cmd.ExecuteReader())
+                while (r.Read()) acadYears.Add(S(r, 0));
+
             var rows = new List<object>();
             foreach (var cw in courses) rows.Add(cw.ToJson());
 
@@ -461,6 +472,8 @@ public static partial class StudentRearrangeService
                 canOverrideLock = CanOverrideLock(),
                 student = header,
                 semesters = sems,
+                acadYears = acadYears,
+                maxSemester = 3, maxStudyYear = 8,
                 closedSemesters = new List<string>(closed),
                 courses = rows,
                 checksum = Checksum(courses),

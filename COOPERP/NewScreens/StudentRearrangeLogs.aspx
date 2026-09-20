@@ -1,13 +1,13 @@
 <%@ Page Language="C#" MasterPageFile="~/COOPERP/NewScreens/SidebarMaster.master" AutoEventWireup="true" CodeFile="StudentRearrangeLogs.aspx.cs" Inherits="COOPERP_NewScreens_StudentRearrangeLogs" Title="Rearrangement Logs - Campus Dynamics" %>
 <asp:Content ID="HeadContent" ContentPlaceHolderID="HeadContent" runat="server">
-    <link href="css/rearrange.css?v=20260921c" rel="stylesheet" type="text/css" />
+    <link href="css/rearrange.css?v=20260921d" rel="stylesheet" type="text/css" />
 </asp:Content>
 <asp:Content ID="MainContent" ContentPlaceHolderID="ContentPlaceHolder1" runat="server">
 <div class="rx-wrap">
 
   <div class="rx-actorbar">
-    <span class="rx-actorbar__who" id="rx-actor">…</span>
-    <span class="rx-actorbar__role" id="rx-role">…</span>
+    <span class="rx-actorbar__who" id="rx-actor"><%= Server.HtmlEncode(StudentRearrangeService.ActorName()) %></span>
+    <span class="rx-actorbar__role" id="rx-role"><%= Server.HtmlEncode(StudentRearrangeService.ActorRole()) %></span>
     <span class="rx-actorbar__note">Log entries are append-only. A correction is added as a new entry; nothing is ever rewritten.</span>
   </div>
 
@@ -81,5 +81,5 @@
   </div>
 </div>
 
-<script src="js/rearrange-logs.js?v=20260921c" type="text/javascript"></script>
+<script src="js/rearrange-logs.js?v=20260921d" type="text/javascript"></script>
 </asp:Content>

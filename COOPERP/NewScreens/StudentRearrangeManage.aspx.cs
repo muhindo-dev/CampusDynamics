@@ -34,10 +34,18 @@ public partial class COOPERP_NewScreens_StudentRearrangeManage : Page
         return StudentRearrangeService.Save(sessionId, clientOpId, opsJson, checksum);
     }
 
-    /// <summary>Course picker for the "add a course" control. Read endpoint — gated too.</summary>
+    /// <summary>Course picker for the "add a course" control. Read endpoint — gated too.
+    /// Takes the destination term so it can mark what the student already holds there.</summary>
     [WebMethod(EnableSession = true)]
-    public static string SearchCourses(string q, string progId)
+    public static string SearchCourses(string q, string progId, string regno, string acadYear, int semester)
     {
-        return StudentRearrangeService.SearchCourses(q, progId);
+        return StudentRearrangeService.SearchCourses(q, progId, regno, acadYear, semester);
+    }
+
+    /// <summary>Student lookup for the session gate. Scoped exactly as OpenSession is.</summary>
+    [WebMethod(EnableSession = true)]
+    public static string SearchStudents(string q)
+    {
+        return StudentRearrangeService.SearchStudents(q);
     }
 }
