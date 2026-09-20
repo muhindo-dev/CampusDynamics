@@ -32,6 +32,22 @@ function stat(v, l, extra) {
            (v || 0).toLocaleString() + '</div><div class="rx-stat__l">' + l + '</div></div>';
 }
 
+/* The period lives in the URL so a dashboard view can be bookmarked and reloaded. */
+function readUrl() {
+    try {
+        var p = new URLSearchParams(location.search);
+        var d = p.get('days');
+        if (d && qs('rx-days').querySelector('option[value="' + d + '"]')) qs('rx-days').value = d;
+    } catch (e) { }
+}
+function pushUrl(replace) {
+    var url = location.pathname + '?days=' + encodeURIComponent(qs('rx-days').value);
+    try {
+        if (replace) history.replaceState(null, '', url);
+        else history.pushState(null, '', url);
+    } catch (e) { }
+}
+
 function load() {
     var days = qs('rx-days').value;
     qs('rx-stats').innerHTML = '<div class="rx-stat"><div class="rx-spin"></div></div>';
@@ -76,12 +92,14 @@ function load() {
                    '<div class="rx-sub2">' + esc(r.role) + '</div></td>' +
                    '<td style="max-width:300px">' + esc(r.reason || '—') + '</td>' +
                    '<td><a href="' + LOGS + '?regno=' + encodeURIComponent(r.regno) +
-                   '" style="color:#174DA4;font-weight:600">Log ›</a></td></tr>';
+                   '&entry=' + r.id + '" style="color:#174DA4;font-weight:600">Open ›</a></td></tr>';
         }).join('');
 
         if (!d.sessions.length) empty('rx-sessions', 7, 'No sessions opened yet.');
         else qs('rx-sessions').innerHTML = d.sessions.map(function (s) {
-            return '<tr><td>' + esc(s.sref) + '</td>' +
+            return '<tr class="rx-tbl__click" onclick="location.href=' + JSON.stringify(
+                       LOGS + '?regno=' + encodeURIComponent(s.regno)) .replace(/"/g, '&quot;') + '">' +
+                   '<td>' + esc(s.sref) + '</td>' +
                    '<td>' + esc(s.regno) + '<div class="rx-sub2">' + esc(s.student) + '</div></td>' +
                    '<td>' + esc(s.actor) + '<div class="rx-sub2">' + esc(s.role) + '</div></td>' +
                    '<td>' + esc(s.at) + '</td>' +
@@ -96,13 +114,20 @@ function load() {
                     : b.outcome === 'CONFLICT' ? 'rx-badge--MARK_CHANGE' : 'rx-badge--RECALC';
             return '<tr><td>' + esc(b.at) + '</td>' +
                    '<td>' + esc(b.actor || '—') + '<div class="rx-sub2">' + esc(b.role) + '</div></td>' +
-                   '<td>' + esc(b.regno || '—') + '</td><td>' + esc(b.action) + '</td>' +
+                   '<td>' + (b.regno
+                       ? '<a href="' + LOGS + '?regno=' + encodeURIComponent(b.regno) +
+                         '" style="color:#174DA4;font-weight:600">' + esc(b.regno) + '</a>'
+                       : '—') + '</td><td>' + esc(b.action) + '</td>' +
                    '<td><span class="rx-badge ' + cls + '">' + esc(b.outcome) + '</span></td>' +
                    '<td style="max-width:340px">' + esc(b.detail) + '</td></tr>';
         }).join('');
     });
 }
 
-qs('rx-days').addEventListener('change', load);
+qs('rx-days').addEventListener('change', function () { pushUrl(false); load(); });
+window.addEventListener('popstate', function () { readUrl(); load(); });
+
+readUrl();
+pushUrl(true);
 load();
 })();

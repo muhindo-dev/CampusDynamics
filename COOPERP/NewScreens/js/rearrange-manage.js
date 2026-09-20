@@ -76,6 +76,23 @@ document.addEventListener('click', function (e) {
     if (c) closeModal(c);
 });
 
+/* ── GET state ────────────────────────────────────────────────────────────
+   The sitting is in the URL, so a reload resumes it instead of dropping the
+   officer back to the gate with the record gone. Pending edits are held
+   client-side and are genuinely lost on a reload — beforeunload warns about
+   that, and resuming re-reads the record from the database rather than
+   pretending to restore work that was never saved. */
+function urlParam(name) {
+    try { return new URLSearchParams(location.search).get(name) || ''; } catch (e) { return ''; }
+}
+function setSessionUrl(id, replace) {
+    var url = location.pathname + (id ? '?session=' + encodeURIComponent(id) : '');
+    try {
+        if (replace) history.replaceState(null, '', url);
+        else history.pushState(null, '', url);
+    } catch (e) { }
+}
+
 /* ── the gate ─────────────────────────────────────────────────────────── */
 var MIN_REASON = 30;
 
@@ -110,6 +127,7 @@ function openSession() {
             return;
         }
         SESSION = d.sessionId;
+        setSessionUrl(SESSION, false);
         qs('rx-gate').style.display = 'none';
         qs('rx-boot').style.display = '';
         loadWorkspace();
@@ -123,9 +141,15 @@ function loadWorkspace() {
     call('LoadWorkspace', { sessionId: SESSION }, function (d) {
         qs('rx-boot').style.display = 'none';
         if (!d || !d.success) {
-            qs('rx-boot').style.display = '';
-            qs('rx-boot').innerHTML = '<div class="rx-state rx-state--err"><div class="rx-state__t">Could not load the record</div>' +
-                                      esc(d && d.message || 'Unknown error') + '</div>';
+            // A stale or someone else's session link should land on the gate, not a dead end.
+            qs('rx-gate').style.display = '';
+            qs('rx-workspace').style.display = 'none';
+            qs('rx-boot').style.display = 'none';
+            SESSION = 0; setSessionUrl(0, true);
+            qs('rx-gate-msg').innerHTML = '<span class="rx-hint rx-hint--bad">' +
+                esc(d && d.message || 'That session could not be opened.') +
+                ' Open a new session below.</span>';
+            gateCheck();
             return;
         }
         DATA = d; CHECKSUM = d.checksum;
@@ -917,6 +941,44 @@ window.addEventListener('beforeunload', function (e) {
 });
 
 /* ── boot ─────────────────────────────────────────────────────────────── */
+/* Resume the sitting named in the URL; otherwise offer the gate, prefilled if asked. */
+(function () {
+    var sid = parseInt(urlParam('session') || '0', 10);
+    if (sid > 0) {
+        SESSION = sid;
+        qs('rx-gate').style.display = 'none';
+        qs('rx-boot').style.display = '';
+        loadWorkspace();
+    } else {
+        var rg = urlParam('regno');
+        if (rg) qs('rx-regno').value = rg;
+    }
+})();
+
+window.addEventListener('popstate', function () {
+    var sid = parseInt(urlParam('session') || '0', 10);
+    if (sid === SESSION) return;
+    if (pendingCount() > 0 &&
+        !confirm('You have unsaved changes. Leaving this sitting will discard them.\n\nContinue?')) {
+        setSessionUrl(SESSION, true);
+        return;
+    }
+    PEND = { moves: {}, marks: {}, deletes: {}, adds: [], regsems: [] };
+    if (sid > 0) {
+        SESSION = sid;
+        qs('rx-gate').style.display = 'none';
+        qs('rx-workspace').style.display = 'none';
+        qs('rx-boot').style.display = '';
+        loadWorkspace();
+    } else {
+        SESSION = 0;
+        qs('rx-workspace').style.display = 'none';
+        qs('rx-boot').style.display = 'none';
+        qs('rx-gate').style.display = '';
+        gateCheck();
+    }
+});
+
 qs('rx-regno').addEventListener('input', gateCheck);
 qs('rx-reason').addEventListener('input', gateCheck);
 qs('rx-ack').addEventListener('change', gateCheck);

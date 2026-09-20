@@ -35,7 +35,12 @@ function toast(m, err) {
         setTimeout(function () { if (t.parentNode) t.parentNode.removeChild(t); }, 400); }, err ? 7000 : 3200);
 }
 function openModal(id) { qs(id).classList.add('is-open'); }
-function closeModal(id) { qs(id).classList.remove('is-open'); }
+function closeModal(id) {
+    qs(id).classList.remove('is-open');
+    // Closing the detail takes the entry back out of the URL, so a reload returns
+    // to the list rather than re-opening a dialog the user just dismissed.
+    if (id === 'rx-detail-modal') pushUrl(true);
+}
 document.addEventListener('click', function (e) {
     var c = e.target.getAttribute && e.target.getAttribute('data-close');
     if (c) closeModal(c);
@@ -49,7 +54,61 @@ function filters() {
     };
 }
 
-function load() {
+/* ── GET-driven state ─────────────────────────────────────────────────────
+   Filters, page and any opened entry live in the query string, so the view
+   survives a reload, can be bookmarked or pasted to a colleague, and the
+   browser's Back button walks through it. The server reads exactly these
+   names, so the CSV export and the grid always agree.
+
+   The three selects are populated asynchronously by Filters(), and setting
+   .value on a select with no options silently does nothing — so those values
+   are held until the options arrive. */
+var PENDING_SEL = null;
+
+function readUrl() {
+    var p;
+    try { p = new URLSearchParams(location.search); } catch (e) { return; }
+    qs('f-from').value = p.get('from') || '';
+    qs('f-to').value = p.get('to') || '';
+    qs('f-regno').value = p.get('regno') || '';
+    qs('f-q').value = p.get('q') || '';
+    qs('f-rev').value = p.get('reversed') || '';
+    PENDING_SEL = { actor: p.get('actor') || '', role: p.get('role') || '', op: p.get('opType') || '' };
+    PAGE_NO = parseInt(p.get('page') || '1', 10) || 1;
+    return p.get('entry') || '';
+}
+
+function applyPendingSelects() {
+    if (!PENDING_SEL) return;
+    qs('f-actor').value = PENDING_SEL.actor;
+    qs('f-role').value = PENDING_SEL.role;
+    qs('f-op').value = PENDING_SEL.op;
+    PENDING_SEL = null;
+}
+
+function queryString(extra) {
+    var f = filters(), parts = [];
+    function add(k, v) {
+        if (v === undefined || v === null || v === '') return;
+        parts.push(encodeURIComponent(k) + '=' + encodeURIComponent(v));
+    }
+    add('from', f.from); add('to', f.to); add('actor', f.actor); add('role', f.role);
+    add('regno', f.regno); add('opType', f.opType); add('reversed', f.reversed); add('q', f.q);
+    if (PAGE_NO > 1) add('page', PAGE_NO);
+    if (extra) for (var k in extra) if (extra.hasOwnProperty(k)) add(k, extra[k]);
+    return parts.join('&');
+}
+
+function pushUrl(replace) {
+    var qsx = queryString(null);
+    var url = location.pathname + (qsx ? '?' + qsx : '');
+    try {
+        if (replace) history.replaceState(null, '', url);
+        else history.pushState(null, '', url);
+    } catch (e) { /* older browser: the page still works, it just will not deep-link */ }
+}
+
+function load(after) {
     var f = filters();
     qs('rx-body').innerHTML = '<tr><td colspan="9" class="rx-state"><div class="rx-spin"></div>Loading…</td></tr>';
     f.page = PAGE_NO; f.pageSize = PAGE_SIZE;
@@ -64,7 +123,7 @@ function load() {
             qs('rx-body').innerHTML = '<tr><td colspan="9" class="rx-state">' +
                 '<div class="rx-state__t">Nothing matches these filters</div>' +
                 'Widen the date range or clear a filter.</td></tr>';
-            qs('rx-pager').innerHTML = ''; return;
+            qs('rx-pager').innerHTML = ''; updateCsv(); if (after) after(); return;
         }
         var h = '';
         for (var i = 0; i < d.rows.length; i++) {
@@ -93,19 +152,23 @@ function load() {
             '<span style="margin-left:auto"></span>' +
             '<button type="button" class="rx-btn rx-btn--ghost rx-btn--sm" id="pg-prev"' + (d.page <= 1 ? ' disabled="disabled"' : '') + '>&laquo; Prev</button>' +
             '<button type="button" class="rx-btn rx-btn--ghost rx-btn--sm" id="pg-next"' + (d.page >= d.pages ? ' disabled="disabled"' : '') + '>Next &raquo;</button>';
-        if (qs('pg-prev')) qs('pg-prev').addEventListener('click', function () { PAGE_NO--; load(); });
-        if (qs('pg-next')) qs('pg-next').addEventListener('click', function () { PAGE_NO++; load(); });
+        if (qs('pg-prev')) qs('pg-prev').addEventListener('click', function () { PAGE_NO--; pushUrl(false); load(); });
+        if (qs('pg-next')) qs('pg-next').addEventListener('click', function () { PAGE_NO++; pushUrl(false); load(); });
         updateCsv();
+        if (after) after();
     });
 }
 
 function updateCsv() {
-    var f = filters(), parts = ['export=csv'];
-    for (var k in f) if (f.hasOwnProperty(k) && f[k]) parts.push(encodeURIComponent(k) + '=' + encodeURIComponent(f[k]));
-    qs('f-csv').href = location.pathname + '?' + parts.join('&');
+    var qsx = queryString({ export: 'csv' });
+    qs('f-csv').href = location.pathname + '?' + qsx;
 }
 
-function detail(id) {
+function detail(id, skipUrl) {
+    if (!skipUrl) {
+        var qsx = queryString({ entry: id });
+        try { history.pushState(null, '', location.pathname + '?' + qsx); } catch (e) { }
+    }
     CURRENT = null;
     qs('rx-detail-body').innerHTML = '<div class="rx-state"><div class="rx-spin"></div>Loading…</div>';
     qs('rx-rev-one').style.display = 'none';
@@ -206,18 +269,27 @@ qs('rx-reason-ok').addEventListener('click', function () {
 });
 
 /* ── boot ─────────────────────────────────────────────────────────────── */
-qs('f-apply').addEventListener('click', function () { PAGE_NO = 1; load(); });
+qs('f-apply').addEventListener('click', function () { PAGE_NO = 1; pushUrl(false); load(); });
 qs('f-reset').addEventListener('click', function () {
     ['f-from', 'f-to', 'f-regno', 'f-q'].forEach(function (i) { qs(i).value = ''; });
     ['f-actor', 'f-role', 'f-op', 'f-rev'].forEach(function (i) { qs(i).value = ''; });
-    PAGE_NO = 1; load();
+    PAGE_NO = 1; pushUrl(false); load();
 });
 qs('f-q').addEventListener('keydown', function (e) {
-    if (e.key === 'Enter' || e.keyCode === 13) { e.preventDefault(); PAGE_NO = 1; load(); }
+    if (e.key === 'Enter' || e.keyCode === 13) { e.preventDefault(); PAGE_NO = 1; pushUrl(false); load(); }
 });
 
+// Back and forward move through the views the officer actually looked at.
+window.addEventListener('popstate', function () {
+    var entry = readUrl();
+    applyPendingSelects();
+    load(entry ? function () { detail(+entry, true); } : null);
+});
+
+var DEEP_ENTRY = readUrl();
+
 call('Filters', {}, function (d) {
-    if (!d || !d.success) return;
+    if (!d || !d.success) { applyPendingSelects(); return; }
     if (d.actor) {
         qs('rx-actor').textContent = d.actor.name || d.actor.user;
         qs('rx-role').textContent = d.actor.role || 'no role';
@@ -235,7 +307,10 @@ call('Filters', {}, function (d) {
         var o3 = document.createElement('option'); o3.value = d.ops[k];
         o3.textContent = d.ops[k].replace(/_/g, ' '); qs('f-op').appendChild(o3);
     }
+    // Only now do the three selects have options to hold the values from the URL.
+    applyPendingSelects();
+    pushUrl(true);
+    load(DEEP_ENTRY ? function () { detail(+DEEP_ENTRY, true); } : null);
 });
-load();
 
 })();
