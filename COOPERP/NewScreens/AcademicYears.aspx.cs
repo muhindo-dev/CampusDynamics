@@ -25,14 +25,6 @@ public partial class COOPERP_NewScreens_AcademicYears : System.Web.UI.Page
                     "document.getElementById('modalOverlay').classList.add('open');", true);
             }
         }
-        // Admission settings come from the server rather than being guessed at client-side,
-        // so opening that modal is a postback too.
-        if (target == "LoadAdmission" && !string.IsNullOrEmpty(arg))
-        {
-            BindGrid();
-            LoadStats();
-            LoadAdmissionModal(arg);
-        }
 
         if (!IsPostBack)
         {
@@ -211,13 +203,31 @@ public partial class COOPERP_NewScreens_AcademicYears : System.Web.UI.Page
             return;
         }
 
+        // Admission travels with the year it belongs to, saved from the same form.
+        string admErr = SaveAdmissionFields(acadyear);
+        if (!string.IsNullOrEmpty(admErr))
+        {
+            // The year itself saved; only the admission window was rejected, so say exactly
+            // that rather than implying nothing was written.
+            ShowAlert("The academic year was saved, but the admission settings were not: " + admErr, true);
+            BindGrid();
+            LoadStats();
+            return;
+        }
+
         // Set as current if checked
         if (chkSetCurrentAcad.Checked)
             AcademicYearHelper.SetCurrentAcademicYear(acadyear, user);
         if (chkSetCurrentFin.Checked)
             AcademicYearHelper.SetCurrentFinancialYear(acadyear, user);
 
-        ShowAlert(isEdit ? "Academic year updated successfully." : "Academic year added successfully.", false);
+        AcademicYearHelper.AdmissionState admNow = AcademicYearHelper.GetAdmission(acadyear);
+        string admNote = admNow.IsAcceptingNow
+            ? " Applications are open for " + acadyear + "."
+            : (chkAdmissionOpen.Checked
+                ? " Admission is ticked but outside its window, so applicants cannot see " + acadyear + " yet."
+                : " Applications are closed for " + acadyear + ".");
+        ShowAlert((isEdit ? "Academic year updated successfully." : "Academic year added successfully.") + admNote, false);
         BindGrid();
         LoadStats();
 
@@ -270,23 +280,19 @@ public partial class COOPERP_NewScreens_AcademicYears : System.Web.UI.Page
         return new AcademicYearHelper.AdmissionState();
     }
 
-    /// <summary>Loads one year's settings into the modal and opens it.</summary>
-    private void LoadAdmissionModal(string acadyear)
+    /// <summary>Fills the Admission panel for the year being edited.</summary>
+    private void LoadAdmissionFields(string acadyear)
     {
-        acadyear = (acadyear ?? "").Trim();
-        if (acadyear.Length == 0) { ShowAlert("No academic year selected.", true); return; }
-
-        hfAdmissionYear.Value = acadyear;
         AcademicYearHelper.AdmissionState st = AcademicYearHelper.GetAdmission(acadyear);
-
         chkAdmissionOpen.Checked = st.IsOpen;
         txtAdmFrom.Text = st.OpenFrom.HasValue ? st.OpenFrom.Value.ToString("yyyy-MM-dd") : "";
         txtAdmTo.Text = st.OpenTo.HasValue ? st.OpenTo.Value.ToString("yyyy-MM-dd") : "";
 
-        // Say what applicants can see right now, and where else admission is open, so the
-        // officer is not opening a second year without realising.
+        // Say what applicants can actually see, and where else admission is open, so a second
+        // year is not opened by accident. A year can be ticked and still invisible because its
+        // window has not started — worth stating rather than leaving to be deduced.
         System.Text.StringBuilder sb = new System.Text.StringBuilder();
-        sb.Append("<div style=\"margin-top:14px;padding:10px 13px;background:#f8fafc;border:1px solid #e0e5ed;font-size:11.5px;line-height:1.6;color:#64748b;\">");
+        sb.Append("<div style=\"margin-top:12px;padding:9px 12px;background:#f8fafc;border:1px solid #e0e5ed;font-size:11.5px;line-height:1.6;color:#64748b;\">");
         sb.Append("<b style=\"color:#1a1a2e;\">Right now:</b> ");
         sb.Append(st.IsAcceptingNow
             ? "applicants <b style=\"color:#1e6b3a;\">can</b> apply for " + Server.HtmlEncode(acadyear) + "."
@@ -299,45 +305,22 @@ public partial class COOPERP_NewScreens_AcademicYears : System.Web.UI.Page
             sb.Append("No other academic year is accepting applications.");
         else
             sb.Append("Also accepting applications: <b>" + Server.HtmlEncode(string.Join(", ", open.ToArray())) + "</b>.");
-
-        if (open.Count == 0 && !st.IsAcceptingNow)
-            sb.Append("<br /><span style=\"color:#b3261e;\">With none open, the portal falls back to " +
-                      "offering this calendar year and the next two \u2014 set one deliberately.</span>");
         sb.Append("</div>");
         litAdmCurrent.Text = sb.ToString();
-
-        ScriptManager.RegisterStartupScript(this, GetType(), "openAdm",
-            "document.getElementById('admissionOverlay').classList.add('open');", true);
     }
 
-    protected void btnSaveAdmission_Click(object sender, EventArgs e)
+    /// <summary>Saves the Admission panel as part of saving the year.</summary>
+    private string SaveAdmissionFields(string acadyear)
     {
-        string acadyear = hfAdmissionYear.Value;
-        if (string.IsNullOrEmpty(acadyear)) { ShowAlert("No academic year selected.", true); return; }
-
         DateTime parsed;
         DateTime? from = DateTime.TryParse(txtAdmFrom.Text, out parsed) ? (DateTime?)parsed.Date : null;
-        // The close date is inclusive: "close on the 31st" has to mean the end of the 31st,
-        // or the year disappears a day early.
+        // Inclusive close date: "close on the 31st" has to mean the end of the 31st, or the
+        // year disappears from the portal a day early.
         DateTime? to = DateTime.TryParse(txtAdmTo.Text, out parsed)
                        ? (DateTime?)parsed.Date.AddDays(1).AddSeconds(-1) : null;
 
         string user = Page.User.Identity.IsAuthenticated ? Page.User.Identity.Name : "system";
-        string err = AcademicYearHelper.SetAdmission(acadyear, chkAdmissionOpen.Checked, from, to, user);
-        if (!string.IsNullOrEmpty(err)) { ShowAlert(err, true); return; }
-
-        _admCache = null;
-        AcademicYearHelper.AdmissionState st = AcademicYearHelper.GetAdmission(acadyear);
-        ShowAlert(st.IsAcceptingNow
-            ? "Applications are now open for " + acadyear + "."
-            : (chkAdmissionOpen.Checked
-                ? "Saved. " + acadyear + " is marked open but is outside its window, so applicants cannot see it yet."
-                : "Applications are now closed for " + acadyear + "."), false);
-
-        BindGrid();
-        LoadStats();
-        ScriptManager.RegisterStartupScript(this, GetType(), "closeAdm",
-            "closeAdmissionModal(); window.scrollTo({top:0,behavior:'smooth'});", true);
+        return AcademicYearHelper.SetAdmission(acadyear, chkAdmissionOpen.Checked, from, to, user);
     }
 
     protected void btnSetCurrent_Click(object sender, EventArgs e)
@@ -387,6 +370,7 @@ public partial class COOPERP_NewScreens_AcademicYears : System.Web.UI.Page
         hfEditId.Value = id.ToString();
 
         string acadyear = row["acadyear"].ToString();
+        LoadAdmissionFields(acadyear);
         string[] parts = acadyear.Split('/');
         if (parts.Length == 2)
         {
