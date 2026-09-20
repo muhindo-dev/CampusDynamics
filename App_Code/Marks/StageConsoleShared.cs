@@ -42,9 +42,12 @@ public static class StageConsoleShared
     // store campus_dynamics_portal.my_aspnet_users (name = regno). Alumni, not-yet-
     // onboarded (NULL) and accountless regnos are excluded so counts (esp. "not entered")
     // reflect real, active students instead of the whole historical registration table.
-    private static string ActiveOnly(string alias)
+    // Join form, not the EXISTS form: this is the driver of an aggregate over the whole
+    // 691k-row registration table. See ActiveStudentFilter.Join - 19.65s -> 0.178s for the
+    // same five numbers.
+    private static string ActiveOnlyJoin(string alias)
     {
-        return ActiveStudentFilter.Clause(alias + ".regno");
+        return ActiveStudentFilter.Join(alias, "regno");
     }
 
     private static string DeniedJson(string stage)
@@ -101,7 +104,7 @@ public static class StageConsoleShared
             {
                 conn.Open();
                 using (var cmd = new MySqlCommand("SELECT cr.mark_stage, COUNT(*) c FROM " + MarkStage.REG +
-                    " cr WHERE 1=1" + Scope(scope, "cr") + ActiveOnly("cr") + " GROUP BY cr.mark_stage", conn))
+                    " cr" + ActiveOnlyJoin("cr") + " WHERE 1=1" + Scope(scope, "cr") + " GROUP BY cr.mark_stage", conn))
                 using (var r = cmd.ExecuteReader())
                     while (r.Read()) funnel[S(r[0])] = ToI(r[1]);
             }
@@ -161,11 +164,27 @@ public static class StageConsoleShared
                     "  (SELECT TRIM(he2.emp_name) FROM acad_programmecourses pc JOIN hrm_employee he2 ON he2.empID=pc.lecturer_id" +
                     "   WHERE pc.progcode=cr.prog_id AND pc.course_code=cr.courseID AND UPPER(IFNULL(pc.is_lecturere_assigned,''))='YES'" +
                     "   AND IFNULL(pc.lecturer_id,0)>0 LIMIT 1)" +
-                    " ) lecturer" +
+                    " ) lecturer," +
+                    // ── Tracker: who did what to this mark. Two independent facts, both already
+                    // recorded, neither previously shown:
+                    //   pa.*  - the last change to the MARKS themselves (trigger-written audit),
+                    //           i.e. the lecturer who entered or edited them, and from where.
+                    //   cr.mark_stage_changed_* - who moved the mark into the stage it now sits
+                    //           at, i.e. who captured / approved / published it.
+                    // Dates are formatted in SQL so the output does not depend on the worker's
+                    // culture. The audit join is one correlated MAX(id) on idx_pma_reg(reg_id,id)
+                    // plus a primary-key read, over the 50 rows of one page: unmeasurable.
+                    " pa.performed_by mark_by, pa.action_type mark_act, pa.source_page mark_via," +
+                    " DATE_FORMAT(pa.created_at,'%d %b %Y %H:%i') mark_at," +
+                    " cr.mark_stage_changed_by stage_by," +
+                    " DATE_FORMAT(cr.mark_stage_changed_at,'%d %b %Y %H:%i') stage_at" +
                     " FROM " + MarkStage.REG + " cr" +
                     " LEFT JOIN acad_student s ON s.regno=cr.regno" +
                     " LEFT JOIN acad_programme p ON p.progcode=cr.prog_id" +
                     " LEFT JOIN acad_course c ON c.courseID=cr.courseID" +
+                    " LEFT JOIN campus_dynamics_portal.acad_provisional_marks_audit pa" +
+                    "   ON pa.id=(SELECT MAX(a.id) FROM campus_dynamics_portal.acad_provisional_marks_audit a" +
+                    "             WHERE a.reg_id=cr.ID)" +
                     where + " ORDER BY cr.prog_id, cr.regno LIMIT @off,@ps", conn))
                 {
                     cmd.Parameters.AddWithValue("@from", def.FromStage);
@@ -182,7 +201,9 @@ public static class StageConsoleShared
                                 prog = S(r["prog_id"]), progName = S(r["pn"]), course = S(r["courseID"]),
                                 courseName = S(r["cn"]), acadYear = S(r["acad_year"]), semester = S(r["semester"]),
                                 cw = NI(r["cw"]), exam = NI(r["ex"]), total = NI(r["tot"]),
-                                lecturer = S(r["lecturer"]), grade = GradeFromTotal(r["tot"]), failed = IsFail(r["tot"]) });
+                                lecturer = S(r["lecturer"]), grade = GradeFromTotal(r["tot"]), failed = IsFail(r["tot"]),
+                                markBy = S(r["mark_by"]), markAt = S(r["mark_at"]), markVia = S(r["mark_via"]),
+                                markAct = S(r["mark_act"]), stageBy = S(r["stage_by"]), stageAt = S(r["stage_at"]) });
                 }
             }
             int pages = Math.Max(1, (int)Math.Ceiling(total / (double)pageSize));

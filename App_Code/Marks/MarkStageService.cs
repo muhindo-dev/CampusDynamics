@@ -63,7 +63,25 @@ public static class MarkStage
     }
 
     // ── Idempotent schema self-heal (safe to call on Page_Load) ──────────────
+    // The self-heal below costs ~25 information_schema.COLUMNS probes - 365ms measured -
+    // and it used to run on every stage-console page load, ahead of the queue and the funnel
+    // on a serialised session lock. The schema cannot change underneath a running worker, so
+    // once per process is enough; an app-pool recycle re-checks. Only a clean pass sets the
+    // flag, so a failed self-heal still retries on the next request.
+    private static volatile bool _schemaChecked;
+    private static readonly object _schemaLock = new object();
+
     public static void EnsureSchema(MySqlConnection conn)
+    {
+        if (_schemaChecked) return;
+        lock (_schemaLock)
+        {
+            if (_schemaChecked) return;
+            EnsureSchemaCore(conn);
+        }
+    }
+
+    private static void EnsureSchemaCore(MySqlConnection conn)
     {
         try
         {
@@ -93,6 +111,7 @@ public static class MarkStage
                 AddRecCol(conn, tables[i], "heartbeat_at",   "DATETIME NULL");
                 AddRecCol(conn, tables[i], "last_error",     "TEXT NULL");
             }
+            _schemaChecked = true;   // a clean pass only - a failure retries next request
         }
         catch { /* never break a page on self-heal */ }
     }

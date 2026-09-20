@@ -32,6 +32,25 @@ public static class ActiveStudentFilter
                "WHERE u_asf.name=" + regnoExpr + " AND u_asf.user_verification_status='ACTIVE STUDENT') ";
     }
 
+    /// <summary>
+    /// JOIN form of the same rule, for aggregate queries (COUNT / GROUP BY) over the large
+    /// marks tables. Returns a " JOIN ... " fragment to place directly after the FROM table.
+    ///
+    /// PERFORMANCE: the EXISTS form above is right for filtering rows that are being read
+    /// anyway, but as the driver of an aggregate it makes MySQL walk the whole registration
+    /// table and probe the user table once per row - the stage funnel measured 19.65s over
+    /// 691,256 rows. Written as a join the optimiser drives from the ~4,700 active students
+    /// instead and reads only their registrations, index-only against idx_acr_regno_stage:
+    /// 0.178s for identical numbers. Join order in the SQL text does not matter; the
+    /// optimiser picks the user table as the driver either way.
+    /// </summary>
+    public static string Join(string alias, string regnoColumn)
+    {
+        return " JOIN campus_dynamics_portal.my_aspnet_users u_asf" +
+               " ON u_asf.name=" + alias + "." + regnoColumn +
+               " AND u_asf.user_verification_status='ACTIVE STUDENT' ";
+    }
+
     /// <summary>Same predicate without the leading "AND", for use after WHERE/AND yourself.</summary>
     public static string Predicate(string regnoExpr)
     {

@@ -1,6 +1,6 @@
 <%@ Page Language="C#" MasterPageFile="~/COOPERP/NewScreens/SidebarMaster.master" AutoEventWireup="true" CodeFile="MarkCaptureController.aspx.cs" Inherits="COOPERP_NewScreens_MarkCaptureController" Title="Capture Marks (HOD) - Campus Dynamics" %>
 <asp:Content ID="HeadContent" ContentPlaceHolderID="HeadContent" runat="server">
-    <link href="css/stageconsole.css?v=20260810a" rel="stylesheet" type="text/css" />
+    <link href="css/stageconsole.css?v=20260920a" rel="stylesheet" type="text/css" />
 </asp:Content>
 <asp:Content ID="MainContent" ContentPlaceHolderID="ContentPlaceHolder1" runat="server">
 <div class="sc-wrap">
@@ -60,9 +60,9 @@
           <thead><tr>
             <th style="width:28px;"><input type="checkbox" onclick="SC.selectAll(this)"></th>
             <th>Student No / Name</th><th>Course</th><th>Lecturer</th><th>Programme</th><th class="sc-c">Year/Sem</th>
-            <th class="sc-c">CW</th><th class="sc-c">Exam</th><th class="sc-c">Total</th><th class="sc-c">Grade</th>
+            <th class="sc-c">CW</th><th class="sc-c">Exam</th><th class="sc-c">Total</th><th class="sc-c">Grade</th><th>Tracker</th>
           </tr></thead>
-          <tbody id="sc-body"><tr><td colspan="10" class="sc-empty">Loading&hellip;</td></tr></tbody>
+          <tbody id="sc-body"><tr><td colspan="11" class="sc-empty">Loading&hellip;</td></tr></tbody>
         </table>
       </div>
       <div class="sc-pager" id="sc-pager"></div>
@@ -118,5 +118,5 @@
   </div>
 </div>
 
-<script src="js/stageconsole.js?v=20260810a" type="text/javascript"></script>
+<script src="js/stageconsole.js?v=20260920a" type="text/javascript"></script>
 </asp:Content>

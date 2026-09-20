@@ -4,7 +4,7 @@
    only browses the queue + funnel + session history (each session is click-to-view). */
 (function () {
 'use strict';
-var STAGE = { canAct: false, name: '', fromLabel: '', toLabel: '' };
+var STAGE = { canAct: false, name: '', fromStage: '', fromLabel: '', toLabel: '' };
 var PAGE = 1, REC = 0, FAILED_ONLY = false;
 
 function qs(id) { return document.getElementById(id); }
@@ -68,7 +68,7 @@ function boot() {
     if (qbox && !qbox._scEnter) { qbox._scEnter = 1; qbox.addEventListener('keydown', function (e) { if (e.key === 'Enter' || e.keyCode === 13) { e.preventDefault(); SC.apply(); } }); }
     call('Init', {}, function (d) {
         if (!d || !d.success) { qs('sc-scope').textContent = (d && d.message) || 'Failed to initialise.'; return; }
-        STAGE.canAct = d.canAct; STAGE.name = d.stage; STAGE.fromLabel = d.fromLabel; STAGE.toLabel = d.toLabel;
+        STAGE.canAct = d.canAct; STAGE.name = d.stage; STAGE.fromStage = d.fromStage; STAGE.fromLabel = d.fromLabel; STAGE.toLabel = d.toLabel;
         qs('sc-scope').innerHTML = 'Scope: <strong>' + esc(d.scope.label) + '</strong>';
         var chip = qs('sc-role'); chip.textContent = d.scope.isAdmin ? 'Administrator' : (d.scope.role || 'Scoped');
         setText('sc-from-label', d.fromLabel); setText('sc-to-label', d.toLabel);
@@ -82,7 +82,8 @@ function boot() {
         var adv = qs('sc-advance-btn');
         if (adv) { adv.innerHTML = '&#10003; ' + (VERB[d.stage] || 'Advance') + ' selected'; if (!d.canAct) adv.style.display = 'none'; }
         scReadUrl();               // apply any year/sem/prog/q/failed/page from the URL (after selects are populated)
-        loadStats(); loadBrowse(PAGE);
+        loadBrowse(PAGE); loadStats();   // queue first - the funnel is only context, and
+                                         // the session lock serialises these two anyway
     });
 }
 function setText(id, v) { var e = qs(id); if (e) e.textContent = v; }
@@ -116,9 +117,62 @@ function loadBrowse(p) {
                 '<td class="sc-c">' + nz(r.cw) + '</td>' + '<td class="sc-c">' + nz(r.exam) + '</td>' +
                 '<td class="sc-c"><strong>' + nz(r.total) + '</strong></td>' +
                 '<td class="sc-c">' + (r.grade ? ('<span class="sc-grade' + (r.failed ? ' sc-grade--f' : '') + '">' + esc(r.grade) + '</span>') : '—') + '</td>' +
+                '<td class="sc-track">' + trackerCell(r) + '</td>' +
             '</tr>'; }).join('');
         qs('sc-pager').innerHTML = pager(d.page, d.pages, d.total);
     });
+}
+/* -- Tracker -----------------------------------------------------------------
+   Who did what to this mark. Two independent facts, both already recorded on the
+   row and neither previously shown anywhere in these consoles:
+
+     markBy  - the last change to the MARKS themselves, from the trigger-written
+               provisional-marks audit: the lecturer who entered or edited them,
+               when, and from which screen.
+     stageBy - who moved the mark into the stage it is sitting at now, i.e. who
+               captured / approved / published it.
+
+   A row can carry either, both, or neither. Neither is the honest answer for marks
+   that predate the audit trigger and the staged workflow, so the cell says so rather
+   than sitting empty and looking like a rendering fault. */
+var MARK_ACT   = { INSERT: 'Marks entered', UPDATE: 'Marks edited', MIGRATE: 'Migrated in' };
+var STAGE_VERB = { ENTERED: 'Entered', CAPTURED: 'Captured', APPROVED: 'Approved',
+                   PUBLISHED: 'Published', NOT_ENTERED: 'Cleared' };
+
+/* Attribution is written by several different paths and arrives in several shapes:
+   "Lecturer: Nabbira Jackline (nabbiiraj@mru.ac.ug)", "ndagirei@mru.ac.ug", "Muhindo
+   mubaraka". Show the person, not the packaging. */
+function who(v) {
+    if (!v) return '';
+    var t = String(v).replace(/^\s*Lecturer\s*:\s*/i, '').replace(/\s*\([^)]*\)\s*$/, '').trim();
+    return t || String(v).trim();
+}
+function viaLabel(v) {
+    if (!v) return '';
+    if (v.indexOf('Portal:') === 0) return 'portal';
+    if (v.indexOf('ODEL') === 0)    return 'ODEL';
+    if (v.indexOf('eadmin') === 0)  return 'eadmin';
+    return v;
+}
+function trackerCell(r) {
+    var h = '';
+    if (r.markBy) {
+        h += '<span class="sc-code">' + esc(who(r.markBy)) + '</span>' +
+             '<div class="sc-sub">' + esc(MARK_ACT[r.markAct] || 'Marks changed') +
+             (r.markAt ? ' · ' + esc(r.markAt) : '') +
+             (viaLabel(r.markVia) ? ' · ' + esc(viaLabel(r.markVia)) : '') + '</div>';
+    }
+    if (r.stageBy) {
+        var verb = STAGE_VERB[STAGE.fromStage] || 'Moved here';
+        // With no marks-audit entry this is all the row knows, so lead with it.
+        h += r.markBy
+            ? '<div class="sc-sub">' + esc(verb) + ' by ' + esc(who(r.stageBy)) +
+              (r.stageAt ? ' · ' + esc(r.stageAt) : '') + '</div>'
+            : '<span class="sc-code">' + esc(who(r.stageBy)) + '</span><div class="sc-sub">' +
+              esc(verb) + (r.stageAt ? ' · ' + esc(r.stageAt) : '') + '</div>';
+    }
+    if (!h) h = '<span class="sc-track__none">not recorded</span>';
+    return h;
 }
 function pager(p, pages, total) {
     return '<span class="sc-pginfo">' + total.toLocaleString() + ' mark(s) · page ' + p + ' / ' + pages + '</span><span style="margin-left:auto"></span>' +
