@@ -293,19 +293,13 @@ select.ay-form-input { cursor: pointer; }
                 <HeaderStyle HorizontalAlign="Center" />
                 <CellStyle HorizontalAlign="Center" />
             </dx:GridViewDataTextColumn>
-            <dx:GridViewDataColumn Caption="Actions" Width="180px" UnboundType="String">
+            <dx:GridViewDataColumn Caption="Actions" Width="100px" UnboundType="String">
                 <DataItemTemplate>
                     <div style="display:flex;gap:4px;align-items:center;">
                         <button type="button" class="ay-btn ay-action-edit" style="padding:4px 10px;font-size:11px;"
                                 data-id='<%# Eval("ID") %>' onclick="editYear(this.getAttribute('data-id'));return false;">
                             <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path></svg>
                             Edit
-                        </button>
-                        <button type="button" class="ay-btn ay-btn--success ay-action-setcurrent" style="padding:4px 8px;font-size:11px;"
-                                data-year='<%# Eval("acadyear") %>' onclick="setCurrentYear(this.getAttribute('data-year'));return false;"
-                                title="Set as current academic year">
-                            <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"></polyline></svg>
-                            Set Current
                         </button>
                     </div>
                 </DataItemTemplate>
@@ -451,6 +445,9 @@ select.ay-form-input { cursor: pointer; }
                     <asp:CheckBox ID="chkSetCurrentFin" runat="server" /> Set as Current Financial Year
                 </label>
             </div>
+            <div id="currentNote" style="font-size:11px;color:#888;margin-top:6px;">
+                <asp:Literal ID="litCurrentNote" runat="server" />
+            </div>
         </div>
         <div class="ay-modal__footer">
             <button type="button" class="ay-btn" onclick="closeModal();">Cancel</button>
@@ -461,36 +458,6 @@ select.ay-form-input { cursor: pointer; }
 </div>
 
 <!-- ======= SET-CURRENT MODAL ======= -->
-<div class="ay-modal-overlay" id="setCurrentOverlay">
-    <div class="ay-modal" style="width:420px;">
-        <div class="ay-modal__header">
-            <span class="ay-modal__title">Set Current Year</span>
-            <button type="button" class="ay-modal__close" onclick="closeSetCurrentModal();">
-                <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
-            </button>
-        </div>
-        <div class="ay-modal__body">
-            <asp:HiddenField ID="hfSetCurrentYear" runat="server" Value="" />
-            <p style="font-size:13px;color:#333;margin:0 0 14px;">
-                You are about to set <strong id="lblSetYear"></strong> as:
-            </p>
-            <div style="display:flex;flex-direction:column;gap:10px;">
-                <label style="display:flex;align-items:center;gap:8px;font-size:13px;color:#333;cursor:pointer;">
-                    <asp:CheckBox ID="chkSetAcad" runat="server" /> Current Academic Year
-                </label>
-                <label style="display:flex;align-items:center;gap:8px;font-size:13px;color:#333;cursor:pointer;">
-                    <asp:CheckBox ID="chkSetFin" runat="server" /> Current Financial Year
-                </label>
-            </div>
-        </div>
-        <div class="ay-modal__footer">
-            <button type="button" class="ay-btn" onclick="closeSetCurrentModal();">Cancel</button>
-            <asp:Button ID="btnSetCurrent" runat="server" Text="Apply" CssClass="ay-btn ay-btn--success"
-                OnClick="btnSetCurrent_Click" />
-        </div>
-    </div>
-</div>
-
 <script type="text/javascript">
     function updateYearPreview() {
         var sy = document.getElementById('<%= txtStartYear.ClientID %>');
@@ -519,6 +486,11 @@ select.ay-form-input { cursor: pointer; }
         document.getElementById('<%= txtStartDate.ClientID %>').value = '';
         document.getElementById('<%= txtEndDate.ClientID %>').value = '';
         document.getElementById('<%= txtDescription.ClientID %>').value = '';
+        var ca = document.getElementById('<%= chkSetCurrentAcad.ClientID %>');
+        var cf = document.getElementById('<%= chkSetCurrentFin.ClientID %>');
+        ca.checked = false; ca.disabled = false;
+        cf.checked = false; cf.disabled = false;
+        document.getElementById('currentNote').innerHTML = '';
         document.getElementById('<%= chkAdmissionOpen.ClientID %>').checked = false;
         document.getElementById('<%= txtAdmFrom.ClientID %>').value = '';
         document.getElementById('<%= txtAdmTo.ClientID %>').value = '';
@@ -533,30 +505,19 @@ select.ay-form-input { cursor: pointer; }
         __doPostBack('EditYear', id);
     }
 
-    function setCurrentYear(acadyear) {
-        document.getElementById('<%= hfSetCurrentYear.ClientID %>').value = acadyear;
-        document.getElementById('lblSetYear').textContent = acadyear;
-        document.getElementById('setCurrentOverlay').classList.add('open');
-    }
-
     function closeModal() {
         document.getElementById('modalOverlay').classList.remove('open');
-    }
-
-    function closeSetCurrentModal() {
-        document.getElementById('setCurrentOverlay').classList.remove('open');
     }
 
 
     // Close modals on overlay click
     document.addEventListener('click', function (e) {
         if (e.target.id === 'modalOverlay') closeModal();
-        if (e.target.id === 'setCurrentOverlay') closeSetCurrentModal();
     });
 
     // Close modals on Escape
     document.addEventListener('keydown', function (e) {
-        if (e.key === 'Escape') { closeModal(); closeSetCurrentModal(); }
+        if (e.key === 'Escape') { closeModal(); }
     });
 </script>
 

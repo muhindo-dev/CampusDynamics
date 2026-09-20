@@ -237,7 +237,7 @@ public partial class COOPERP_NewScreens_AcademicYears : System.Web.UI.Page
     }
 
     // ---------------------------------------------------
-    //  SET CURRENT  (from Set Current modal)
+    //  ADMISSION FIELDS  (part of the year's edit form)
     // ---------------------------------------------------
 
     // ---------------------------------------------------
@@ -323,45 +323,6 @@ public partial class COOPERP_NewScreens_AcademicYears : System.Web.UI.Page
         return AcademicYearHelper.SetAdmission(acadyear, chkAdmissionOpen.Checked, from, to, user);
     }
 
-    protected void btnSetCurrent_Click(object sender, EventArgs e)
-    {
-        string acadyear = hfSetCurrentYear.Value;
-        if (string.IsNullOrEmpty(acadyear))
-        {
-            ShowAlert("No academic year selected.", true);
-            return;
-        }
-
-        string user = Page.User.Identity.IsAuthenticated ? Page.User.Identity.Name : "system";
-
-        if (chkSetAcad.Checked)
-        {
-            string res = AcademicYearHelper.SetCurrentAcademicYear(acadyear, user);
-            if (!string.IsNullOrEmpty(res)) { ShowAlert(res, true); return; }
-        }
-        if (chkSetFin.Checked)
-        {
-            string res = AcademicYearHelper.SetCurrentFinancialYear(acadyear, user);
-            if (!string.IsNullOrEmpty(res)) { ShowAlert(res, true); return; }
-        }
-
-        if (!chkSetAcad.Checked && !chkSetFin.Checked)
-        {
-            ShowAlert("Please select at least one option (Academic Year or Financial Year).", true);
-            return;
-        }
-
-        ShowAlert(string.Format("{0} has been set as current.", acadyear), false);
-        BindGrid();
-        LoadStats();
-
-        ScriptManager.RegisterStartupScript(this, GetType(), "closeSetCurrent", "closeSetCurrentModal();", true);
-    }
-
-    // ---------------------------------------------------
-    //  LOAD FOR EDIT
-    // ---------------------------------------------------
-
     private void LoadYearForEdit(int id)
     {
         DataRow row = AcademicYearHelper.GetAcademicYearById(id);
@@ -415,6 +376,18 @@ public partial class COOPERP_NewScreens_AcademicYears : System.Web.UI.Page
 
         chkSetCurrentAcad.Checked = row["is_current_year"].ToString() == "Yes";
         chkSetCurrentFin.Checked  = row["is_current_financial_year"].ToString() == "Yes";
+
+        // Exactly one year is current, and the save only ever sets - never clears - so
+        // unticking would have done nothing silently. Lock the box once this IS the current
+        // year and say how to change it, rather than offering a control that does not work.
+        chkSetCurrentAcad.Enabled = !chkSetCurrentAcad.Checked;
+        chkSetCurrentFin.Enabled = !chkSetCurrentFin.Checked;
+        List<string> isNow = new List<string>();
+        if (chkSetCurrentAcad.Checked) isNow.Add("current academic year");
+        if (chkSetCurrentFin.Checked) isNow.Add("current financial year");
+        litCurrentNote.Text = isNow.Count == 0 ? ""
+            : Server.HtmlEncode(acadyear) + " is the " + string.Join(" and the ", isNow.ToArray()) +
+              ". To change that, open another year and set it there instead.";
 
         // Set modal title via script
         ScriptManager.RegisterStartupScript(this, GetType(), "setEditTitle",
