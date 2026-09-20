@@ -218,6 +218,187 @@ public static class AcademicYearHelper
         return dt;
     }
 
+    // ───────────────────────────────────────────────────────────
+    //  ADMISSION  (apply_intakes)
+    // ───────────────────────────────────────────────────────────
+    //
+    //  Whether applicants may apply FOR a given academic year. The row lives in
+    //  apply_intakes, which the eportal apply wizard and the v2 API were already
+    //  reading before anything could write it:
+    //
+    //      eportal  apply/apply-step3.aspx.cs  → is_open = 1 and inside the window
+    //      API      API/v2/apply.aspx.cs       → HandleIntakes
+    //
+    //  "2026/2027" is stored as intake_year 2026 with the label "2026/2027".
+    //  intake_year remains the value the applicant's choice is saved as, because
+    //  acad_applications.stud_intake already holds bare years from the old
+    //  fallback; changing the shape now would orphan those.
+
+    /// <summary>The start year of an academic year string: "2026/2027" → 2026.</summary>
+    public static int IntakeYearOf(string acadyear)
+    {
+        if (string.IsNullOrEmpty(acadyear)) return 0;
+        string head = acadyear.Trim();
+        int slash = head.IndexOf('/');
+        if (slash > 0) head = head.Substring(0, slash);
+        int n;
+        return int.TryParse(head.Trim(), out n) ? n : 0;
+    }
+
+    /// <summary>One academic year's admission settings.</summary>
+    public class AdmissionState
+    {
+        public bool IsOpen;
+        public DateTime? OpenFrom;
+        public DateTime? OpenTo;
+        public bool HasRow;          // false when admission was never configured for this year
+
+        /// <summary>Open, and inside its window if one was set — the same test the
+        /// eportal applies when it builds the applicant's intake list.</summary>
+        public bool IsAcceptingNow
+        {
+            get
+            {
+                if (!IsOpen) return false;
+                DateTime now = DateTime.Now;
+                if (OpenFrom.HasValue && now < OpenFrom.Value) return false;
+                if (OpenTo.HasValue && now > OpenTo.Value) return false;
+                return true;
+            }
+        }
+
+        /// <summary>Plain words for the grid, so an officer does not have to work out
+        /// why an "open" year is not accepting anyone.</summary>
+        public string Describe()
+        {
+            if (!HasRow) return "Not configured";
+            if (!IsOpen) return "Closed";
+            DateTime now = DateTime.Now;
+            if (OpenFrom.HasValue && now < OpenFrom.Value)
+                return "Opens " + OpenFrom.Value.ToString("d MMM yyyy");
+            if (OpenTo.HasValue && now > OpenTo.Value)
+                return "Closed " + OpenTo.Value.ToString("d MMM yyyy");
+            if (OpenTo.HasValue) return "Open until " + OpenTo.Value.ToString("d MMM yyyy");
+            return "Open";
+        }
+    }
+
+    /// <summary>Admission settings for every academic year that has them, keyed by
+    /// the academic year string.</summary>
+    public static Dictionary<string, AdmissionState> GetAdmissionMap()
+    {
+        var map = new Dictionary<string, AdmissionState>(StringComparer.OrdinalIgnoreCase);
+        try
+        {
+            using (MySqlConnection conn = new MySqlConnection(ConnStr))
+            {
+                conn.Open();
+                using (MySqlCommand cmd = new MySqlCommand(
+                    "SELECT intake_year, intake_label, is_open, open_from, open_to " +
+                    "FROM apply_intakes ORDER BY id", conn))
+                using (MySqlDataReader rd = cmd.ExecuteReader())
+                {
+                    while (rd.Read())
+                    {
+                        int yr = rd.IsDBNull(0) ? 0 : Convert.ToInt32(rd[0]);
+                        if (yr <= 0) continue;
+                        var st = new AdmissionState();
+                        st.HasRow = true;
+                        st.IsOpen = !rd.IsDBNull(2) && Convert.ToInt32(rd[2]) == 1;
+                        if (!rd.IsDBNull(3)) st.OpenFrom = Convert.ToDateTime(rd[3]);
+                        if (!rd.IsDBNull(4)) st.OpenTo = Convert.ToDateTime(rd[4]);
+                        // Key on the academic year the label names when it looks like one,
+                        // otherwise derive it from the intake year.
+                        string key = rd.IsDBNull(1) ? "" : Convert.ToString(rd[1]).Trim();
+                        if (key.IndexOf('/') < 0) key = yr + "/" + (yr + 1);
+                        map[key] = st;
+                    }
+                }
+            }
+        }
+        catch { /* table absent or unreadable — every year simply reads as unconfigured */ }
+        return map;
+    }
+
+    /// <summary>Admission settings for one academic year.</summary>
+    public static AdmissionState GetAdmission(string acadyear)
+    {
+        Dictionary<string, AdmissionState> map = GetAdmissionMap();
+        AdmissionState st;
+        if (map.TryGetValue((acadyear ?? "").Trim(), out st)) return st;
+        return new AdmissionState();
+    }
+
+    /// <summary>
+    /// Opens or closes admission for an academic year, with an optional window.
+    /// Returns "" on success or a message describing what stopped it.
+    ///
+    /// apply_intakes has no unique key on intake_year, so this updates in place where a
+    /// row exists and inserts only when none does — otherwise repeated saves would leave
+    /// several rows for one year and the application list would show it twice.
+    /// </summary>
+    public static string SetAdmission(string acadyear, bool isOpen,
+                                      DateTime? openFrom, DateTime? openTo, string user)
+    {
+        int yr = IntakeYearOf(acadyear);
+        if (yr <= 0) return "That academic year could not be read.";
+        if (openFrom.HasValue && openTo.HasValue && openTo.Value < openFrom.Value)
+            return "The admission close date cannot be before the open date.";
+
+        try
+        {
+            using (MySqlConnection conn = new MySqlConnection(ConnStr))
+            {
+                conn.Open();
+                int affected;
+                using (MySqlCommand cmd = new MySqlCommand(
+                    "UPDATE apply_intakes SET intake_label=@lbl, is_open=@open, " +
+                    "open_from=@from, open_to=@to WHERE intake_year=@yr", conn))
+                {
+                    cmd.Parameters.AddWithValue("@lbl", acadyear.Trim());
+                    cmd.Parameters.AddWithValue("@open", isOpen ? 1 : 0);
+                    cmd.Parameters.AddWithValue("@from", openFrom.HasValue ? (object)openFrom.Value : DBNull.Value);
+                    cmd.Parameters.AddWithValue("@to", openTo.HasValue ? (object)openTo.Value : DBNull.Value);
+                    cmd.Parameters.AddWithValue("@yr", yr);
+                    affected = cmd.ExecuteNonQuery();
+                }
+
+                if (affected == 0)
+                {
+                    using (MySqlCommand cmd = new MySqlCommand(
+                        "INSERT INTO apply_intakes (intake_year, intake_label, session_type, " +
+                        " is_open, open_from, open_to, created_at) " +
+                        "VALUES (@yr, @lbl, 'ALL', @open, @from, @to, NOW())", conn))
+                    {
+                        cmd.Parameters.AddWithValue("@yr", yr);
+                        cmd.Parameters.AddWithValue("@lbl", acadyear.Trim());
+                        cmd.Parameters.AddWithValue("@open", isOpen ? 1 : 0);
+                        cmd.Parameters.AddWithValue("@from", openFrom.HasValue ? (object)openFrom.Value : DBNull.Value);
+                        cmd.Parameters.AddWithValue("@to", openTo.HasValue ? (object)openTo.Value : DBNull.Value);
+                        cmd.ExecuteNonQuery();
+                    }
+                }
+            }
+            return "";
+        }
+        catch (MySqlException ex)
+        {
+            return "Admission settings could not be saved: " + ex.Message;
+        }
+    }
+
+    /// <summary>Academic years currently accepting applications, newest first. This is
+    /// what an applicant should be offered.</summary>
+    public static List<string> GetOpenAdmissionYears()
+    {
+        var open = new List<string>();
+        foreach (KeyValuePair<string, AdmissionState> kv in GetAdmissionMap())
+            if (kv.Value.IsAcceptingNow) open.Add(kv.Key);
+        open.Sort();
+        open.Reverse();
+        return open;
+    }
+
     /// <summary>Returns a single academic year row by its acadyear string.</summary>
     public static DataRow GetAcademicYear(string acadyear)
     {

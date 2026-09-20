@@ -1128,49 +1128,53 @@ public partial class API_v2_apply : System.Web.UI.Page
         ApiHelper.Success(Response, ApiHelper.TableToList(dt));
     }
 
+    /// <summary>
+    /// The intakes an applicant may apply for. Set on eAdmin → Academic Years → Admission,
+    /// which writes apply_intakes; the eportal wizard reads the same rows.
+    ///
+    /// This used to fall back to returning CLOSED intakes when none were open, and to seed an
+    /// open one when the table was empty — between them an administrator could not actually
+    /// close admissions. Now: never configured falls back, configured-and-closed means closed.
+    /// </summary>
     private void HandleIntakes()
     {
         const string selectCols = @"SELECT id, intake_year, intake_label, session_type, is_open,
                      DATE_FORMAT(open_from,'%Y-%m-%d') AS open_from,
                      DATE_FORMAT(open_to,'%Y-%m-%d') AS open_to
               FROM apply_intakes";
+
+        int configured = -1;
         try
         {
-            DataTable dt = ApiHelper.Query(selectCols + " WHERE is_open = 1 ORDER BY intake_year DESC");
+            DataTable cnt = ApiHelper.Query("SELECT COUNT(*) AS n FROM apply_intakes");
+            configured = cnt.Rows.Count > 0 ? Convert.ToInt32(cnt.Rows[0]["n"]) : 0;
 
-            if (dt.Rows.Count == 0)
-                dt = ApiHelper.Query(selectCols + " ORDER BY intake_year DESC, id DESC LIMIT 10");
+            DataTable dt = ApiHelper.Query(selectCols +
+                @" WHERE is_open = 1
+                     AND (open_from IS NULL OR NOW() >= open_from)
+                     AND (open_to   IS NULL OR NOW() <= open_to)
+                   ORDER BY intake_year DESC");
 
-            if (dt.Rows.Count > 0)
-            {
-                ApiHelper.Success(Response, ApiHelper.TableToList(dt));
-                return;
-            }
+            if (dt.Rows.Count > 0) { ApiHelper.Success(Response, ApiHelper.TableToList(dt)); return; }
+
+            // Configured, and nothing is open: admissions are closed. An empty list is the
+            // honest answer — offering closed intakes would let an applicant start something
+            // the server will refuse.
+            if (configured > 0) { ApiHelper.Success(Response, new List<Dictionary<string, object>>()); return; }
         }
-        catch { /* table may not exist yet — fall through to seed below */ }
+        catch { /* table missing — fall through and seed the historic default */ }
 
-        // Table missing or empty — seed one open intake and return it
+        // Never configured: return the historic fallback WITHOUT writing anything.
+        //
+        // This used to seed a row here, via an INSERT that was a MySQL syntax error
+        // ("SELECT <literals> WHERE ..." needs a FROM clause), so it silently failed every
+        // time and the table stayed empty. Repairing it would have been worse than leaving
+        // it: the seeded window ran March-July of the current year, so the moment it
+        // succeeded the next call would fall outside that window and admissions would shut
+        // on their own. An unconfigured install should behave exactly as it always has
+        // until someone opens a year on eAdmin > Academic Years > Admission.
         int year = DateTime.UtcNow.Year;
         string label = "August " + year + " Intake";
-        try
-        {
-            ApiHelper.Execute(
-                @"CREATE TABLE IF NOT EXISTS apply_intakes (
-                    id INT AUTO_INCREMENT PRIMARY KEY, intake_year INT NOT NULL,
-                    intake_label VARCHAR(100) NOT NULL, session_type VARCHAR(30) NOT NULL DEFAULT 'ALL',
-                    is_open TINYINT(1) NOT NULL DEFAULT 0,
-                    open_from DATE NULL, open_to DATE NULL,
-                    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
-                  ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
-            ApiHelper.Execute(
-                "INSERT INTO apply_intakes (intake_year, intake_label, session_type, is_open, open_from, open_to) " +
-                "SELECT @yr, @lbl, 'ALL', 1, @from, @to WHERE NOT EXISTS (SELECT 1 FROM apply_intakes LIMIT 1)",
-                new MySqlParameter("@yr",   year),
-                new MySqlParameter("@lbl",  label),
-                new MySqlParameter("@from", year + "-03-01"),
-                new MySqlParameter("@to",   year + "-07-31"));
-        }
-        catch { /* best effort — still return fallback below */ }
 
         ApiHelper.Success(Response, new List<Dictionary<string, object>>
         {
@@ -1178,6 +1182,7 @@ public partial class API_v2_apply : System.Web.UI.Page
             {
                 { "id", 1 }, { "intake_year", year },
                 { "intake_label", label },
+
                 { "session_type", "ALL" }, { "is_open", 1 },
                 { "open_from", year + "-03-01" }, { "open_to", year + "-07-31" }
             }

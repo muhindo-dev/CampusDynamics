@@ -259,6 +259,13 @@ select.ay-form-input { cursor: pointer; }
                 <HeaderStyle HorizontalAlign="Center" />
                 <CellStyle HorizontalAlign="Center" />
             </dx:GridViewDataTextColumn>
+            <dx:GridViewDataTextColumn Caption="Admission" Width="130px" ToolTip="Whether applicants may apply for this year">
+                <DataItemTemplate>
+                    <%# GetAdmissionHtml(Eval("acadyear")) %>
+                </DataItemTemplate>
+                <HeaderStyle HorizontalAlign="Center" />
+                <CellStyle HorizontalAlign="Center" />
+            </dx:GridViewDataTextColumn>
             <dx:GridViewDataTextColumn FieldName="is_current_year" Caption="Current Year" Width="100px">
                 <DataItemTemplate>
                     <%# Eval("is_current_year").ToString() == "Yes"
@@ -286,7 +293,7 @@ select.ay-form-input { cursor: pointer; }
                 <HeaderStyle HorizontalAlign="Center" />
                 <CellStyle HorizontalAlign="Center" />
             </dx:GridViewDataTextColumn>
-            <dx:GridViewDataColumn Caption="Actions" Width="180px" UnboundType="String">
+            <dx:GridViewDataColumn Caption="Actions" Width="290px" UnboundType="String">
                 <DataItemTemplate>
                     <div style="display:flex;gap:4px;align-items:center;">
                         <button type="button" class="ay-btn ay-action-edit" style="padding:4px 10px;font-size:11px;"
@@ -299,6 +306,12 @@ select.ay-form-input { cursor: pointer; }
                                 title="Set as current academic year">
                             <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"></polyline></svg>
                             Set Current
+                        </button>
+                        <button type="button" class="ay-btn ay-action-admission" style="padding:4px 8px;font-size:11px;"
+                                data-year='<%# Eval("acadyear") %>' onclick="openAdmission(this.getAttribute('data-year'));return false;"
+                                title="Open or close applications for this academic year">
+                            <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"></path><circle cx="12" cy="7" r="4"></circle></svg>
+                            Admission
                         </button>
                     </div>
                 </DataItemTemplate>
@@ -454,6 +467,57 @@ select.ay-form-input { cursor: pointer; }
     </div>
 </div>
 
+<%-- ═══ Admission window ═══════════════════════════════════════════════════
+     Writes apply_intakes, which the eportal apply wizard and the v2 API were
+     already reading before any screen could set it. --%>
+<div class="ay-modal-overlay" id="admissionOverlay">
+    <div class="ay-modal" style="max-width:520px">
+        <div class="ay-modal__header">
+            <span class="ay-modal__title">Admission for <span id="lblAdmYear">—</span></span>
+            <button type="button" class="ay-modal__close" onclick="closeAdmissionModal();return false;">&times;</button>
+        </div>
+        <div class="ay-modal__body">
+            <p style="font-size:12px;color:#64748b;margin:0 0 14px;line-height:1.6;">
+                Controls whether applicants may apply <b>for this academic year</b> in the student
+                portal. Closing it removes the year from the applicant's list; it does not affect
+                applications already submitted.
+            </p>
+
+            <label style="display:flex;gap:10px;align-items:flex-start;background:#f8fafc;border:1px solid #e0e5ed;border-left:3px solid #05275C;padding:12px 14px;cursor:pointer;">
+                <asp:CheckBox ID="chkAdmissionOpen" runat="server" />
+                <span style="font-size:12.5px;line-height:1.5;color:#1a1a2e;">
+                    <b>Accept applications for this year</b><br />
+                    <span style="color:#64748b;font-size:11.5px;">Applicants will see this year in the Intake / Entry Year list.</span>
+                </span>
+            </label>
+
+            <div style="display:flex;gap:12px;flex-wrap:wrap;margin-top:14px;">
+                <div style="flex:1 1 180px;">
+                    <label class="ay-form-label" for="<%= txtAdmFrom.ClientID %>">Open from (optional)</label>
+                    <asp:TextBox ID="txtAdmFrom" runat="server" TextMode="Date" CssClass="ay-form-input" />
+                </div>
+                <div style="flex:1 1 180px;">
+                    <label class="ay-form-label" for="<%= txtAdmTo.ClientID %>">Close on (optional)</label>
+                    <asp:TextBox ID="txtAdmTo" runat="server" TextMode="Date" CssClass="ay-form-input" />
+                </div>
+            </div>
+            <p style="font-size:11px;color:#94a3b8;margin:8px 0 0;line-height:1.5;">
+                Leave both blank to stay open until you close it here. Outside the window the year
+                is hidden from applicants even while it is marked open.
+            </p>
+
+            <asp:Literal ID="litAdmCurrent" runat="server" />
+        </div>
+        <div class="ay-modal__footer">
+            <button type="button" class="ay-btn" onclick="closeAdmissionModal();return false;">Cancel</button>
+            <asp:Button ID="btnSaveAdmission" runat="server" Text="Save admission settings"
+                        CssClass="ay-btn ay-btn--primary" OnClick="btnSaveAdmission_Click" />
+        </div>
+    </div>
+</div>
+
+<asp:HiddenField ID="hfAdmissionYear" runat="server" />
+
 <script type="text/javascript">
     function updateYearPreview() {
         var sy = document.getElementById('<%= txtStartYear.ClientID %>');
@@ -506,15 +570,25 @@ select.ay-form-input { cursor: pointer; }
         document.getElementById('setCurrentOverlay').classList.remove('open');
     }
 
+    // The current settings live on the server, so opening the modal is a postback
+    // rather than a guess at what is already stored.
+    function openAdmission(acadyear) {
+        __doPostBack('LoadAdmission', acadyear);
+    }
+    function closeAdmissionModal() {
+        document.getElementById('admissionOverlay').classList.remove('open');
+    }
+
     // Close modals on overlay click
     document.addEventListener('click', function (e) {
         if (e.target.id === 'modalOverlay') closeModal();
         if (e.target.id === 'setCurrentOverlay') closeSetCurrentModal();
+        if (e.target.id === 'admissionOverlay') closeAdmissionModal();
     });
 
     // Close modals on Escape
     document.addEventListener('keydown', function (e) {
-        if (e.key === 'Escape') { closeModal(); closeSetCurrentModal(); }
+        if (e.key === 'Escape') { closeModal(); closeSetCurrentModal(); closeAdmissionModal(); }
     });
 </script>
 
