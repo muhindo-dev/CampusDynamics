@@ -41,5 +41,11 @@ public partial class COOPERP_NewScreens_StudentRearrangeLogs : Page
     }
 
     [WebMethod(EnableSession = true)]
+    public static string ReverseSession(long sessionId, string reason)
+    {
+        return StudentRearrangeService.ReverseSession(sessionId, reason);
+    }
+
+    [WebMethod(EnableSession = true)]
     public static string Filters() { return StudentRearrangeService.Filters(); }
 }

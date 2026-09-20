@@ -28,6 +28,31 @@ public static partial class StudentRearrangeService
         return DoReverse(new List<long> { logId }, 0, reason, "entry");
     }
 
+    /// <summary>Reverses everything a whole SITTING did — which may be several saves — newest
+    /// first, in one transaction. The brief asks for the session, not the batch, and a session
+    /// can hold more than one save.</summary>
+    public static string ReverseSession(long sessionId, string reason)
+    {
+        if (!CanUse()) { NoteAttempt("reverse", "DENIED", "Role " + ActorRole(), null, sessionId); return Err("Not permitted."); }
+        var ids = new List<long>();
+        using (var c = new MySqlConnection(ConnStr()))
+        {
+            c.Open();
+            // Skip anything already undone, so re-running after a partial reversal is harmless.
+            using (var cmd = Cmd("SELECT l.id FROM campus_dynamics.acad_rearrange_log l " +
+                                 "WHERE l.session_id=@s AND l.op_type NOT IN ('RECALC','REVERSAL') " +
+                                 "  AND NOT EXISTS(SELECT 1 FROM campus_dynamics.acad_rearrange_log x " +
+                                 "                 WHERE x.reverses_log_id=l.id) " +
+                                 "ORDER BY l.id DESC", c, null))
+            {
+                cmd.Parameters.AddWithValue("@s", sessionId);
+                using (var r = cmd.ExecuteReader()) while (r.Read()) ids.Add(Convert.ToInt64(r[0]));
+            }
+        }
+        if (ids.Count == 0) return Err("That session has nothing left to reverse.");
+        return DoReverse(ids, 0, reason, "session");
+    }
+
     /// <summary>Reverses everything a single save did, newest first, in one transaction.</summary>
     public static string ReverseBatch(long batchId, string reason)
     {

@@ -166,8 +166,8 @@ function askReverse(mode) {
         '<div class="rx-warn">' +
         (mode === 'one'
             ? 'Entry <b>#' + CURRENT.id + '</b> will be restored to its state before the change.'
-            : 'Every change saved in the same batch as entry <b>#' + CURRENT.id + '</b> will be reversed, ' +
-              'newest first, in one transaction.') +
+            : 'Every change made in sitting <b>' + esc(CURRENT.sref) + '</b> that has not already been ' +
+              'undone will be reversed, newest first, in one transaction.') +
         '<br /><br />If the record has been altered since, the reversal is <b>refused</b> rather than overwriting that newer work. ' +
         'The reversal is itself logged and can be reversed in turn. GPA and CGPA are recalculated afterwards.</div>';
     qs('rx-reason-text').value = '';
@@ -190,8 +190,9 @@ qs('rx-reason-ok').addEventListener('click', function () {
     var reason = qs('rx-reason-text').value.trim();
     if (reason.length < 10 || !CURRENT) return;
     var btn = this; btn.disabled = true; btn.textContent = 'Reversing…';
-    var method = revMode === 'one' ? 'ReverseEntry' : 'ReverseBatch';
-    var args = revMode === 'one' ? { logId: CURRENT.id, reason: reason } : { batchId: CURRENT.batchId, reason: reason };
+    var method = revMode === 'one' ? 'ReverseEntry' : 'ReverseSession';
+    var args = revMode === 'one' ? { logId: CURRENT.id, reason: reason }
+                                 : { sessionId: CURRENT.sessionId, reason: reason };
     call(method, args, function (d) {
         btn.disabled = false; btn.textContent = 'Reverse';
         if (!d || !d.success) { toast(d && d.message || 'The reversal failed.', true); return; }
