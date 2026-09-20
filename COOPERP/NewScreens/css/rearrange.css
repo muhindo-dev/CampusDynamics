@@ -132,6 +132,11 @@
     font-size: 8.5px; font-weight: 700; background: #fff8e1; color: #7a5200;
     padding: 1px 5px; flex: 0 0 auto;
 }
+/* So a folded semester still reports what is out of place inside it. */
+.rx-sem__mis {
+    font-size: 8.5px; font-weight: 700; background: #fef3c7; color: #92400e;
+    padding: 1px 5px; flex: 0 0 auto; cursor: help; white-space: nowrap;
+}
 .rx-sem__closed {
     font-size: 8px; font-weight: 700; text-transform: uppercase; letter-spacing: .3px;
     background: #fdecea; color: #b3261e; padding: 1px 5px; flex: 0 0 auto;
@@ -229,7 +234,19 @@
 }
 .rx-lock--final { background: #fdecea; color: #b3261e; }
 .rx-retake { font-size: 8px; font-weight: 700; background: #ede9fe; color: #6d28d9; padding: 1px 4px; flex: 0 0 auto; }
-.rx-offcur { font-size: 8px; font-weight: 700; background: #fff8e1; color: #92400e; padding: 1px 4px; flex: 0 0 auto; }
+/* Where the curriculum says the course belongs. Amber because it is a discrepancy to
+   look at, not an error that blocks anything. */
+.rx-offcur {
+    font-size: 8px; font-weight: 700; background: #fff8e1; color: #92400e;
+    padding: 1px 4px; flex: 0 0 auto; white-space: nowrap;
+    font-variant-numeric: tabular-nums; cursor: help;
+}
+/* No mapping to compare against — quieter, because it is a gap in the catalogue
+   rather than anything the student did. */
+.rx-nocur {
+    font-size: 8px; font-weight: 600; background: #f1f5f9; color: #94a3b8;
+    padding: 1px 4px; flex: 0 0 auto; white-space: nowrap; cursor: help;
+}
 
 .rx-course__acts { display: flex; gap: 5px; align-items: center; margin-top: 6px; flex-wrap: wrap; }
 .rx-moveto { font-size: 10px; padding: 3px 5px; border: 1px solid #cbd5e1; background: #fff; border-radius: 0; font-family: inherit; }

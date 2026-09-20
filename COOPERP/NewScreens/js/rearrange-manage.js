@@ -307,11 +307,13 @@ function renderSem(sl) {
     var shut = !!SHUT[key];
 
     // Count what is pending in here, so a folded semester still says something happened inside.
-    var changed = 0;
+    var changed = 0, misplaced = 0;
     for (var n = 0; n < sl.rows.length; n++) {
-        var id = sl.rows[n].regId;
-        if (PEND.moves[id] || PEND.deletes[id] || sl.rows[n]._isNew ||
+        var r = sl.rows[n], id = r.regId;
+        if (PEND.moves[id] || PEND.deletes[id] || r._isNew ||
             (PEND.marks[id] && (PEND.marks[id].cw || PEND.marks[id].exam))) changed++;
+        var cy = r.curriculum ? r.curriculum.year : 0, cs = r.curriculum ? r.curriculum.semester : 0;
+        if (cy > 0 && cs > 0 && (cy !== sl.year || cs !== sl.sem)) misplaced++;
     }
 
     var h = '<div class="rx-sem' + (shut ? ' is-shut' : '') + '" data-year="' + sl.year +
@@ -326,6 +328,9 @@ function renderSem(sl) {
          (!sl.registered ? '<span class="rx-offcur">not registered</span>' : '') +
          '<span class="rx-sem__count">' + sl.rows.length +
              (sl.rows.length === 1 ? ' course' : ' courses') + '</span>' +
+         (misplaced ? '<span class="rx-sem__mis" title="' + misplaced +
+             ' course(s) here are placed somewhere else by the curriculum">' + misplaced +
+             ' misplaced</span>' : '') +
          (changed ? '<span class="rx-sem__chg">' + changed + ' changed</span>' : '') +
          '</div>';
 
@@ -358,8 +363,12 @@ function renderCourse(c, sl) {
     var hasMarks = (cw !== null && cw !== undefined) || (ex !== null && ex !== undefined);
     var tot = (cw === null || cw === undefined ? 0 : +cw) + (ex === null || ex === undefined ? 0 : +ex);
 
-    var offCur = c.curriculum && c.curriculum.year > 0 &&
-                 (c.curriculum.year !== sl.year || c.curriculum.semester !== sl.sem);
+    // Where the programme curriculum puts this course. Both parts have to be present for
+    // the answer to be usable — a mapping with a blank year or semester says nothing.
+    var curY = c.curriculum ? c.curriculum.year : 0;
+    var curS = c.curriculum ? c.curriculum.semester : 0;
+    var mapped = curY > 0 && curS > 0;
+    var offCur = mapped && (curY !== sl.year || curS !== sl.sem);
 
     var h = '<div class="' + cls + '" draggable="' + (del ? 'false' : 'true') + '" data-reg="' + c.regId + '" ' +
             'data-year="' + sl.year + '" data-sem="' + sl.sem + '">';
@@ -374,8 +383,14 @@ function renderCourse(c, sl) {
     if (c.locked) h += '<span class="rx-lock' + (c.lockStatus === 'FINAL_PUBLISHED' ? ' rx-lock--final' : '') +
                        '" title="Results status: ' + esc(c.lockStatus) + '">' +
                        (c.lockStatus === 'FINAL_PUBLISHED' ? 'FINAL' : 'LOCKED') + '</span>';
-    if (offCur) h += '<span class="rx-offcur" title="Curriculum places this in Year ' + c.curriculum.year +
-                     ' Semester ' + c.curriculum.semester + '">off-curr</span>';
+    // Name the destination rather than only flagging a problem: the officer can see where
+    // the course belongs without opening the row.
+    if (offCur) h += '<span class="rx-offcur" title="The programme curriculum places ' + esc(c.course) +
+                     ' in Year ' + curY + ' Semester ' + curS + '. It is sitting in Year ' + sl.year +
+                     ' Semester ' + sl.sem + '.">\u2192 Y' + curY + ' S' + curS + '</span>';
+    else if (!mapped) h += '<span class="rx-nocur" title="' + esc(c.course) +
+                     ' is not mapped to a year and semester on this programme\u2019s curriculum, ' +
+                     'so there is nothing to compare its placement against.">no curriculum</span>';
     h += '<span class="rx-course__sp"></span>';
     if (hasMarks) h += '<span class="rx-course__tot">' + tot + '</span>';
     if (c.grade) h += '<span class="rx-grade' + (c.grade === 'F' ? ' rx-grade--f' : '') + '">' + esc(c.grade) + '</span>';

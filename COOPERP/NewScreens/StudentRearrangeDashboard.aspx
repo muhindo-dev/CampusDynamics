@@ -1,6 +1,6 @@
 <%@ Page Language="C#" MasterPageFile="~/COOPERP/NewScreens/SidebarMaster.master" AutoEventWireup="true" CodeFile="StudentRearrangeDashboard.aspx.cs" Inherits="COOPERP_NewScreens_StudentRearrangeDashboard" Title="Rearrangement Dashboard - Campus Dynamics" %>
 <asp:Content ID="HeadContent" ContentPlaceHolderID="HeadContent" runat="server">
-    <link href="css/rearrange.css?v=20260921b" rel="stylesheet" type="text/css" />
+    <link href="css/rearrange.css?v=20260921c" rel="stylesheet" type="text/css" />
 </asp:Content>
 <asp:Content ID="MainContent" ContentPlaceHolderID="ContentPlaceHolder1" runat="server">
 <div class="rx-wrap">
@@ -71,5 +71,5 @@
   </div>
 </div>
 
-<script src="js/rearrange-dashboard.js?v=20260921b" type="text/javascript"></script>
+<script src="js/rearrange-dashboard.js?v=20260921c" type="text/javascript"></script>
 </asp:Content>
