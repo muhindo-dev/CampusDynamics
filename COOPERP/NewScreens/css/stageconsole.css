@@ -70,8 +70,12 @@
 .sc-sub{font-size:9px;color:#94a3b8;margin-top:1px;}
 /* Tracker: two short lines of provenance. Capped so a long "Lecturer: Name (email)"
    value wraps inside its own column instead of stretching the whole table. */
-.sc-track{max-width:190px;}
+.sc-track{max-width:230px;}
 .sc-track .sc-sub{white-space:normal;line-height:1.35;}
+/* The marks themselves, as a change left them - the part an operator is checking,
+   so it is darker than the surrounding provenance and the new value is bolded. */
+.sc-track__val{font-size:9px;color:#475569;margin-top:2px;line-height:1.45;white-space:normal;}
+.sc-track__val b{color:#05275C;font-weight:700;}
 .sc-track__none{font-size:9px;color:#cbd5e1;font-style:italic;}
 .sc-empty{text-align:center;color:#94a3b8;padding:20px;}
 .sc-pager{display:flex;align-items:center;gap:8px;padding:8px 12px;font-size:11px;color:#64748b;border-top:1px solid #eef2f6;}

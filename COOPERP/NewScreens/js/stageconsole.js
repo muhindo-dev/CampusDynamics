@@ -123,57 +123,97 @@ function loadBrowse(p) {
     });
 }
 /* -- Tracker -----------------------------------------------------------------
-   Who did what to this mark. Two independent facts, both already recorded on the
-   row and neither previously shown anywhere in these consoles:
+   The story of one mark, from what the row and the audit already record:
 
-     markBy  - the last change to the MARKS themselves, from the trigger-written
-               provisional-marks audit: the lecturer who entered or edited them,
-               when, and from which screen.
-     stageBy - who moved the mark into the stage it is sitting at now, i.e. who
-               captured / approved / published it.
+     - who last changed the marks, when, from which screen, and WHAT THEY CHANGED
+       THEM FROM AND TO;
+     - who first entered them, when that is a different person or a different moment
+       from the last change;
+     - how many times they have been changed;
+     - who moved the mark into the stage it is sitting at now (captured / approved /
+       published).
 
-   A row can carry either, both, or neither. Neither is the honest answer for marks
-   that predate the audit trigger and the staged workflow, so the cell says so rather
-   than sitting empty and looking like a rendering fault. */
+   A row can carry all of that, some of it, or none. None is the honest answer for
+   marks that predate both the audit trigger and the staged workflow, and the cell
+   says so rather than sitting empty and looking like a rendering fault. */
 var MARK_ACT   = { INSERT: 'Marks entered', UPDATE: 'Marks edited', MIGRATE: 'Migrated in' };
 var STAGE_VERB = { ENTERED: 'Entered', CAPTURED: 'Captured', APPROVED: 'Approved',
                    PUBLISHED: 'Published', NOT_ENTERED: 'Cleared' };
 
 /* Attribution is written by several different paths and arrives in several shapes:
-   "Lecturer: Nabbira Jackline (nabbiiraj@mru.ac.ug)", "ndagirei@mru.ac.ug", "Muhindo
-   mubaraka". Show the person, not the packaging. */
+   "Lecturer: Nabbira Jackline (nabbiiraj@mru.ac.ug)", "Admin: svincent",
+   "ndagirei@mru.ac.ug", "Muhindo mubaraka". Show the person, not the packaging.
+   The prefix strip requires a space after the colon so that a source page such as
+   "Portal:lecturer-marks-edit" is left alone. */
 function who(v) {
     if (!v) return '';
-    var t = String(v).replace(/^\s*Lecturer\s*:\s*/i, '').replace(/\s*\([^)]*\)\s*$/, '').trim();
+    var t = String(v)
+        .replace(/^\s*[A-Za-z][A-Za-z ]{0,19}:\s+/, '')   // "Admin: x", "Lecturer: x"
+        .replace(/\s*\([^)]*\)\s*$/, '')                  // trailing "(email)"
+        .trim();
     return t || String(v).trim();
 }
-function viaLabel(v) {
-    if (!v) return '';
-    if (v.indexOf('Portal:') === 0) return 'portal';
-    if (v.indexOf('ODEL') === 0)    return 'ODEL';
-    if (v.indexOf('eadmin') === 0)  return 'eadmin';
-    return v;
+
+/* One component's movement. A null "old" is the first value that component ever had,
+   so it reads as a value rather than as a change from nothing. */
+function delta(label, changed, oldV, newV) {
+    var has = function (x) { return x !== null && x !== undefined && x !== ''; };
+    if (!has(newV)) return '';
+    if (!changed && !(has(oldV) && oldV !== newV)) return '';
+    if (!has(oldV))    return label + ' <b>' + newV + '</b>';
+    if (oldV === newV) return '';
+    return label + ' ' + oldV + ' &rarr; <b>' + newV + '</b>';
 }
+
+function valueLine(r) {
+    var parts = [];
+    var cw = delta('CW', r.cwChg, r.cwOld, r.cwNew);    if (cw) parts.push(cw);
+    var ex = delta('Exam', r.exChg, r.exOld, r.exNew);  if (ex) parts.push(ex);
+    var to = delta('Total', false, r.totOld, r.totNew); if (to) parts.push(to);
+    return parts.length ? '<div class="sc-track__val">' + parts.join(' \u00b7 ') + '</div>' : '';
+}
+
+function tLead(name) { return '<span class="sc-code">' + esc(name) + '</span>'; }
+function tSub(html)  { return '<div class="sc-sub">' + html + '</div>'; }
+function tWhen(at)   { return at ? ' \u00b7 ' + esc(at) : ''; }
+
 function trackerCell(r) {
+    // On the Capture console the queue IS the entered stage, so mark_stage_changed_by
+    // there records the same event as the earliest audit row. Treat entry as one fact
+    // from whichever source has it, and keep the stage line for later stages only.
+    var atEntry = (STAGE.fromStage === 'ENTERED');
+    var lastAt  = r.markAt || '';
+    var entryBy = '', entryAt = '';
+    if (r.firstBy && r.firstIsEntry) { entryBy = r.firstBy; entryAt = r.firstAt; }
+    else if (atEntry && r.stageBy)   { entryBy = r.stageBy; entryAt = r.stageAt; }
+
     var h = '';
+
     if (r.markBy) {
-        h += '<span class="sc-code">' + esc(who(r.markBy)) + '</span>' +
-             '<div class="sc-sub">' + esc(MARK_ACT[r.markAct] || 'Marks changed') +
-             (r.markAt ? ' · ' + esc(r.markAt) : '') +
-             (viaLabel(r.markVia) ? ' · ' + esc(viaLabel(r.markVia)) : '') + '</div>';
+        var soleEntry = (r.changes === 1 && r.firstIsEntry);
+        h += tLead(who(r.markBy));
+        h += tSub(esc(soleEntry ? 'Marks entered' : (MARK_ACT[r.markAct] || 'Marks changed')) +
+                  tWhen(lastAt) + (r.markVia ? ' \u00b7 ' + esc(r.markVia) : ''));
+        h += valueLine(r);
+        if (r.changes > 1) h += tSub(r.changes + ' changes recorded');
+        // Only when it is not simply a restatement of the change above.
+        if (entryBy && !(who(entryBy) === who(r.markBy) && entryAt === lastAt)) {
+            h += tSub('Entered by ' + esc(who(entryBy)) + tWhen(entryAt));
+        }
+    } else if (entryBy) {
+        h += tLead(who(entryBy)) + tSub('Marks entered' + tWhen(entryAt));
     }
-    if (r.stageBy) {
+
+    if (r.stageBy && !atEntry) {
         var verb = STAGE_VERB[STAGE.fromStage] || 'Moved here';
-        // With no marks-audit entry this is all the row knows, so lead with it.
-        h += r.markBy
-            ? '<div class="sc-sub">' + esc(verb) + ' by ' + esc(who(r.stageBy)) +
-              (r.stageAt ? ' · ' + esc(r.stageAt) : '') + '</div>'
-            : '<span class="sc-code">' + esc(who(r.stageBy)) + '</span><div class="sc-sub">' +
-              esc(verb) + (r.stageAt ? ' · ' + esc(r.stageAt) : '') + '</div>';
+        h += h ? tSub(esc(verb) + ' by ' + esc(who(r.stageBy)) + tWhen(r.stageAt))
+               : tLead(who(r.stageBy)) + tSub(esc(verb) + tWhen(r.stageAt));
     }
+
     if (!h) h = '<span class="sc-track__none">not recorded</span>';
     return h;
 }
+
 function pager(p, pages, total) {
     return '<span class="sc-pginfo">' + total.toLocaleString() + ' mark(s) · page ' + p + ' / ' + pages + '</span><span style="margin-left:auto"></span>' +
         '<button type="button" class="sc-btn sc-btn--ghost" ' + (p <= 1 ? 'disabled' : '') + ' onclick="SC.go(' + (p - 1) + ')">&laquo; Prev</button>' +

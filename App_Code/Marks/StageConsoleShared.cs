@@ -176,6 +176,18 @@ public static class StageConsoleShared
                     // plus a primary-key read, over the 50 rows of one page: unmeasurable.
                     " pa.performed_by mark_by, pa.action_type mark_act, pa.source_page mark_via," +
                     " DATE_FORMAT(pa.created_at,'%d %b %Y %H:%i') mark_at," +
+                    // the marks themselves, as that change left them
+                    " pa.changed_cw cw_chg, pa.old_cw cw_old, pa.new_cw cw_new," +
+                    " pa.changed_exam ex_chg, pa.old_exam ex_old, pa.new_exam ex_new," +
+                    " pa.old_total tot_old, pa.new_total tot_new," +
+                    // the FIRST recorded change is who put the marks there. It is a true first
+                    // entry only when nothing preceded it - marks that predate the audit trigger
+                    // have an earliest row that is already an edit, and saying "entered by" of
+                    // that person would be a lie.
+                    " pf.performed_by first_by, DATE_FORMAT(pf.created_at,'%d %b %Y %H:%i') first_at," +
+                    " (CASE WHEN pf.old_cw IS NULL AND pf.old_exam IS NULL THEN 1 ELSE 0 END) first_is_entry," +
+                    " (SELECT COUNT(*) FROM campus_dynamics_portal.acad_provisional_marks_audit ac" +
+                    "   WHERE ac.reg_id=cr.ID) n_changes," +
                     " cr.mark_stage_changed_by stage_by," +
                     " DATE_FORMAT(cr.mark_stage_changed_at,'%d %b %Y %H:%i') stage_at" +
                     " FROM " + MarkStage.REG + " cr" +
@@ -184,6 +196,9 @@ public static class StageConsoleShared
                     " LEFT JOIN acad_course c ON c.courseID=cr.courseID" +
                     " LEFT JOIN campus_dynamics_portal.acad_provisional_marks_audit pa" +
                     "   ON pa.id=(SELECT MAX(a.id) FROM campus_dynamics_portal.acad_provisional_marks_audit a" +
+                    "             WHERE a.reg_id=cr.ID)" +
+                    " LEFT JOIN campus_dynamics_portal.acad_provisional_marks_audit pf" +
+                    "   ON pf.id=(SELECT MIN(a.id) FROM campus_dynamics_portal.acad_provisional_marks_audit a" +
                     "             WHERE a.reg_id=cr.ID)" +
                     where + " ORDER BY cr.prog_id, cr.regno LIMIT @off,@ps", conn))
                 {
@@ -203,7 +218,13 @@ public static class StageConsoleShared
                                 cw = NI(r["cw"]), exam = NI(r["ex"]), total = NI(r["tot"]),
                                 lecturer = S(r["lecturer"]), grade = GradeFromTotal(r["tot"]), failed = IsFail(r["tot"]),
                                 markBy = S(r["mark_by"]), markAt = S(r["mark_at"]), markVia = S(r["mark_via"]),
-                                markAct = S(r["mark_act"]), stageBy = S(r["stage_by"]), stageAt = S(r["stage_at"]) });
+                                markAct = S(r["mark_act"]),
+                                cwChg = ToI(r["cw_chg"]) == 1, cwOld = NI(r["cw_old"]), cwNew = NI(r["cw_new"]),
+                                exChg = ToI(r["ex_chg"]) == 1, exOld = NI(r["ex_old"]), exNew = NI(r["ex_new"]),
+                                totOld = NI(r["tot_old"]), totNew = NI(r["tot_new"]),
+                                firstBy = S(r["first_by"]), firstAt = S(r["first_at"]),
+                                firstIsEntry = ToI(r["first_is_entry"]) == 1, changes = ToI(r["n_changes"]),
+                                stageBy = S(r["stage_by"]), stageAt = S(r["stage_at"]) });
                 }
             }
             int pages = Math.Max(1, (int)Math.Ceiling(total / (double)pageSize));

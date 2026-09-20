@@ -1,6 +1,6 @@
 <%@ Page Language="C#" MasterPageFile="~/COOPERP/NewScreens/SidebarMaster.master" AutoEventWireup="true" CodeFile="MarkApproveController.aspx.cs" Inherits="COOPERP_NewScreens_MarkApproveController" Title="Approve Marks (Dean) - Campus Dynamics" %>
 <asp:Content ID="HeadContent" ContentPlaceHolderID="HeadContent" runat="server">
-    <link href="css/stageconsole.css?v=20260920a" rel="stylesheet" type="text/css" />
+    <link href="css/stageconsole.css?v=20260920b" rel="stylesheet" type="text/css" />
 </asp:Content>
 <asp:Content ID="MainContent" ContentPlaceHolderID="ContentPlaceHolder1" runat="server">
 <div class="sc-wrap">
@@ -118,5 +118,5 @@
   </div>
 </div>
 
-<script src="js/stageconsole.js?v=20260920a" type="text/javascript"></script>
+<script src="js/stageconsole.js?v=20260920b" type="text/javascript"></script>
 </asp:Content>
