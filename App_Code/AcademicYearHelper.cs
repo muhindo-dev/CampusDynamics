@@ -399,6 +399,32 @@ public static class AcademicYearHelper
         return open;
     }
 
+    /// <summary>
+    /// The year a NEW application belongs to — the year the University is admitting for,
+    /// which is not necessarily the year the form is being filled in.
+    ///
+    /// This is what goes into the application number (MRU + year + sequence) and into
+    /// stud_entry_year. Before this existed both were DateTime.Now.Year, so an applicant
+    /// choosing the 2027/2028 intake in September 2026 still got an MRU2026 number.
+    ///
+    /// When more than one year is open the latest wins: a year left open by accident is far
+    /// more likely to be a stale past one than a future one, and the applicant's own intake
+    /// list is ordered the same way.
+    ///
+    /// Falls back to the calendar year only when admission has never been configured, the
+    /// same rule the portal's intake list follows.
+    /// </summary>
+    public static int CurrentApplicationYear()
+    {
+        List<string> open = GetOpenAdmissionYears();   // already latest-first
+        for (int i = 0; i < open.Count; i++)
+        {
+            int y = IntakeYearOf(open[i]);
+            if (y > 0) return y;
+        }
+        return DateTime.Now.Year;
+    }
+
     /// <summary>Returns a single academic year row by its acadyear string.</summary>
     public static DataRow GetAcademicYear(string acadyear)
     {

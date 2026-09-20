@@ -1349,13 +1349,18 @@ public partial class API_v2_apply : System.Web.UI.Page
         string existing = GetEditableEntryNo(userId);
         if (!string.IsNullOrEmpty(existing)) return existing;
 
+        // The year being admitted FOR, not the year on the wall clock. Resolved once so the
+        // number's prefix and stud_entry_year cannot disagree — the generator counts the
+        // sequence with WHERE stud_entry_year = yr, so a mismatch restarts it at 1.
+        int appYear = AcademicYearHelper.CurrentApplicationYear();
+
         // Generate new entry number
         string entryNo;
         try
         {
             object spResult = ApiHelper.Scalar(
                 "SELECT acad_ApplicNoGenerator(@yr)",
-                new MySqlParameter("@yr", DateTime.Now.Year));
+                new MySqlParameter("@yr", appYear));
             entryNo = (spResult != null && spResult != DBNull.Value) ? spResult.ToString() : null;
         }
         catch { entryNo = null; }
@@ -1363,12 +1368,15 @@ public partial class API_v2_apply : System.Web.UI.Page
         if (string.IsNullOrEmpty(entryNo))
             entryNo = "APL" + DateTime.UtcNow.ToString("yyMMddHHmmssff");
 
+        // stud_entry_year was never set on this path, which is why applications created
+        // through the API left it NULL and dropped out of the sequence count entirely.
         ApiHelper.Execute(
-            @"INSERT INTO acad_applications (stud_entry_no, applicant_user_id, stud_email, app_status, app_created_at, app_last_updated_at)
-              VALUES (@eno, @uid, @email, 'DRAFT', @now, @now)",
+            @"INSERT INTO acad_applications (stud_entry_no, applicant_user_id, stud_email, stud_entry_year, app_status, app_created_at, app_last_updated_at)
+              VALUES (@eno, @uid, @email, @year, 'DRAFT', @now, @now)",
             new MySqlParameter("@eno",   entryNo),
             new MySqlParameter("@uid",   userId),
             new MySqlParameter("@email", email),
+            new MySqlParameter("@year",  appYear),
             new MySqlParameter("@now",   DateTime.UtcNow));
 
         return entryNo;
