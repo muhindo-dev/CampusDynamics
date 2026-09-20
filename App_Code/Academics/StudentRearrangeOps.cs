@@ -416,21 +416,56 @@ public static partial class StudentRearrangeService
         return null;
     }
 
-    /// <summary>Resolves the academic year of a (studyyear, semester) from the student's own
-    /// semester registrations — the same authority acad_GetResultsAcademicYear uses. Returns ""
-    /// when the student does not hold that semester, which is a refusal rather than a guess.</summary>
-    private static string AcadYearOf(MySqlConnection c, MySqlTransaction t, string regno, int studyYear, int semester)
+    /// <summary>
+    /// Resolves the academic year of a (studyyear, semester) for this student.
+    ///
+    /// A semester the officer can SEE must be usable. The workspace draws a slot whenever
+    /// anything sits in it, so a semester can be on screen holding courses while having no
+    /// acad_registration row — and demanding that row refused moves into semesters that were
+    /// visibly there, which is a worse answer than reading the year off what is already in the
+    /// slot.
+    ///
+    /// The chain widens acad_GetResultsAcademicYear’s own fallback (registration, then
+    /// transcript rows) with the other places the answer is already written down, and ends at a
+    /// caller-supplied default so a move is never blocked for want of a label. Whichever step
+    /// answers is reported back, because everything past the first is an inference and the log
+    /// should say which one was used.
+    /// </summary>
+    private static string AcadYearOf(MySqlConnection c, MySqlTransaction t, string regno,
+                                     int studyYear, int semester, string fallback, out string basis)
     {
-        using (var cmd = Cmd(
-            "SELECT MIN(acad_year) FROM campus_dynamics.acad_registration " +
-            "WHERE regno=@r AND studyyear=@y AND semester=@s AND IFNULL(acad_year,'') NOT IN ('','-')", c, t))
+        basis = "";
+        string[][] probes = new string[][] {
+            new string[] { "registration",
+                "SELECT MIN(acad_year) FROM campus_dynamics.acad_registration " +
+                "WHERE regno=@r AND studyyear=@y AND semester=@s AND IFNULL(acad_year,'') NOT IN ('','-')" },
+            new string[] { "the published results already in that semester",
+                "SELECT MIN(acad) FROM campus_dynamics.acad_results " +
+                "WHERE regno=@r AND studyyear=@y AND semester=@s AND IFNULL(acad,'') NOT IN ('','-')" },
+            new string[] { "the transcript rows for that semester",
+                "SELECT MIN(acad) FROM campus_dynamics.acad_transcript_results " +
+                "WHERE regno=@r AND studyyear=@y AND semester=@s AND IFNULL(acad,'') NOT IN ('','-')" },
+            new string[] { "the other semesters in that year of study",
+                "SELECT MIN(acad_year) FROM campus_dynamics.acad_registration " +
+                "WHERE regno=@r AND studyyear=@y AND IFNULL(acad_year,'') NOT IN ('','-')" }
+        };
+
+        for (int i = 0; i < probes.Length; i++)
         {
-            cmd.Parameters.AddWithValue("@r", regno);
-            cmd.Parameters.AddWithValue("@y", studyYear);
-            cmd.Parameters.AddWithValue("@s", semester);
-            object o = cmd.ExecuteScalar();
-            return o == null || o == DBNull.Value ? "" : Convert.ToString(o).Trim();
+            using (var cmd = Cmd(probes[i][1], c, t))
+            {
+                cmd.Parameters.AddWithValue("@r", regno);
+                cmd.Parameters.AddWithValue("@y", studyYear);
+                cmd.Parameters.AddWithValue("@s", semester);
+                object o = cmd.ExecuteScalar();
+                string v = o == null || o == DBNull.Value ? "" : Convert.ToString(o).Trim();
+                if (v.Length > 0) { basis = probes[i][0]; return v; }
+            }
         }
+
+        fallback = (fallback ?? "").Trim();
+        if (fallback.Length > 0) { basis = "the course’s existing academic year"; return fallback; }
+        return "";
     }
 
     private static bool SemesterIsClosed(MySqlConnection c, MySqlTransaction t, string regno, int studyYear, int semester)
@@ -474,6 +509,23 @@ public static partial class StudentRearrangeService
     //  The operations
     // ═════════════════════════════════════════════════════════════════════════
 
+    // MRU runs semesters 1-3 and study years 1-5 (8 allows headroom for a long programme).
+    // This checks the target is a term that can exist, which is a far lighter test than
+    // demanding the student already holds it.
+    private const int MaxSemester = 3;
+    private const int MaxStudyYear = 8;
+
+    private static string TermShapeError(int studyYear, int semester)
+    {
+        if (studyYear < 1 || studyYear > MaxStudyYear)
+            return "Year " + studyYear + " is not a year of study this institution runs (1 to " +
+                   MaxStudyYear + ").";
+        if (semester < 1 || semester > MaxSemester)
+            return "Semester " + semester + " does not exist here — semesters run 1 to " +
+                   MaxSemester + ".";
+        return null;
+    }
+
     private static OpResult DoMove(MySqlConnection c, MySqlTransaction t, SessionInfo sess,
                                    long batchId, int seq, Dictionary<string, object> op)
     {
@@ -484,19 +536,30 @@ public static partial class StudentRearrangeService
         var x = LoadReg(c, t, sess.regno, regId);
         if (x == null) { res.error = "That course registration is no longer on the student's record."; return res; }
         if (toYear <= 0 || toSem <= 0) { res.error = "The destination year and semester are missing."; return res; }
+        string shape = TermShapeError(toYear, toSem);
+        if (shape != null) { res.error = shape; return res; }
         if (x.studyYear == toYear && x.semester == toSem)
-        { res.error = x.course + " is already in Year " + toYear + " Semester " + toSem + "."; return res; }
+        {
+            // Nothing to do is not the same as a failure. Failing here threw away every other
+            // change in the batch because one instruction happened to be redundant.
+            res.applied = true;
+            res.summary = x.course + " was already in Year " + toYear + " Semester " + toSem + " — left as it is";
+            return res;
+        }
 
         bool isOverride; string lockStatus;
         string lockErr = CheckLock(x, op, out isOverride, out lockStatus);
         if (lockErr != null) { res.error = lockErr; return res; }
 
-        string toAcad = AcadYearOf(c, t, sess.regno, toYear, toSem);
+        // Last resort is the course’s own academic year: moving between semesters of the same
+        // year of study keeps it, and it is never worse than refusing the move outright.
+        string yearBasis;
+        string toAcad = AcadYearOf(c, t, sess.regno, toYear, toSem, x.acadYear, out yearBasis);
         if (toAcad.Length == 0)
         {
-            res.error = "The student is not registered for Year " + toYear + " Semester " + toSem +
-                        ", so there is no academic year to move " + x.course + " into. " +
-                        "Register that semester first, in the same sitting, then move the course.";
+            res.error = "Nothing on this student’s record says which academic year Year " + toYear +
+                        " Semester " + toSem + " is. Register that semester in this sitting, then move " +
+                        x.course + " into it.";
             return res;
         }
 
@@ -511,7 +574,9 @@ public static partial class StudentRearrangeService
             if (Convert.ToInt32(cmd.ExecuteScalar()) > 0)
             {
                 res.error = "The student already holds " + x.course + " (" + x.courseStatus + ") in " +
-                            toAcad + " Semester " + toSem + ". Moving this one there would collide with it.";
+                            toAcad + " Semester " + toSem + ", and a student cannot hold the same course " +
+                            "twice in one term. Remove or move the copy already sitting there first, in " +
+                            "this same sitting, and both changes will be saved together.";
                 return res;
             }
         }
@@ -576,7 +641,8 @@ public static partial class StudentRearrangeService
 
         res.applied = true;
         res.summary = x.course + " moved from Year " + x.studyYear + " Semester " + x.semester +
-                      " to Year " + toYear + " Semester " + toSem +
+                      " to Year " + toYear + " Semester " + toSem + " (" + toAcad +
+                      (yearBasis == "registration" ? "" : ", academic year taken from " + yearBasis) + ")" +
                       (isOverride ? " (results lock overridden at " + lockStatus + ")" : "");
         return res;
     }
@@ -737,12 +803,24 @@ public static partial class StudentRearrangeService
 
         if (course.Length == 0) { res.error = "Choose a course to add."; return res; }
         if (toYear <= 0 || toSem <= 0) { res.error = "Choose the year and semester to add the course into."; return res; }
+        string shapeA = TermShapeError(toYear, toSem);
+        if (shapeA != null) { res.error = shapeA; return res; }
 
-        string toAcad = AcadYearOf(c, t, sess.regno, toYear, toSem);
+        string latest = "";
+        using (var cmd = Cmd("SELECT MAX(acad_year) FROM campus_dynamics.acad_registration " +
+                             "WHERE regno=@r AND IFNULL(acad_year,'') NOT IN ('','-')", c, t))
+        {
+            cmd.Parameters.AddWithValue("@r", sess.regno);
+            object o = cmd.ExecuteScalar();
+            latest = o == null || o == DBNull.Value ? "" : Convert.ToString(o).Trim();
+        }
+
+        string yearBasis;
+        string toAcad = AcadYearOf(c, t, sess.regno, toYear, toSem, latest, out yearBasis);
         if (toAcad.Length == 0)
         {
-            res.error = "The student is not registered for Year " + toYear + " Semester " + toSem +
-                        ". Register that semester first, then add the course.";
+            res.error = "Nothing on this student’s record says which academic year Year " + toYear +
+                        " Semester " + toSem + " is. Register that semester first, then add the course.";
             return res;
         }
 
@@ -791,7 +869,8 @@ public static partial class StudentRearrangeService
                  reason, false, null, null, null);
 
         res.applied = true;
-        res.summary = course + " registered into Year " + toYear + " Semester " + toSem + " (" + toAcad + ")";
+        res.summary = course + " registered into Year " + toYear + " Semester " + toSem + " (" + toAcad +
+                      (yearBasis == "registration" ? "" : ", academic year taken from " + yearBasis) + ")";
         return res;
     }
 
@@ -805,6 +884,8 @@ public static partial class StudentRearrangeService
         bool bill = GB(op, "bill");
 
         if (toYear <= 0 || toSem <= 0) { res.error = "Choose the year of study and semester to register."; return res; }
+        string shapeR = TermShapeError(toYear, toSem);
+        if (shapeR != null) { res.error = shapeR; return res; }
         if (acadYear.Length == 0) { res.error = "Choose the academic year for the new semester."; return res; }
 
         using (var cmd = Cmd("SELECT COUNT(*) FROM campus_dynamics.acad_registration " +
