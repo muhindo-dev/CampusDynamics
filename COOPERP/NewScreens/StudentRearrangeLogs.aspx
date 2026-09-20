@@ -1,6 +1,6 @@
 <%@ Page Language="C#" MasterPageFile="~/COOPERP/NewScreens/SidebarMaster.master" AutoEventWireup="true" CodeFile="StudentRearrangeLogs.aspx.cs" Inherits="COOPERP_NewScreens_StudentRearrangeLogs" Title="Rearrangement Logs - Campus Dynamics" %>
 <asp:Content ID="HeadContent" ContentPlaceHolderID="HeadContent" runat="server">
-    <link href="css/rearrange.css?v=20260920a" rel="stylesheet" type="text/css" />
+    <link href="css/rearrange.css?v=20260921a" rel="stylesheet" type="text/css" />
 </asp:Content>
 <asp:Content ID="MainContent" ContentPlaceHolderID="ContentPlaceHolder1" runat="server">
 <div class="rx-wrap">
@@ -81,5 +81,5 @@
   </div>
 </div>
 
-<script src="js/rearrange-logs.js?v=20260920a" type="text/javascript"></script>
+<script src="js/rearrange-logs.js?v=20260921a" type="text/javascript"></script>
 </asp:Content>

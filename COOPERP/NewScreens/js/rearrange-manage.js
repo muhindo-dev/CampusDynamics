@@ -258,23 +258,58 @@ function render() {
     qs('rx-save').disabled = n === 0 || SAVING;
     qs('rx-discard').disabled = n === 0 || SAVING;
 
+    var rows2 = allRows(), shutCount = 0;
+    for (var q = 0; q < rows2.length; q++) if (!OPEN[rows2[q].regId]) shutCount++;
+    var eb = qs('rx-expand');
+    if (eb) eb.textContent = shutCount > 0 ? 'Expand all' : 'Collapse all';
+
     wire();
 }
 
+/* Open courses and shut semesters. render() rebuilds the markup wholesale, so this state
+   lives out here or every redraw would fold everything back up mid-edit. */
+var OPEN = {};          // regId -> true
+var SHUT = {};          // "year/sem" -> true  (semesters are open by default)
+
+function chev(open) {
+    return '<svg class="rx-chev' + (open ? ' is-open' : '') + '" xmlns="http://www.w3.org/2000/svg" ' +
+           'width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" ' +
+           'stroke-width="3" stroke-linecap="round" stroke-linejoin="round">' +
+           '<polyline points="9 18 15 12 9 6"></polyline></svg>';
+}
+
 function renderSem(sl) {
-    var h = '<div class="rx-sem" data-year="' + sl.year + '" data-sem="' + sl.sem + '"' +
-            (sl.registered ? '' : ' data-unreg="1"') + '>';
-    h += '<div class="rx-sem__hd">Semester ' + esc(sl.sem) +
-         (sl.isNew ? ' <span class="rx-badge rx-badge--REGISTER_SEMESTER">new</span>' : '') +
-         (sl.closed ? ' <span class="rx-sem__closed" title="Holds finally published results">closed</span>' : '') +
-         (!sl.registered ? ' <span class="rx-offcur">not registered</span>' : '') +
-         '<span class="rx-sem__count">' + sl.rows.length + ' course' + (sl.rows.length === 1 ? '' : 's') + '</span>' +
+    var key = sl.year + '/' + sl.sem;
+    var shut = !!SHUT[key];
+
+    // Count what is pending in here, so a folded semester still says something happened inside.
+    var changed = 0;
+    for (var n = 0; n < sl.rows.length; n++) {
+        var id = sl.rows[n].regId;
+        if (PEND.moves[id] || PEND.deletes[id] || sl.rows[n]._isNew ||
+            (PEND.marks[id] && (PEND.marks[id].cw || PEND.marks[id].exam))) changed++;
+    }
+
+    var h = '<div class="rx-sem' + (shut ? ' is-shut' : '') + '" data-year="' + sl.year +
+            '" data-sem="' + sl.sem + '"' + (sl.registered ? '' : ' data-unreg="1"') + '>';
+
+    h += '<div class="rx-sem__hd" data-semtoggle="' + key + '" role="button" tabindex="0" ' +
+         'aria-expanded="' + (shut ? 'false' : 'true') + '">' +
+         chev(!shut) +
+         '<span class="rx-sem__name">Semester ' + esc(sl.sem) + '</span>' +
+         (sl.isNew ? '<span class="rx-badge rx-badge--REGISTER_SEMESTER">new</span>' : '') +
+         (sl.closed ? '<span class="rx-sem__closed" title="Holds finally published results">closed</span>' : '') +
+         (!sl.registered ? '<span class="rx-offcur">not registered</span>' : '') +
+         '<span class="rx-sem__count">' + sl.rows.length +
+             (sl.rows.length === 1 ? ' course' : ' courses') + '</span>' +
+         (changed ? '<span class="rx-sem__chg">' + changed + ' changed</span>' : '') +
          '</div>';
+
     h += '<div class="rx-sem__body">';
     if (sl.rows.length === 0) h += '<div class="rx-sem__empty">Drop a course here</div>';
     for (var i = 0; i < sl.rows.length; i++) h += renderCourse(sl.rows[i], sl);
-    h += '<div style="margin-top:6px"><button type="button" class="rx-btn rx-btn--ghost rx-btn--sm" ' +
-         'data-add-year="' + sl.year + '" data-add-sem="' + sl.sem + '">+ Add course</button></div>';
+    h += '<button type="button" class="rx-addbtn" data-add-year="' + sl.year +
+         '" data-add-sem="' + sl.sem + '">+ Add course</button>';
     h += '</div></div>';
     return h;
 }
@@ -285,70 +320,86 @@ function renderCourse(c, sl) {
     var mk = PEND.marks[c.regId];
     var markChanged = !!(mk && (mk.cw || mk.exam));
     var isNew = !!c._isNew;
+    var open = !!OPEN[c.regId];
 
     var cls = 'rx-course';
-    var flag = '';
-    if (del) { cls += ' rx-is-deleted'; flag = '<span class="rx-flag rx-dot-deleted"></span>'; }
-    else if (isNew) { cls += ' rx-is-added'; flag = '<span class="rx-flag rx-dot-added"></span>'; }
-    else if (moved) { cls += ' rx-is-moved'; flag = '<span class="rx-flag rx-dot-moved"></span>'; }
-    else if (markChanged) { cls += ' rx-is-mark'; flag = '<span class="rx-flag rx-dot-mark"></span>'; }
+    if (del) cls += ' rx-is-deleted';
+    else if (isNew) cls += ' rx-is-added';
+    else if (moved) cls += ' rx-is-moved';
+    else if (markChanged) cls += ' rx-is-mark';
+    if (open) cls += ' is-open';
 
     var cw = mk && mk.cw ? mk.cw.to : c.cw;
     var ex = mk && mk.exam ? mk.exam.to : c.exam;
-    var tot = (cw === null || cw === undefined ? 0 : +cw) + (ex === null || ex === undefined ? 0 : +ex);
     var hasMarks = (cw !== null && cw !== undefined) || (ex !== null && ex !== undefined);
+    var tot = (cw === null || cw === undefined ? 0 : +cw) + (ex === null || ex === undefined ? 0 : +ex);
 
     var offCur = c.curriculum && c.curriculum.year > 0 &&
                  (c.curriculum.year !== sl.year || c.curriculum.semester !== sl.sem);
 
     var h = '<div class="' + cls + '" draggable="' + (del ? 'false' : 'true') + '" data-reg="' + c.regId + '" ' +
-            'data-year="' + sl.year + '" data-sem="' + sl.sem + '">' + flag;
+            'data-year="' + sl.year + '" data-sem="' + sl.sem + '">';
 
-    h += '<div class="rx-course__top">' +
-         '<span class="rx-course__code">' + esc(c.course) + '</span>' +
-         (c.isRetake ? '<span class="rx-retake" title="Retake — travels with the course, never changed by a move">RT</span>' : '') +
-         (c.locked ? '<span class="rx-lock' + (c.lockStatus === 'FINAL_PUBLISHED' ? ' rx-lock--final' : '') + '" title="Results status: ' + esc(c.lockStatus) + '">' + esc(c.lockStatus.replace(/_/g, ' ')) + '</span>' : '') +
-         (offCur ? '<span class="rx-offcur" title="Curriculum places this in Year ' + c.curriculum.year + ' Semester ' + c.curriculum.semester + '">off-curriculum</span>' : '') +
-         '<span class="rx-course__cu">' + (c.creditUnits ? esc(c.creditUnits) + ' CU' : '') + '</span>' +
-         '</div>';
-    h += '<div class="rx-course__title">' + esc(c.title) + '</div>';
-
-    h += '<div class="rx-course__marks">' +
-         '<span class="rx-mark">CW <input type="number" class="rx-mark__in" data-mark="cw" data-reg="' + c.regId + '" ' +
-             'min="0" max="40" value="' + (cw === null || cw === undefined ? '' : esc(cw)) + '"' +
-             (del || isNew ? ' disabled="disabled"' : '') + ' /></span>' +
-         '<span class="rx-mark">Exam <input type="number" class="rx-mark__in" data-mark="exam" data-reg="' + c.regId + '" ' +
-             'min="0" max="60" value="' + (ex === null || ex === undefined ? '' : esc(ex)) + '"' +
-             (del || isNew ? ' disabled="disabled"' : '') + ' /></span>' +
-         (hasMarks ? '<span class="rx-mark">Total <b>' + tot + '</b></span>' : '') +
-         (c.grade ? '<span class="rx-grade' + (c.grade === 'F' ? ' rx-grade--f' : '') + '">' + esc(c.grade) + '</span>' : '') +
-         '</div>';
-
-    // The keyboard and touch path. Not an afterthought — on a tablet it is the only path.
-    h += '<div class="rx-course__acts">';
-    h += '<label class="rx-lbl" style="margin:0 3px 0 0;font-size:9px">Move to</label>';
-    h += '<select class="rx-moveto" data-reg="' + c.regId + '"' + (del ? ' disabled="disabled"' : '') + '>';
-    h += '<option value="">— stay —</option>';
-    var opts = moveTargets();
-    for (var i = 0; i < opts.length; i++) {
-        var o = opts[i];
-        var sel = (o.year === sl.year && o.sem === sl.sem) ? ' selected="selected"' : '';
-        h += '<option value="' + o.year + '/' + o.sem + '"' + sel + '>Y' + o.year + ' S' + o.sem +
-             (o.acadYear ? ' (' + esc(o.acadYear) + ')' : '') + '</option>';
-    }
-    h += '</select>';
-    if (del) h += '<button type="button" class="rx-btn rx-btn--ghost rx-btn--sm" data-undel="' + c.regId + '">Keep</button>';
-    else if (isNew) h += '<button type="button" class="rx-x" data-unadd="' + c.regId + '">Remove</button>';
-    else h += '<button type="button" class="rx-x" data-del="' + c.regId + '">Remove…</button>';
+    /* ── the line you always see ── */
+    h += '<div class="rx-course__hd" data-toggle="' + c.regId + '" role="button" tabindex="0" ' +
+         'aria-expanded="' + (open ? 'true' : 'false') + '">';
+    h += chev(open);
+    h += '<span class="rx-course__code">' + esc(c.course) + '</span>';
+    h += '<span class="rx-course__title" title="' + esc(c.title) + '">' + esc(c.title) + '</span>';
+    if (c.isRetake) h += '<span class="rx-retake" title="Retake \u2014 never changed by a move">RT</span>';
+    if (c.locked) h += '<span class="rx-lock' + (c.lockStatus === 'FINAL_PUBLISHED' ? ' rx-lock--final' : '') +
+                       '" title="Results status: ' + esc(c.lockStatus) + '">' +
+                       (c.lockStatus === 'FINAL_PUBLISHED' ? 'FINAL' : 'LOCKED') + '</span>';
+    if (offCur) h += '<span class="rx-offcur" title="Curriculum places this in Year ' + c.curriculum.year +
+                     ' Semester ' + c.curriculum.semester + '">off-curr</span>';
+    h += '<span class="rx-course__sp"></span>';
+    if (hasMarks) h += '<span class="rx-course__tot">' + tot + '</span>';
+    if (c.grade) h += '<span class="rx-grade' + (c.grade === 'F' ? ' rx-grade--f' : '') + '">' + esc(c.grade) + '</span>';
+    if (c.creditUnits) h += '<span class="rx-course__cu">' + esc(c.creditUnits) + '</span>';
     h += '</div>';
 
+    /* ── a folded row still says what is pending inside it ── */
     var notes = [];
-    if (moved) notes.push('Moved from Year ' + PEND.moves[c.regId].fromYear + ' Semester ' + PEND.moves[c.regId].fromSem);
+    if (moved) notes.push('Moved from Y' + PEND.moves[c.regId].fromYear + ' S' + PEND.moves[c.regId].fromSem);
     if (isNew) notes.push('New registration');
-    if (del) notes.push('To be removed — ' + esc(PEND.deletes[c.regId].reason));
-    if (mk && mk.cw) notes.push('Coursework ' + fmt(mk.cw.from) + ' → ' + fmt(mk.cw.to) + ' — ' + esc(mk.cw.reason));
-    if (mk && mk.exam) notes.push('Exam ' + fmt(mk.exam.from) + ' → ' + fmt(mk.exam.to) + ' — ' + esc(mk.exam.reason));
-    if (notes.length) h += '<div class="rx-note">' + notes.join('<br />') + '</div>';
+    if (del) notes.push('To be removed \u2014 ' + PEND.deletes[c.regId].reason);
+    if (mk && mk.cw) notes.push('CW ' + fmt(mk.cw.from) + ' \u2192 ' + fmt(mk.cw.to));
+    if (mk && mk.exam) notes.push('Exam ' + fmt(mk.exam.from) + ' \u2192 ' + fmt(mk.exam.to));
+    if (!open && notes.length) h += '<div class="rx-course__mini">' + esc(notes.join(' \u00b7 ')) + '</div>';
+
+    /* ── everything you act with, revealed on open ── */
+    if (open) {
+        h += '<div class="rx-course__bd">';
+        h += '<div class="rx-course__marks">' +
+             '<span class="rx-mark">CW <input type="number" class="rx-mark__in" data-mark="cw" data-reg="' + c.regId + '" ' +
+                 'min="0" max="40" value="' + (cw === null || cw === undefined ? '' : esc(cw)) + '"' +
+                 (del || isNew ? ' disabled="disabled"' : '') + ' /></span>' +
+             '<span class="rx-mark">Exam <input type="number" class="rx-mark__in" data-mark="exam" data-reg="' + c.regId + '" ' +
+                 'min="0" max="60" value="' + (ex === null || ex === undefined ? '' : esc(ex)) + '"' +
+                 (del || isNew ? ' disabled="disabled"' : '') + ' /></span>' +
+             (hasMarks ? '<span class="rx-mark">Total <b>' + tot + '</b></span>' : '') +
+             '</div>';
+
+        h += '<div class="rx-course__acts">';
+        h += '<label class="rx-lbl" style="margin:0 3px 0 0;font-size:9px">Move to</label>';
+        h += '<select class="rx-moveto" data-reg="' + c.regId + '"' + (del ? ' disabled="disabled"' : '') + '>';
+        h += '<option value="">\u2014 stay \u2014</option>';
+        var opts = moveTargets();
+        for (var i = 0; i < opts.length; i++) {
+            var o = opts[i];
+            var sel = (o.year === sl.year && o.sem === sl.sem) ? ' selected="selected"' : '';
+            h += '<option value="' + o.year + '/' + o.sem + '"' + sel + '>Y' + o.year + ' S' + o.sem +
+                 (o.acadYear ? ' (' + esc(o.acadYear) + ')' : '') + '</option>';
+        }
+        h += '</select>';
+        if (del) h += '<button type="button" class="rx-btn rx-btn--ghost rx-btn--sm" data-undel="' + c.regId + '">Keep</button>';
+        else if (isNew) h += '<button type="button" class="rx-x" data-unadd="' + c.regId + '">Remove</button>';
+        else h += '<button type="button" class="rx-x" data-del="' + c.regId + '">Remove\u2026</button>';
+        h += '</div>';
+
+        if (notes.length) h += '<div class="rx-note">' + esc(notes.join('\n')).split('\n').join('<br />') + '</div>';
+        h += '</div>';
+    }
 
     h += '</div>';
     return h;
@@ -376,6 +427,23 @@ function moveTargets() {
 var dragReg = null, ghostEl = null;
 
 function wire() {
+    // Toggling is a click or a keypress: these headers are focusable, so the whole
+    // workspace stays operable without a mouse.
+    bindAll('[data-toggle]', 'click', function (e) {
+        var id = +e.currentTarget.getAttribute('data-toggle');
+        if (OPEN[id]) delete OPEN[id]; else OPEN[id] = true;
+        render();
+    });
+    bindAll('[data-semtoggle]', 'click', function (e) {
+        var k = e.currentTarget.getAttribute('data-semtoggle');
+        if (SHUT[k]) delete SHUT[k]; else SHUT[k] = true;
+        render();
+    });
+    bindAll('[data-toggle],[data-semtoggle]', 'keydown', function (e) {
+        if (e.key !== 'Enter' && e.key !== ' ' && e.keyCode !== 13 && e.keyCode !== 32) return;
+        e.preventDefault(); e.currentTarget.click();
+    });
+
     var courses = document.querySelectorAll('.rx-course[draggable="true"]');
     for (var i = 0; i < courses.length; i++) {
         courses[i].addEventListener('dragstart', onDragStart);
@@ -453,7 +521,9 @@ function onDrop(e) {
     var sem = e.currentTarget;
     clearTargets();
     if (dragReg === null) return;
-    requestMove(dragReg, +sem.getAttribute('data-year'), +sem.getAttribute('data-sem'));
+    var y = +sem.getAttribute('data-year'), sm = +sem.getAttribute('data-sem');
+    delete SHUT[y + '/' + sm];      // dropping into a folded semester opens it
+    requestMove(dragReg, y, sm);
 }
 
 function findCourse(regId) {
@@ -817,6 +887,15 @@ qs('rx-confirm').addEventListener('click', function () {
         qs('rx-boot').style.display = ''; qs('rx-workspace').style.display = 'none';
         loadWorkspace();
     });
+});
+
+qs('rx-expand').addEventListener('click', function () {
+    var rows = allRows(), any = false;
+    for (var i = 0; i < rows.length; i++) if (!OPEN[rows[i].regId]) { any = true; break; }
+    OPEN = {};
+    if (any) for (var j = 0; j < rows.length; j++) OPEN[rows[j].regId] = true;
+    SHUT = {};
+    render();
 });
 
 qs('rx-discard').addEventListener('click', function () {

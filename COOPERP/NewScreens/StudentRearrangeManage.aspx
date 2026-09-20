@@ -1,6 +1,6 @@
 <%@ Page Language="C#" MasterPageFile="~/COOPERP/NewScreens/SidebarMaster.master" AutoEventWireup="true" CodeFile="StudentRearrangeManage.aspx.cs" Inherits="COOPERP_NewScreens_StudentRearrangeManage" Title="Rearrange Student Record - Campus Dynamics" %>
 <asp:Content ID="HeadContent" ContentPlaceHolderID="HeadContent" runat="server">
-    <link href="css/rearrange.css?v=20260920a" rel="stylesheet" type="text/css" />
+    <link href="css/rearrange.css?v=20260921a" rel="stylesheet" type="text/css" />
 </asp:Content>
 <asp:Content ID="MainContent" ContentPlaceHolderID="ContentPlaceHolder1" runat="server">
 <div class="rx-wrap">
@@ -67,6 +67,7 @@
         <button type="button" class="rx-btn" id="rx-save" disabled="disabled">Review &amp; save…</button>
         <button type="button" class="rx-btn rx-btn--ghost" id="rx-discard" disabled="disabled">Discard pending changes</button>
         <button type="button" class="rx-btn rx-btn--ghost" id="rx-regsem">Register a new semester…</button>
+        <button type="button" class="rx-btn rx-btn--ghost" id="rx-expand">Expand all</button>
         <button type="button" class="rx-btn rx-btn--ghost" id="rx-reload">Reload from database</button>
       </div>
     </div>
@@ -163,5 +164,5 @@
   </div>
 </div>
 
-<script src="js/rearrange-manage.js?v=20260920a" type="text/javascript"></script>
+<script src="js/rearrange-manage.js?v=20260921a" type="text/javascript"></script>
 </asp:Content>
