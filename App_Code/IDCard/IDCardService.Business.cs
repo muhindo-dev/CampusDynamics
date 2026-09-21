@@ -723,6 +723,25 @@ public static partial class IDCardService
                 if (fin == "ok") where.Append(" AND req.finance_ok=1");
                 else if (fin == "below") where.Append(" AND req.finance_ok=0");
                 else if (fin == "flagged") where.Append(" AND req.finance_snapshot_json LIKE '%\"flagged\":true%'");
+                // Year of entry. Students only — staff have no entry year, so naming one here
+                // excludes them rather than silently returning staff rows the filter cannot
+                // describe. Accepts a CSV so a bureau can print two intakes in one run.
+                string ey = Get(f, "entry_year");
+                if (!string.IsNullOrEmpty(ey))
+                {
+                    string[] yrs = ey.Split(new char[] { ',' }, StringSplitOptions.RemoveEmptyEntries);
+                    var names = new List<string>();
+                    for (int i = 0; i < yrs.Length; i++)
+                    {
+                        int yv;
+                        if (!int.TryParse(yrs[i].Trim(), out yv) || yv < 1900 || yv > 2200) continue;
+                        string pn = "@ey" + i; names.Add(pn); ps.Add(new MySqlParameter(pn, yv));
+                    }
+                    if (names.Count > 0)
+                        where.Append(" AND EXISTS(SELECT 1 FROM acad_student sy WHERE sy.regno=req.regno" +
+                                     " AND sy.entryyear IN (" + string.Join(",", names.ToArray()) + "))");
+                }
+
                 string hrf = Get(f, "has_replacement_fee");
                 if (hrf == "1") where.Append(" AND req.replacement_fee_ref IS NOT NULL AND TRIM(req.replacement_fee_ref)<>''");
                 else if (hrf == "0") where.Append(" AND (req.replacement_fee_ref IS NULL OR TRIM(req.replacement_fee_ref)='')");
@@ -842,10 +861,19 @@ public static partial class IDCardService
         catch (Exception ex) { return Err(ex); }
     }
 
-    public static string StatsJson() { return StatsJson(null, null); }
+    public static string StatsJson() { return StatsJson(null, null, null); }
+    public static string StatsJson(string dateFrom, string dateTo) { return StatsJson(dateFrom, dateTo, null); }
 
-    /// <summary>Funnel counts (optionally within a created_at date range) + type/card breakdowns.</summary>
-    public static string StatsJson(string dateFrom, string dateTo)
+    /// <summary>
+    /// Funnel counts (optionally within a created_at date range and one or more years of entry)
+    /// plus type, card and year-of-entry breakdowns.
+    ///
+    /// The year-of-entry breakdown carries its own funnel — a bureau planning a print run needs
+    /// to know which intake the outstanding work belongs to, and a bare total per year does not
+    /// answer that. Staff requests have no entry year and are reported as their own row rather
+    /// than dropped, because they still have to be printed.
+    /// </summary>
+    public static string StatsJson(string dateFrom, string dateTo, string entryYear)
     {
         try
         {
@@ -853,28 +881,77 @@ public static partial class IDCardService
             {
                 conn.Open(); EnsureSchema(conn);
                 var where = new StringBuilder(" WHERE 1=1"); var ps = new List<MySqlParameter>();
-                if (!string.IsNullOrEmpty(dateFrom)) { where.Append(" AND DATE(created_at) >= @df"); ps.Add(new MySqlParameter("@df", dateFrom)); }
-                if (!string.IsNullOrEmpty(dateTo)) { where.Append(" AND DATE(created_at) <= @dt"); ps.Add(new MySqlParameter("@dt", dateTo)); }
+                if (!string.IsNullOrEmpty(dateFrom)) { where.Append(" AND DATE(req.created_at) >= @df"); ps.Add(new MySqlParameter("@df", dateFrom)); }
+                if (!string.IsNullOrEmpty(dateTo)) { where.Append(" AND DATE(req.created_at) <= @dt"); ps.Add(new MySqlParameter("@dt", dateTo)); }
+                if (!string.IsNullOrEmpty(entryYear))
+                {
+                    string[] yrs = entryYear.Split(new char[] { ',' }, StringSplitOptions.RemoveEmptyEntries);
+                    var names = new List<string>();
+                    for (int i = 0; i < yrs.Length; i++)
+                    {
+                        int yv;
+                        if (!int.TryParse(yrs[i].Trim(), out yv) || yv < 1900 || yv > 2200) continue;
+                        string pn = "@sy" + i; names.Add(pn); ps.Add(new MySqlParameter(pn, yv));
+                    }
+                    if (names.Count > 0)
+                        where.Append(" AND EXISTS(SELECT 1 FROM acad_student sy2 WHERE sy2.regno=req.regno" +
+                                     " AND sy2.entryyear IN (" + string.Join(",", names.ToArray()) + "))");
+                }
 
                 var counts = new Dictionary<string, int>();
-                using (var cmd = new MySqlCommand("SELECT status, COUNT(*) c FROM idcard_requests" + where + " GROUP BY status", conn))
+                using (var cmd = new MySqlCommand("SELECT req.status, COUNT(*) c FROM idcard_requests req" + where + " GROUP BY req.status", conn))
                 { foreach (var p in ps) cmd.Parameters.AddWithValue(p.ParameterName, p.Value);
                   using (var r = cmd.ExecuteReader()) while (r.Read()) counts[S(r["status"])] = ToI(r["c"]); }
                 int total = 0; foreach (var v in counts.Values) total += v;
 
                 int stu = 0, stf = 0, cnew = 0, crep = 0;
-                using (var cmd = new MySqlCommand("SELECT requester_type, COUNT(*) c FROM idcard_requests" + where + " GROUP BY requester_type", conn))
+                using (var cmd = new MySqlCommand("SELECT req.requester_type, COUNT(*) c FROM idcard_requests req" + where + " GROUP BY req.requester_type", conn))
                 { foreach (var p in ps) cmd.Parameters.AddWithValue(p.ParameterName, p.Value);
                   using (var r = cmd.ExecuteReader()) while (r.Read()) { if (S(r["requester_type"]) == "STAFF") stf = ToI(r["c"]); else stu = ToI(r["c"]); } }
-                using (var cmd = new MySqlCommand("SELECT card_type, COUNT(*) c FROM idcard_requests" + where + " GROUP BY card_type", conn))
+                using (var cmd = new MySqlCommand("SELECT req.card_type, COUNT(*) c FROM idcard_requests req" + where + " GROUP BY req.card_type", conn))
                 { foreach (var p in ps) cmd.Parameters.AddWithValue(p.ParameterName, p.Value);
                   using (var r = cmd.ExecuteReader()) while (r.Read()) { if (S(r["card_type"]) == "REPLACEMENT") crep = ToI(r["c"]); else cnew = ToI(r["c"]); } }
+
+                // Year of entry, with the funnel positions a print bureau actually plans around:
+                // waiting (approved, not yet printed), printed, ready for collection, collected.
+                var byYear = new List<object>();
+                using (var cmd = new MySqlCommand(
+                    "SELECT COALESCE(sy.entryyear, 0) AS ey, COUNT(*) AS total," +
+                    " SUM(req.status='APPROVED') AS waiting," +
+                    " SUM(req.status='PRINTED')  AS printed," +
+                    " SUM(req.status='READY')    AS ready," +
+                    " SUM(req.status='COLLECTED') AS collected," +
+                    " SUM(req.requester_type='STAFF') AS staff" +
+                    " FROM idcard_requests req" +
+                    " LEFT JOIN acad_student sy ON sy.regno = req.regno" +
+                    where +
+                    " GROUP BY COALESCE(sy.entryyear, 0) ORDER BY ey DESC", conn))
+                {
+                    foreach (var p in ps) cmd.Parameters.AddWithValue(p.ParameterName, p.Value);
+                    using (var r = cmd.ExecuteReader())
+                        while (r.Read())
+                        {
+                            int y = ToI(r["ey"]);
+                            byYear.Add(new
+                            {
+                                year = y,
+                                label = y > 0 ? y.ToString() : "No entry year on record",
+                                total = ToI(r["total"]),
+                                waiting = ToI(r["waiting"]),
+                                printed = ToI(r["printed"]),
+                                ready = ToI(r["ready"]),
+                                collected = ToI(r["collected"]),
+                                staff = ToI(r["staff"])
+                            });
+                        }
+                }
 
                 return J.Serialize(new { success = true, total = total,
                     requested = G(counts, REQUESTED), finance_check = G(counts, FINANCE_CHECK), blocked = G(counts, BLOCKED), submitted = G(counts, SUBMITTED),
                     approved = G(counts, APPROVED), halted = G(counts, HALTED), printed = G(counts, PRINTED),
                     ready = G(counts, READY), collected = G(counts, COLLECTED), cancelled = G(counts, CANCELLED),
-                    byType = new { student = stu, staff = stf }, byCard = new { newCard = cnew, replacement = crep } });
+                    byType = new { student = stu, staff = stf }, byCard = new { newCard = cnew, replacement = crep },
+                    byEntryYear = byYear });
             }
         }
         catch (Exception ex) { return Err(ex); }
@@ -927,6 +1004,25 @@ public static partial class IDCardService
     {
         try
         {
+            // The years of entry that actually have requests — offering every year in
+            // acad_student would list two decades the bureau will never print.
+            var entryYears = new List<object>();
+            try
+            {
+                using (var conn = new MySqlConnection(ConnStr))
+                {
+                    conn.Open();
+                    using (var cmd = new MySqlCommand(
+                        "SELECT sy.entryyear AS ey, COUNT(*) AS n FROM idcard_requests req" +
+                        " JOIN acad_student sy ON sy.regno = req.regno" +
+                        " WHERE IFNULL(sy.entryyear,0) > 0" +
+                        " GROUP BY sy.entryyear ORDER BY sy.entryyear DESC", conn))
+                    using (var r = cmd.ExecuteReader())
+                        while (r.Read()) entryYears.Add(new { year = ToI(r["ey"]), count = ToI(r["n"]) });
+                }
+            }
+            catch { /* the dropdown simply falls back to "all years" */ }
+
             string[] statuses = new string[] { REQUESTED, FINANCE_CHECK, BLOCKED, SUBMITTED, APPROVED, HALTED, PRINTED, READY, COLLECTED, CANCELLED };
             var transitions = new Dictionary<string, object>();
             foreach (var kv in Allowed) { var arr = new List<string>(); foreach (var to in kv.Value) arr.Add(to); transitions[kv.Key] = arr; }
@@ -935,6 +1031,7 @@ public static partial class IDCardService
             actions["approve"] = APPROVED; actions["halt"] = HALTED; actions["printed"] = PRINTED;
             actions["ready"] = READY; actions["collected"] = COLLECTED; actions["cancel"] = CANCELLED;
             return J.Serialize(new { success = true, statuses = statuses, terminal = terminal, transitions = transitions, actions = actions,
+                entryYears = entryYears,
                 filters = new {
                     type = new string[] { "STUDENT", "STAFF" },
                     card_type = new string[] { "NEW", "REPLACEMENT" },
