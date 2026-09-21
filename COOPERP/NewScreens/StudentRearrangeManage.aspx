@@ -1,6 +1,6 @@
 <%@ Page Language="C#" MasterPageFile="~/COOPERP/NewScreens/SidebarMaster.master" AutoEventWireup="true" CodeFile="StudentRearrangeManage.aspx.cs" Inherits="COOPERP_NewScreens_StudentRearrangeManage" Title="Rearrange Student Record - Campus Dynamics" %>
 <asp:Content ID="HeadContent" ContentPlaceHolderID="HeadContent" runat="server">
-    <link href="css/rearrange.css?v=20260921d" rel="stylesheet" type="text/css" />
+    <link href="css/rearrange.css?v=20260921e" rel="stylesheet" type="text/css" />
 </asp:Content>
 <asp:Content ID="MainContent" ContentPlaceHolderID="ContentPlaceHolder1" runat="server">
 <div class="rx-wrap">
@@ -154,6 +154,47 @@
   </div>
 </div>
 
+<!-- ══ Change the academic year a semester sits in ══ -->
+<div class="rx-modal" id="rx-reterm-modal">
+  <div class="rx-modal__box" style="max-width:600px">
+    <div class="rx-modal__hd"><span id="rx-rt-title">Change academic year</span>
+      <button type="button" class="rx-modal__x" data-close="rx-reterm-modal">&times;</button></div>
+    <div class="rx-modal__bd">
+      <div class="rx-hint" id="rx-rt-context"></div>
+
+      <div style="display:flex; gap:10px; flex-wrap:wrap; margin-top:10px">
+        <div style="flex:0 0 150px"><label class="rx-lbl">Currently in</label>
+          <input type="text" id="rx-rt-from" class="rx-in" readonly="readonly" /></div>
+        <div style="flex:1 1 170px"><label class="rx-lbl" for="rx-rt-to">Move it to</label>
+          <select id="rx-rt-to" class="rx-sel"></select></div>
+      </div>
+
+      <%-- A year of study normally sits inside one academic year. Re-terming a single
+           semester out of a year that has more than one leaves the year straddling two,
+           so the choice is put in front of the officer rather than inferred. --%>
+      <div style="margin-top:12px">
+        <label class="rx-lbl">Apply to</label>
+        <label class="rx-radio"><input type="radio" name="rx-rt-scope" value="semester" checked="checked" />
+          <span id="rx-rt-scope-sem">this semester only</span></label>
+        <label class="rx-radio"><input type="radio" name="rx-rt-scope" value="year" />
+          <span id="rx-rt-scope-year">the whole year of study</span></label>
+      </div>
+
+      <div class="rx-check" id="rx-rt-check"></div>
+
+      <div style="margin-top:12px">
+        <label class="rx-lbl" for="rx-rt-reason">Reason</label>
+        <input type="text" id="rx-rt-reason" class="rx-in" placeholder="Why does this semester belong to a different academic year?" autocomplete="off" />
+        <div class="rx-chips" id="rx-rt-chips"></div>
+      </div>
+    </div>
+    <div class="rx-modal__ft">
+      <button type="button" class="rx-btn rx-btn--ghost" data-close="rx-reterm-modal">Cancel</button>
+      <button type="button" class="rx-btn" id="rx-rt-add">Add to pending changes</button>
+    </div>
+  </div>
+</div>
+
 <!-- ══ Reason / override prompt ══ -->
 <div class="rx-modal" id="rx-reason-modal">
   <div class="rx-modal__box" style="max-width:560px">
@@ -173,5 +214,5 @@
   </div>
 </div>
 
-<script src="js/rearrange-manage.js?v=20260921d" type="text/javascript"></script>
+<script src="js/rearrange-manage.js?v=20260921e" type="text/javascript"></script>
 </asp:Content>

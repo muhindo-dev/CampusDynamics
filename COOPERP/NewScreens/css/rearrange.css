@@ -123,6 +123,44 @@
 .rx-check--warn { border-left-color: #e65100; background: #fff8e1; color: #7a5200; }
 .rx-check--bad { border-left-color: #c62828; background: #fff5f5; color: #b42318; }
 
+/* A re-term can trip several checks at once — a collision AND a chronology problem AND a
+   split year — so each finding gets its own line rather than the panel taking one colour
+   and the rest of the story going missing. */
+.rx-check__i { position: relative; padding: 3px 0 3px 15px; }
+.rx-check__i + .rx-check__i { border-top: 1px dashed #e6ebf2; }
+.rx-check__i:before { position: absolute; left: 0; top: 3px; font-weight: 700; }
+.rx-check__i--bad  { color: #b42318; }
+.rx-check__i--bad:before  { content: '¹5'; }
+.rx-check__i--warn { color: #7a5200; }
+.rx-check__i--warn:before { content: '!'; }
+.rx-check__i--ok   { color: #1e6b3a; }
+.rx-check__i--ok:before   { content: '¹3'; }
+.rx-check.is-bad { border-left-color: #c62828; background: #fff5f5; }
+
+/* The academic year belongs on the semester, because that is where it is stored. */
+.rx-sem__acad {
+    font-size: 9px; font-weight: 700; color: #475569; background: #eef2f7;
+    border: 1px solid #dde4ed; padding: 1px 5px; flex: 0 0 auto; white-space: nowrap;
+    font-variant-numeric: tabular-nums; cursor: help;
+}
+.rx-sem__acad.is-pending { background: #eef4ff; border-color: #c7d9f7; color: #174DA4; }
+.rx-sem__acadbtn {
+    font-size: 8.5px; font-weight: 700; text-transform: uppercase; letter-spacing: .3px;
+    background: none; border: 1px solid #cbd5e1; color: #64748b; padding: 1px 5px;
+    cursor: pointer; flex: 0 0 auto; white-space: nowrap;
+}
+.rx-sem__acadbtn:hover { border-color: #174DA4; color: #174DA4; background: #f4f8ff; }
+
+/* A year of study sitting in two academic years is a fact worth showing, not hiding
+   behind whichever semester happened to sort first. */
+.rx-split { color: #92400e; background: #fef3c7; padding: 1px 5px; font-weight: 700; }
+
+.rx-radio {
+    display: inline-flex; align-items: center; gap: 5px; margin-right: 14px;
+    font-size: 11.5px; color: #1a1a2e; cursor: pointer;
+}
+.rx-radio input { cursor: pointer; }
+
 /* ── course picker rows ───────────────────────────────────── */
 .rx-pickrow {
     display: flex; gap: 9px; align-items: center; padding: 8px 10px;

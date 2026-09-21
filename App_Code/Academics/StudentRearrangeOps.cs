@@ -153,6 +153,7 @@ public static partial class StudentRearrangeService
                         switch (kind)
                         {
                             case "REGSEM": r = DoRegisterSemester(c, t, sess, batchId, seq, op); break;
+                            case "RETERM": r = DoReterm(c, t, sess, batchId, seq, op); break;
                             case "ADD":    r = DoAdd(c, t, sess, batchId, seq, op); break;
                             case "MOVE":   r = DoMove(c, t, sess, batchId, seq, op); break;
                             case "MARK":   r = DoMark(c, t, sess, batchId, seq, op); break;
@@ -954,5 +955,357 @@ public static partial class StudentRearrangeService
         res.summary = "Registered into " + acadYear + " Year " + toYear + " Semester " + toSem +
                       " (" + billOutcome + ")";
         return res;
+    }
+
+    // ══════════════════════════════════════════════════════════════════
+    //  RETERM — the academic year a semester sits in
+    // ══════════════════════════════════════════════════════════════════
+    //
+    // MOVE takes one course to another (year, semester) and reads the academic year off the
+    // destination. This is the other axis: the (year, semester) stays put and the ACADEMIC YEAR
+    // under it changes — for a whole semester at once, courses, results and transcript together.
+    //
+    // A semester and its courses carry the academic year in four places. Changing one and not
+    // the rest is how a record ends up contradicting itself, so all four move in one
+    // transaction or none of them do:
+    //
+    //   acad_registration.acad_year          the (studyyear, semester) -> year authority
+    //   acad_course_registration.acad_year   every course sitting in that block
+    //   acad_results.acad                    their published results
+    //   acad_transcript_results.acad         the transcript snapshot
+    //
+    // Scope is "semester" or "year". A year of study normally sits inside ONE academic year,
+    // so re-terming a single semester out of a year that has more than one leaves the year
+    // straddling two — the caller is told, and can send scope=year to take the whole thing.
+    //
+    // What it deliberately does NOT touch: fees. fin_studentfeestracking rows are stamped with
+    // their own acadyear, and re-stamping them is a finance decision, not a records one. The
+    // billing that would be left behind is counted, reported and written into the log so the
+    // gap is visible rather than silent.
+
+    private static OpResult DoReterm(MySqlConnection c, MySqlTransaction t, SessionInfo sess,
+                                     long batchId, int seq, Dictionary<string, object> op)
+    {
+        var res = new OpResult();
+        int studyYear = GI(op, "studyYear"), semester = GI(op, "semester");
+        string toAcad = GS(op, "toAcad");
+        string scope  = GS(op, "scope").ToLowerInvariant() == "year" ? "year" : "semester";
+        string reason = GS(op, "reason");
+
+        if (studyYear <= 0) { res.error = "Which year of study is being re-termed was not supplied."; return res; }
+        if (scope == "semester")
+        {
+            if (semester <= 0) { res.error = "Which semester is being re-termed was not supplied."; return res; }
+            string shape = TermShapeError(studyYear, semester);
+            if (shape != null) { res.error = shape; return res; }
+        }
+        if (toAcad.Length == 0) { res.error = "Choose the academic year to move this into."; return res; }
+
+        // V1 — the target must be a real academic year, not a typed string.
+        using (var cmd = Cmd("SELECT COUNT(*) FROM campus_dynamics.acad_acadyears WHERE acadyear=@a", c, t))
+        {
+            cmd.Parameters.AddWithValue("@a", toAcad);
+            if (Convert.ToInt32(cmd.ExecuteScalar()) == 0)
+            { res.error = "\"" + toAcad + "\" is not an academic year on file."; return res; }
+        }
+
+        // The semesters this touches, and the year each is in now.
+        var blocks = new List<int[]>();          // semester
+        var fromBySem = new Dictionary<int, string>();
+        using (var cmd = Cmd(
+            "SELECT semester, acad_year FROM campus_dynamics.acad_registration " +
+            "WHERE regno=@r AND studyyear=@y " + (scope == "semester" ? "AND semester=@s " : "") +
+            "ORDER BY semester", c, t))
+        {
+            cmd.Parameters.AddWithValue("@r", sess.regno);
+            cmd.Parameters.AddWithValue("@y", studyYear);
+            if (scope == "semester") cmd.Parameters.AddWithValue("@s", semester);
+            using (var r = cmd.ExecuteReader())
+                while (r.Read()) { int sm = I(r, 0); blocks.Add(new int[] { sm }); fromBySem[sm] = S(r, 1); }
+        }
+        if (blocks.Count == 0)
+        {
+            res.error = scope == "year"
+                ? "Year " + studyYear + " has no semester registration to re-term."
+                : "Year " + studyYear + " Semester " + semester + " has no semester registration, so there " +
+                  "is no academic year on it to change. Register the semester first, in this same sitting.";
+            return res;
+        }
+
+        // V2 — already there. Doing nothing is not a failure; refusing would throw away the
+        // rest of the batch over a redundant instruction.
+        bool anyDifferent = false;
+        foreach (var b in blocks) if (fromBySem[b[0]] != toAcad) anyDifferent = true;
+        if (!anyDifferent)
+        {
+            res.applied = true;
+            res.summary = (scope == "year" ? "Year " + studyYear : "Year " + studyYear + " Semester " + semester) +
+                          " was already in " + toAcad + " — left as it is";
+            return res;
+        }
+
+        // V3 — the target must not already hold this (studyyear, semester) for this student.
+        // acad_registration has no unique key, so nothing but this check stands in the way of a
+        // duplicate semester registration.
+        foreach (var b in blocks)
+        {
+            int sm = b[0];
+            if (fromBySem[sm] == toAcad) continue;
+            using (var cmd = Cmd("SELECT COUNT(*) FROM campus_dynamics.acad_registration " +
+                                 "WHERE regno=@r AND acad_year=@a AND semester=@s AND studyyear=@y", c, t))
+            {
+                cmd.Parameters.AddWithValue("@r", sess.regno); cmd.Parameters.AddWithValue("@a", toAcad);
+                cmd.Parameters.AddWithValue("@s", sm); cmd.Parameters.AddWithValue("@y", studyYear);
+                if (Convert.ToInt32(cmd.ExecuteScalar()) > 0)
+                {
+                    res.error = "The student already has a registration for " + toAcad + " Year " + studyYear +
+                                " Semester " + sm + ". Re-terming into it would create a second one for the " +
+                                "same term. Remove or re-term that registration first, in this same sitting.";
+                    return res;
+                }
+            }
+        }
+
+        // V4 — chronology. A later year of study may not land in an earlier academic year than
+        // an earlier one, and vice versa. This is the contradiction that makes a transcript
+        // read as nonsense, and it is cheap to catch here.
+        string chrono = ChronologyError(c, t, sess.regno, studyYear, toAcad, scope, blocks);
+        if (chrono != null) { res.error = chrono; return res; }
+
+        // The courses that will travel, and the lock state of each.
+        var regIds = new List<int>();
+        foreach (var b in blocks)
+        {
+            int sm = b[0]; string fromA = fromBySem[sm];
+            if (fromA == toAcad) continue;
+            using (var cmd = Cmd("SELECT ID FROM campus_dynamics_portal.acad_course_registration " +
+                                 "WHERE regno=@r AND acad_year=@a AND semester=@s", c, t))
+            {
+                cmd.Parameters.AddWithValue("@r", sess.regno);
+                cmd.Parameters.AddWithValue("@a", fromA); cmd.Parameters.AddWithValue("@s", sm);
+                using (var r = cmd.ExecuteReader()) while (r.Read()) regIds.Add(I(r, 0));
+            }
+        }
+
+        // V5 — the unique key on acad_course_registration, checked for every travelling course
+        // BEFORE anything is written, so the batch fails with a sentence rather than a
+        // constraint violation halfway through.
+        bool anyOverride = false; string worstLock = null;
+        var rows = new List<RegRow>();
+        var lockOf = new Dictionary<int, string>();   // RegRow has no lock field; CheckLock reports it
+        foreach (int rid in regIds)
+        {
+            var x = LoadReg(c, t, sess.regno, rid);
+            if (x == null) continue;
+            rows.Add(x);
+
+            using (var cmd = Cmd(
+                "SELECT COUNT(*) FROM campus_dynamics_portal.acad_course_registration " +
+                "WHERE regno=@r AND courseID=@c AND acad_year=@a AND semester=@s AND course_status=@st AND ID<>@i", c, t))
+            {
+                cmd.Parameters.AddWithValue("@r", sess.regno); cmd.Parameters.AddWithValue("@c", x.course);
+                cmd.Parameters.AddWithValue("@a", toAcad); cmd.Parameters.AddWithValue("@s", x.semester);
+                cmd.Parameters.AddWithValue("@st", x.courseStatus); cmd.Parameters.AddWithValue("@i", x.id);
+                if (Convert.ToInt32(cmd.ExecuteScalar()) > 0)
+                {
+                    res.error = "Re-terming into " + toAcad + " would collide on " + x.course + ": the student " +
+                                "already holds it (" + x.courseStatus + ") in " + toAcad + " Semester " + x.semester +
+                                ", and the same course cannot be held twice in one term. Deal with that copy " +
+                                "first, in this same sitting.";
+                    return res;
+                }
+            }
+
+            // V6 — published results are locked exactly as they are for a move.
+            bool ovr; string st2;
+            string lockErr = CheckLock(x, op, out ovr, out st2);
+            if (lockErr != null) { res.error = lockErr + " (" + x.course + ")"; return res; }
+            lockOf[x.id] = st2;
+            if (ovr) { anyOverride = true; worstLock = st2; }
+        }
+
+        // Billing that will be left behind. Counted before the change, while the old year is
+        // still on the registration rows.
+        int billRows = 0; double billValue = 0;
+        try
+        {
+            foreach (var b in blocks)
+            {
+                int sm = b[0]; string fromA = fromBySem[sm];
+                if (fromA == toAcad) continue;
+                using (var cmd = Cmd(
+                    "SELECT COUNT(*), IFNULL(SUM(amount),0) FROM campus_dynamics_accounts.fin_studentfeestracking " +
+                    "WHERE regno=@r AND acadyear=@a AND semester=@s AND post_status='Posted'", c, t))
+                {
+                    cmd.Parameters.AddWithValue("@r", sess.regno);
+                    cmd.Parameters.AddWithValue("@a", fromA); cmd.Parameters.AddWithValue("@s", sm);
+                    using (var r = cmd.ExecuteReader())
+                        if (r.Read()) { billRows += I(r, 0); billValue += r.IsDBNull(1) ? 0 : Convert.ToDouble(r.GetValue(1)); }
+                }
+            }
+        }
+        catch { billRows = -1; }   // finance schema unreachable: say so rather than imply zero
+
+        // ── apply ─────────────────────────────────────────────────────────────
+        int semsMoved = 0, coursesMoved = 0, resultsMoved = 0, transcriptsMoved = 0;
+
+        foreach (var b in blocks)
+        {
+            int sm = b[0]; string fromA = fromBySem[sm];
+            if (fromA == toAcad) continue;
+
+            long regRowId = 0;
+            using (var cmd = Cmd("SELECT ID FROM campus_dynamics.acad_registration " +
+                                 "WHERE regno=@r AND studyyear=@y AND semester=@s AND acad_year=@a LIMIT 1", c, t))
+            {
+                cmd.Parameters.AddWithValue("@r", sess.regno); cmd.Parameters.AddWithValue("@y", studyYear);
+                cmd.Parameters.AddWithValue("@s", sm); cmd.Parameters.AddWithValue("@a", fromA);
+                object v = cmd.ExecuteScalar();
+                if (v != null && v != DBNull.Value) regRowId = Convert.ToInt64(v);
+            }
+            if (regRowId == 0) continue;
+
+            var beforeSem = ReadRow(c, t, "campus_dynamics.acad_registration", "ID", regRowId);
+            using (var cmd = Cmd("UPDATE campus_dynamics.acad_registration SET acad_year=@a WHERE ID=@i", c, t))
+            {
+                cmd.Parameters.AddWithValue("@a", toAcad); cmd.Parameters.AddWithValue("@i", regRowId);
+                cmd.ExecuteNonQuery();
+            }
+            var afterSem = ReadRow(c, t, "campus_dynamics.acad_registration", "ID", regRowId);
+            LogEntry(c, t, sess, batchId, seq, "RETERM", "campus_dynamics", "acad_registration", "ID",
+                     Convert.ToString(regRowId), null, Json.Serialize(beforeSem), Json.Serialize(afterSem),
+                     reason, anyOverride, anyOverride ? "STATUS_LOCK" : null,
+                     anyOverride ? GS(op, "overrideReason") : null, worstLock);
+            semsMoved++;
+        }
+
+        foreach (var x in rows)
+        {
+            var b1 = ReadRow(c, t, "campus_dynamics_portal.acad_course_registration", "ID", x.id);
+            using (var cmd = Cmd("UPDATE campus_dynamics_portal.acad_course_registration " +
+                                 "SET acad_year=@a WHERE ID=@i", c, t))
+            {
+                cmd.Parameters.AddWithValue("@a", toAcad); cmd.Parameters.AddWithValue("@i", x.id);
+                cmd.ExecuteNonQuery();
+            }
+            var a1 = ReadRow(c, t, "campus_dynamics_portal.acad_course_registration", "ID", x.id);
+            LogEntry(c, t, sess, batchId, seq, "RETERM", "campus_dynamics_portal", "acad_course_registration",
+                     "ID", Convert.ToString(x.id), x.course, Json.Serialize(b1), Json.Serialize(a1),
+                     reason, anyOverride, anyOverride ? "STATUS_LOCK" : null,
+                     anyOverride ? GS(op, "overrideReason") : null, LockOf(lockOf, x.id));
+            coursesMoved++;
+
+            if (x.resultId > 0)
+            {
+                var b2 = ReadRow(c, t, "campus_dynamics.acad_results", "ID", x.resultId);
+                using (var cmd = Cmd("UPDATE campus_dynamics.acad_results SET acad=@a WHERE ID=@i", c, t))
+                {
+                    cmd.Parameters.AddWithValue("@a", toAcad); cmd.Parameters.AddWithValue("@i", x.resultId);
+                    cmd.ExecuteNonQuery();
+                }
+                var a2 = ReadRow(c, t, "campus_dynamics.acad_results", "ID", x.resultId);
+                LogEntry(c, t, sess, batchId, seq, "RETERM", "campus_dynamics", "acad_results", "ID",
+                         Convert.ToString(x.resultId), x.course, Json.Serialize(b2), Json.Serialize(a2),
+                         reason, anyOverride, null, null, LockOf(lockOf, x.id));
+                resultsMoved++;
+            }
+
+            var trIds = new List<int>();
+            using (var cmd = Cmd("SELECT ID FROM campus_dynamics.acad_transcript_results " +
+                                 "WHERE regno=@r AND courseid=@c AND semester=@s", c, t))
+            {
+                cmd.Parameters.AddWithValue("@r", sess.regno); cmd.Parameters.AddWithValue("@c", x.course);
+                cmd.Parameters.AddWithValue("@s", x.semester);
+                using (var r = cmd.ExecuteReader()) while (r.Read()) trIds.Add(I(r, 0));
+            }
+            foreach (int tid in trIds)
+            {
+                var b3 = ReadRow(c, t, "campus_dynamics.acad_transcript_results", "ID", tid);
+                using (var cmd = Cmd("UPDATE campus_dynamics.acad_transcript_results SET acad=@a WHERE ID=@i", c, t))
+                {
+                    cmd.Parameters.AddWithValue("@a", toAcad); cmd.Parameters.AddWithValue("@i", tid);
+                    cmd.ExecuteNonQuery();
+                }
+                var a3 = ReadRow(c, t, "campus_dynamics.acad_transcript_results", "ID", tid);
+                LogEntry(c, t, sess, batchId, seq, "RETERM", "campus_dynamics", "acad_transcript_results", "ID",
+                         Convert.ToString(tid), x.course, Json.Serialize(b3), Json.Serialize(a3),
+                         reason, anyOverride, null, null, LockOf(lockOf, x.id));
+                transcriptsMoved++;
+            }
+        }
+
+        string billNote = billRows < 0
+            ? ", fee records could not be checked"
+            : billRows == 0
+                ? ", no fee records affected"
+                : ", " + billRows + " fee record" + (billRows == 1 ? "" : "s") + " (UGX " +
+                  billValue.ToString("#,##0") + ") stay under the old academic year and were NOT moved";
+
+        LogEntry(c, t, sess, batchId, seq, "RETERM", "campus_dynamics", "acad_registration", "SUMMARY",
+                 studyYear + "/" + (scope == "year" ? "*" : semester.ToString()), null, null,
+                 Json.Serialize(new
+                 {
+                     scope, studyYear, semester = (scope == "year" ? 0 : semester),
+                     toAcadYear = toAcad, semestersMoved = semsMoved, coursesMoved,
+                     resultsMoved, transcriptsMoved,
+                     feeRowsLeftBehind = billRows, feeValueLeftBehind = billValue
+                 }),
+                 reason, anyOverride, anyOverride ? "STATUS_LOCK" : null,
+                 anyOverride ? GS(op, "overrideReason") : null, worstLock);
+
+        res.applied = true;
+        res.summary = (scope == "year" ? "Year " + studyYear + " (all " + semsMoved + " semesters)"
+                                       : "Year " + studyYear + " Semester " + semester) +
+                      " moved to " + toAcad + " — " + coursesMoved + " course" + (coursesMoved == 1 ? "" : "s") +
+                      ", " + resultsMoved + " result" + (resultsMoved == 1 ? "" : "s") +
+                      ", " + transcriptsMoved + " transcript row" + (transcriptsMoved == 1 ? "" : "s") +
+                      billNote + (anyOverride ? " (results lock overridden at " + worstLock + ")" : "");
+        return res;
+    }
+
+    /// <summary>
+    /// Refuses a re-term that would put the student's years of study out of chronological
+    /// order — Year 2 starting before Year 1, or Year 3 before Year 2.
+    ///
+    /// Academic years sort correctly as strings here because they are all "YYYY/YYYY", so the
+    /// first four characters order them. Only the years of study either side are consulted:
+    /// gaps (a dead year) are normal and are not an error, and neither is two years of study
+    /// sharing one academic year, which happens whenever a student repeats.
+    /// </summary>
+    private static string LockOf(Dictionary<int, string> map, int id)
+    {
+        string v; return map.TryGetValue(id, out v) ? v : null;
+    }
+
+    private static string ChronologyError(MySqlConnection c, MySqlTransaction t, string regno,
+                                          int studyYear, string toAcad, string scope, List<int[]> blocks)
+    {
+        string below = null, above = null; int belowY = 0, aboveY = 0;
+        using (var cmd = Cmd(
+            "SELECT studyyear, MIN(acad_year), MAX(acad_year) FROM campus_dynamics.acad_registration " +
+            "WHERE regno=@r AND studyyear<>@y AND IFNULL(acad_year,'') NOT IN ('','-') " +
+            "GROUP BY studyyear ORDER BY studyyear", c, t))
+        {
+            cmd.Parameters.AddWithValue("@r", regno); cmd.Parameters.AddWithValue("@y", studyYear);
+            using (var r = cmd.ExecuteReader())
+                while (r.Read())
+                {
+                    int sy = I(r, 0);
+                    if (sy < studyYear) { below = S(r, 2); belowY = sy; }          // nearest below: last wins
+                    else if (above == null) { above = S(r, 1); aboveY = sy; }      // nearest above: first wins
+                }
+        }
+
+        if (below != null && string.Compare(toAcad, below, StringComparison.Ordinal) < 0)
+            return "That would put Year " + studyYear + " in " + toAcad + ", before Year " + belowY +
+                   " which is in " + below + ". A later year of study cannot start in an earlier " +
+                   "academic year. Re-term Year " + belowY + " first if the whole record has slipped.";
+
+        if (above != null && string.Compare(toAcad, above, StringComparison.Ordinal) > 0)
+            return "That would put Year " + studyYear + " in " + toAcad + ", after Year " + aboveY +
+                   " which is in " + above + ". An earlier year of study cannot start in a later " +
+                   "academic year. Re-term Year " + aboveY + " first if the whole record has slipped.";
+
+        return null;
     }
 }

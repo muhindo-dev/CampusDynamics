@@ -26,7 +26,7 @@ var OP_ID = null;         // one id per save attempt, so a retry cannot double-a
 
 /* The pending set. Keyed by registration id so a second edit to the same row
    replaces the first rather than stacking. */
-var PEND = { moves: {}, marks: {}, deletes: {}, adds: [], regsems: [] };
+var PEND = { moves: {}, marks: {}, deletes: {}, adds: [], regsems: [], reterms: [] };
 var TEMP = -1;            // negative ids for not-yet-saved additions
 
 /* ── plumbing ─────────────────────────────────────────────────────────── */
@@ -130,6 +130,12 @@ var REASONS = {
         'Course belongs in this semester per the programme curriculum.',
         'Recorded against the wrong semester at registration.',
         'Correcting the term the course was actually taught in.'
+    ],
+    reterm: [
+        'Semester was recorded against the wrong academic year at registration.',
+        'Academic year shifted during the migration and never corrected.',
+        'Student sat this semester in a different academic year from the one on file.',
+        'Aligning the year of study with the academic year it was actually taught in.'
     ]
 };
 
@@ -331,6 +337,23 @@ function renderStudent() {
 }
 
 /* ── the model: what a row looks like after pending changes ───────────── */
+/* The pending re-term touching a slot, if any. scope 'year' covers every semester of
+   that year of study; scope 'semester' covers just the one. */
+function retermFor(year, sem) {
+    for (var i = 0; i < PEND.reterms.length; i++) {
+        var r = PEND.reterms[i];
+        if (r.studyYear !== year) continue;
+        if (r.scope === 'year' || r.semester === sem) return r;
+    }
+    return null;
+}
+
+/* The academic year a slot will be in once pending changes are saved. */
+function effectiveAcad(sl) {
+    var rt = retermFor(sl.year, sl.sem);
+    return rt ? rt.toAcad : (sl.acadYear || '');
+}
+
 function effective(c) {
     var m = PEND.moves[c.regId];
     return {
@@ -353,7 +376,8 @@ function allRows() {
     return rows;
 }
 function pendingCount() {
-    var n = PEND.adds.length + PEND.regsems.length;
+    // reterms counted with the rest below
+    var n = PEND.adds.length + PEND.regsems.length + PEND.reterms.length;
     for (var k in PEND.moves) if (PEND.moves.hasOwnProperty(k)) n++;
     for (var k2 in PEND.deletes) if (PEND.deletes.hasOwnProperty(k2)) n++;
     for (var k3 in PEND.marks) if (PEND.marks.hasOwnProperty(k3)) {
@@ -416,8 +440,21 @@ function render() {
     for (var yi = 0; yi < yearKeys.length; yi++) {
         var yk = yearKeys[yi], sems = years[yk];
         h += '<div class="rx-year">';
+        // The header used to print sems[0].acadYear, which quietly misreports a year of
+        // study whose semesters sit in different academic years — 704 students on this
+        // database have exactly that. Say "split" instead of picking one and hiding the rest.
+        var yrAcads = [];
+        for (var ya = 0; ya < sems.length; ya++) {
+            var av = effectiveAcad(sems[ya]);
+            if (av && yrAcads.indexOf(av) === -1) yrAcads.push(av);
+        }
         h += '<div class="rx-year__hd">Year ' + esc(yk) +
-             '<span class="rx-year__gpa">' + esc(sems[0].acadYear || '') + '</span></div>';
+             '<span class="rx-year__gpa">' +
+             (yrAcads.length > 1
+                ? '<span class="rx-split" title="This year of study spans more than one academic year">' +
+                  esc(yrAcads.join(' + ')) + '</span>'
+                : esc(yrAcads[0] || '')) +
+             '</span></div>';
         h += '<div class="rx-sems">';
         for (var si = 0; si < sems.length; si++) h += renderSem(sems[si]);
         h += '</div></div>';
@@ -465,6 +502,9 @@ function renderSem(sl) {
         if (cy > 0 && cs > 0 && (cy !== sl.year || cs !== sl.sem)) misplaced++;
     }
 
+    var rt = retermFor(sl.year, sl.sem);
+    var acadNow = sl.acadYear || '';
+
     var h = '<div class="rx-sem' + (shut ? ' is-shut' : '') + '" data-year="' + sl.year +
             '" data-sem="' + sl.sem + '"' + (sl.registered ? '' : ' data-unreg="1"') + '>';
 
@@ -477,6 +517,13 @@ function renderSem(sl) {
          (!sl.registered ? '<span class="rx-offcur">not registered</span>' : '') +
          '<span class="rx-sem__count">' + sl.rows.length +
              (sl.rows.length === 1 ? ' course' : ' courses') + '</span>' +
+         (acadNow ? '<span class="rx-sem__acad' + (rt ? ' is-pending' : '') + '" title="' +
+             (rt ? 'Will move from ' + esc(rt.fromAcad) + ' to ' + esc(rt.toAcad) + ' when saved'
+                 : 'The academic year this semester sits in') + '">' +
+             (rt ? esc(rt.fromAcad) + ' \u2192 ' + esc(rt.toAcad) : esc(acadNow)) + '</span>' : '') +
+         (sl.registered ? '<button type="button" class="rx-sem__acadbtn" data-reterm-year="' + sl.year +
+             '" data-reterm-sem="' + sl.sem + '" title="Change the academic year this semester belongs to">' +
+             'change year</button>' : '') +
          (misplaced ? '<span class="rx-sem__mis" title="' + misplaced +
              ' course(s) here are placed somewhere else by the curriculum">' + misplaced +
              ' misplaced</span>' : '') +
@@ -660,10 +707,18 @@ function wire() {
         PEND.adds = PEND.adds.filter(function (a) { return a.tempId !== id; });
         render();
     });
+    wireReterm();
     bindAll('[data-add-year]', 'click', function (e) {
         openAdd(+e.target.getAttribute('data-add-year'), +e.target.getAttribute('data-add-sem'));
     });
 }
+function wireReterm() {
+    bindAll('[data-reterm-year]', 'click', function (e) {
+        e.stopPropagation();          // the header itself folds the semester
+        openReterm(+this.getAttribute('data-reterm-year'), +this.getAttribute('data-reterm-sem'));
+    });
+}
+
 function bindAll(sel, ev, fn) {
     var els = document.querySelectorAll(sel);
     for (var i = 0; i < els.length; i++) els[i].addEventListener(ev, fn);
@@ -712,6 +767,222 @@ function onDrop(e) {
     var y = +sem.getAttribute('data-year'), sm = +sem.getAttribute('data-sem');
     delete SHUT[y + '/' + sm];      // dropping into a folded semester opens it
     requestMove(dragReg, y, sm);
+}
+
+/* ══ Re-term: the academic year a semester sits in ════════════════════════════
+   Everything below is checked again on the server, which is the gate. These checks exist so
+   the officer sees the contradiction while they can still change their mind, instead of
+   losing a whole batch to a refusal at save time. */
+
+var RT = { year: 0, sem: 0, fromAcad: '' };
+
+function semsOfYear(year) {
+    var out = [];
+    for (var i = 0; i < DATA.semesters.length; i++)
+        if (DATA.semesters[i].studyYear === year) out.push(DATA.semesters[i]);
+    out.sort(function (a, b) { return a.semester - b.semester; });
+    return out;
+}
+
+/* The academic year each OTHER year of study occupies, for the chronology check. */
+function acadByStudyYear() {
+    var m = {};
+    for (var i = 0; i < DATA.semesters.length; i++) {
+        var sm = DATA.semesters[i];
+        var rt = retermFor(sm.studyYear, sm.semester);
+        var a = rt ? rt.toAcad : sm.acadYear;
+        if (!a) continue;
+        if (!m[sm.studyYear]) m[sm.studyYear] = { min: a, max: a };
+        else {
+            if (a < m[sm.studyYear].min) m[sm.studyYear].min = a;
+            if (a > m[sm.studyYear].max) m[sm.studyYear].max = a;
+        }
+    }
+    return m;
+}
+
+function openReterm(year, sem) {
+    RT.year = year; RT.sem = sem;
+    var sems = semsOfYear(year), cur = '';
+    for (var i = 0; i < sems.length; i++) if (sems[i].semester === sem) cur = sems[i].acadYear || '';
+    RT.fromAcad = cur;
+
+    qs('rx-rt-title').textContent = 'Academic year — Year ' + year + ' Semester ' + sem;
+    qs('rx-rt-from').value = cur || '(none on file)';
+
+    var distinct = [];
+    for (var d = 0; d < sems.length; d++) {
+        var av = sems[d].acadYear;
+        if (av && distinct.indexOf(av) === -1) distinct.push(av);
+    }
+    qs('rx-rt-context').innerHTML =
+        'Year ' + year + ' has ' + sems.length + ' registered semester' + (sems.length === 1 ? '' : 's') +
+        (distinct.length > 1
+            ? ', currently split across <b>' + distinct.map(esc).join('</b> and <b>') + '</b>.'
+            : (distinct.length === 1 ? ', all in <b>' + esc(distinct[0]) + '</b>.' : '.')) +
+        ' Moving a semester takes its courses, their published results and the transcript rows with it.';
+
+    qs('rx-rt-scope-sem').textContent = 'this semester only (Semester ' + sem + ')';
+    qs('rx-rt-scope-year').textContent = 'the whole of Year ' + year + ' (' + sems.length +
+                                         ' semester' + (sems.length === 1 ? '' : 's') + ')';
+    var radios = document.getElementsByName('rx-rt-scope');
+    for (var r = 0; r < radios.length; r++) radios[r].checked = (radios[r].value === 'semester');
+
+    var sel = qs('rx-rt-to'), h = '<option value="">— choose —</option>';
+    var years = DATA.acadYears || [];
+    for (var y = 0; y < years.length; y++)
+        h += '<option value="' + esc(years[y]) + '">' + esc(years[y]) + '</option>';
+    sel.innerHTML = h;
+
+    qs('rx-rt-reason').value = '';
+    fillChips('rx-rt-chips', 'reterm', 'rx-rt-reason', retermCheck);
+    retermCheck();
+    openModal('rx-reterm-modal');
+}
+
+function retermScope() {
+    var radios = document.getElementsByName('rx-rt-scope');
+    for (var i = 0; i < radios.length; i++) if (radios[i].checked) return radios[i].value;
+    return 'semester';
+}
+
+/* Live checks. Blocking problems disable the button; the rest are stated and allowed. */
+function retermCheck() {
+    var to = qs('rx-rt-to').value;
+    var scope = retermScope();
+    var reason = (qs('rx-rt-reason').value || '').trim();
+    var box = qs('rx-rt-check'), btn = qs('rx-rt-add');
+    var bad = [], warn = [], ok = [];
+
+    var sems = semsOfYear(RT.year);
+    var targetSems = scope === 'year' ? sems : sems.filter(function (x) { return x.semester === RT.sem; });
+
+    if (!to) {
+        box.className = 'rx-check';
+        box.innerHTML = '<div class="rx-check__i">Choose the academic year to move this into.</div>';
+        btn.disabled = true;
+        return;
+    }
+
+    // 1. Nothing to do.
+    var allSame = targetSems.length > 0 && targetSems.every(function (x) { return x.acadYear === to; });
+    if (allSame) bad.push('Already in ' + esc(to) + ' — there is nothing to change.');
+
+    // 2. A registration for the same term already exists in the target year.
+    for (var i = 0; i < targetSems.length; i++) {
+        var ts = targetSems[i];
+        if (ts.acadYear === to) continue;
+        for (var j = 0; j < DATA.semesters.length; j++) {
+            var o = DATA.semesters[j];
+            if (o.acadYear === to && o.semester === ts.semester && o.studyYear === RT.year)
+                bad.push('The student is already registered for ' + esc(to) + ' Year ' + RT.year +
+                         ' Semester ' + ts.semester + '. Two registrations for one term would contradict each other.');
+        }
+    }
+
+    // 3. The same course twice in one term — the unique key on course registrations.
+    var moving = {};
+    for (var m = 0; m < targetSems.length; m++) moving[targetSems[m].semester] = 1;
+    var clash = [];
+    for (var c1 = 0; c1 < DATA.courses.length; c1++) {
+        var a = DATA.courses[c1];
+        if (!moving[a.semester] || a.acadYear === to) continue;
+        for (var c2 = 0; c2 < DATA.courses.length; c2++) {
+            var b = DATA.courses[c2];
+            if (b.regId === a.regId) continue;
+            if (b.course === a.course && b.acadYear === to && b.semester === a.semester &&
+                b.courseStatus === a.courseStatus && clash.indexOf(a.course) === -1) clash.push(a.course);
+        }
+    }
+    if (clash.length)
+        bad.push('Would collide on ' + clash.map(esc).join(', ') +
+                 ' — the student already holds ' + (clash.length === 1 ? 'it' : 'them') +
+                 ' in ' + esc(to) + ' in the same semester.');
+
+    // 4. Chronology: years of study must not cross over each other.
+    var byY = acadByStudyYear();
+    var keys = Object.keys(byY).map(Number).sort(function (x, y) { return x - y; });
+    for (var k = 0; k < keys.length; k++) {
+        var sy = keys[k];
+        if (sy === RT.year) continue;
+        if (sy < RT.year && to < byY[sy].max)
+            bad.push('Year ' + RT.year + ' would start in ' + esc(to) + ', before Year ' + sy +
+                     ' which is in ' + esc(byY[sy].max) + '. A later year of study cannot come first.');
+        if (sy > RT.year && to > byY[sy].min)
+            bad.push('Year ' + RT.year + ' would start in ' + esc(to) + ', after Year ' + sy +
+                     ' which is in ' + esc(byY[sy].min) + '. An earlier year of study cannot come last.');
+    }
+
+    // 5. Splitting the year of study — allowed, but say so and offer the whole-year scope.
+    if (scope === 'semester' && sems.length > 1) {
+        var others = sems.filter(function (x) { return x.semester !== RT.sem && x.acadYear !== to; });
+        if (others.length)
+            warn.push('Year ' + RT.year + ' will be left split: Semester ' + RT.sem + ' in ' + esc(to) +
+                      ', ' + others.map(function (x) { return 'Semester ' + x.semester + ' in ' + esc(x.acadYear); }).join(', ') +
+                      '. Choose <b>the whole of Year ' + RT.year + '</b> above if they should move together.');
+    }
+
+    // 6. Locked results travelling with the move.
+    var locked = [];
+    for (var L = 0; L < DATA.courses.length; L++) {
+        var cc = DATA.courses[L];
+        if (moving[cc.semester] && cc.acadYear !== to && cc.locked && locked.indexOf(cc.course) === -1)
+            locked.push(cc.course);
+    }
+    if (locked.length) {
+        if (DATA.canOverrideLock)
+            warn.push(locked.length + ' course' + (locked.length === 1 ? ' carries' : 's carry') +
+                      ' finally published results (' + locked.map(esc).join(', ') +
+                      '). Moving them rewrites which academic year those results belong to. You will be ' +
+                      'asked for an override reason when you save.');
+        else
+            bad.push(locked.length + ' course' + (locked.length === 1 ? ' carries' : 's carry') +
+                     ' published results (' + locked.map(esc).join(', ') +
+                     ') and your role may not override a results lock.');
+    }
+
+    // 7. What actually travels.
+    var nCourses = 0;
+    for (var t = 0; t < DATA.courses.length; t++)
+        if (moving[DATA.courses[t].semester] && DATA.courses[t].acadYear !== to) nCourses++;
+    if (!bad.length)
+        ok.push('Moves ' + targetSems.length + ' semester registration' + (targetSems.length === 1 ? '' : 's') +
+                ' and ' + nCourses + ' course registration' + (nCourses === 1 ? '' : 's') + ' into ' + esc(to) + '.');
+
+    // 8. Fees are not part of this. Stated every time, not buried.
+    if (!bad.length)
+        warn.push('Fee records are <b>not</b> moved. Any billing raised under ' +
+                  esc(RT.fromAcad || 'the old year') + ' stays there — the exact number is counted and ' +
+                  'written into the log when you save.');
+
+    if (reason.length < (DATA.minOpReason || 12))
+        bad.push('Type a reason of at least ' + (DATA.minOpReason || 12) + ' characters (you have ' + reason.length + ').');
+
+    var html = '';
+    for (var b1 = 0; b1 < bad.length; b1++)  html += '<div class="rx-check__i rx-check__i--bad">' + bad[b1] + '</div>';
+    for (var w1 = 0; w1 < warn.length; w1++) html += '<div class="rx-check__i rx-check__i--warn">' + warn[w1] + '</div>';
+    for (var o1 = 0; o1 < ok.length; o1++)   html += '<div class="rx-check__i rx-check__i--ok">' + ok[o1] + '</div>';
+    box.className = 'rx-check is-on' + (bad.length ? ' is-bad' : '');
+    box.innerHTML = html;
+    btn.disabled = bad.length > 0;
+}
+
+function addReterm() {
+    var to = qs('rx-rt-to').value, scope = retermScope();
+    var reason = (qs('rx-rt-reason').value || '').trim();
+    if (!to || reason.length < (DATA.minOpReason || 12)) { retermCheck(); return; }
+
+    // One pending re-term per year of study: a second one would fight the first.
+    PEND.reterms = PEND.reterms.filter(function (r) { return r.studyYear !== RT.year; });
+    PEND.reterms.push({
+        studyYear: RT.year, semester: RT.sem, scope: scope,
+        fromAcad: RT.fromAcad, toAcad: to, reason: reason
+    });
+    closeModal('rx-reterm-modal');
+    render();
+    toast(scope === 'year'
+        ? 'Year ' + RT.year + ' queued to move into ' + to
+        : 'Year ' + RT.year + ' Semester ' + RT.sem + ' queued to move into ' + to);
 }
 
 function findCourse(regId) {
@@ -1058,6 +1329,18 @@ qs('rx-regsem').addEventListener('click', function () {
     fillChips('rx-rs-chips', 'regsem', 'rx-rs-reason');
     openModal('rx-regsem-modal');
 });
+['rx-rt-to', 'rx-rt-reason'].forEach(function (id) {
+    var el = qs(id); if (!el) return;
+    el.addEventListener('change', retermCheck);
+    el.addEventListener('input', retermCheck);
+});
+(function () {
+    var radios = document.getElementsByName('rx-rt-scope');
+    for (var i = 0; i < radios.length; i++) radios[i].addEventListener('change', retermCheck);
+    var add = qs('rx-rt-add');
+    if (add) add.addEventListener('click', addReterm);
+})();
+
 ['rx-rs-acad', 'rx-rs-year', 'rx-rs-sem'].forEach(function (id) {
     qs(id).addEventListener('change', regsemCheck);
 });
@@ -1079,6 +1362,12 @@ function buildOps() {
     for (var i = 0; i < PEND.regsems.length; i++) {
         var r = PEND.regsems[i];
         ops.push({ op: 'REGSEM', toYear: r.toYear, toSem: r.toSem, acadYear: r.acadYear, bill: r.bill, reason: r.reason });
+    }
+    for (var rt = 0; rt < PEND.reterms.length; rt++) {
+        var rr = PEND.reterms[rt];
+        ops.push({ op: 'RETERM', studyYear: rr.studyYear, semester: rr.semester,
+                   toAcad: rr.toAcad, scope: rr.scope, reason: rr.reason,
+                   overrideReason: rr.overrideReason || '' });
     }
     for (var j = 0; j < PEND.adds.length; j++) {
         var a = PEND.adds[j];
@@ -1106,6 +1395,13 @@ function plain(op) {
         case 'REGSEM':
             return 'Register the student into ' + op.acadYear + ' Year ' + op.toYear + ' Semester ' + op.toSem +
                    (op.bill ? ' — and create fee billing' : ' — without creating fee billing');
+        case 'RETERM':
+            return (op.scope === 'year'
+                      ? 'Year ' + op.studyYear + ' (every semester)'
+                      : 'Year ' + op.studyYear + ' Semester ' + op.semester) +
+                   ' moved into academic year ' + op.toAcad +
+                   ' \u2014 the semester registration, its courses, their published results and the ' +
+                   'transcript rows all move together; fee records are not touched. Reason: ' + op.reason;
         case 'ADD':
             return op.course + ' registered into Year ' + op.toYear + ' Semester ' + op.toSem;
         case 'MOVE':
@@ -1187,7 +1483,7 @@ qs('rx-confirm').addEventListener('click', function () {
             return;
         }
         closeModal('rx-review-modal');
-        PEND = { moves: {}, marks: {}, deletes: {}, adds: [], regsems: [] };
+        PEND = { moves: {}, marks: {}, deletes: {}, adds: [], regsems: [], reterms: [] };
         var msg = d.message;
         if (d.recalculated && d.recalculated.cgpaBefore !== d.recalculated.cgpaAfter)
             msg += ' CGPA ' + d.recalculated.cgpaBefore + ' → ' + d.recalculated.cgpaAfter + '.';
