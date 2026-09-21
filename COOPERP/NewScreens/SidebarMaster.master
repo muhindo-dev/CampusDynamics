@@ -421,26 +421,26 @@
                         </li>
 
                         <!-- ── Student Course Rearrangement ── -->
-                        <li class="cd-sidebar__item cd-sidebar__item--has-submenu" data-roles="admin" data-superadmin="1">
+                        <li class="cd-sidebar__item cd-sidebar__item--has-submenu" data-roles="all">
                             <a href="javascript:void(0)" class="cd-sidebar__link cd-sidebar__link--toggle">
                                 <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="16 3 21 3 21 8"></polyline><line x1="4" y1="20" x2="21" y2="3"></line><polyline points="21 16 21 21 16 21"></polyline><line x1="15" y1="15" x2="21" y2="21"></line><line x1="4" y1="4" x2="9" y2="9"></line></svg>
                                 <span>Student Course Rearrangement</span>
                                 <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="cd-sidebar__arrow"><polyline points="9 18 15 12 9 6"></polyline></svg>
                             </a>
                             <ul class="cd-sidebar__submenu">
-                                <li class="cd-sidebar__subitem" data-roles="admin">
+                                <li class="cd-sidebar__subitem" data-roles="all">
                                     <asp:HyperLink ID="lnkRearrangeDashboard" runat="server" NavigateUrl="~/COOPERP/NewScreens/StudentRearrangeDashboard.aspx" CssClass="cd-sidebar__sublink">
                                         <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="9"></rect><rect x="14" y="3" width="7" height="5"></rect><rect x="14" y="12" width="7" height="9"></rect><rect x="3" y="16" width="7" height="5"></rect></svg>
                                         <span>Rearrangement Dashboard</span>
                                     </asp:HyperLink>
                                 </li>
-                                <li class="cd-sidebar__subitem" data-roles="admin">
+                                <li class="cd-sidebar__subitem" data-roles="all">
                                     <asp:HyperLink ID="lnkRearrangeManage" runat="server" NavigateUrl="~/COOPERP/NewScreens/StudentRearrangeManage.aspx" CssClass="cd-sidebar__sublink">
                                         <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 11 12 14 22 4"></polyline><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"></path></svg>
                                         <span>Rearrange Student Record</span>
                                     </asp:HyperLink>
                                 </li>
-                                <li class="cd-sidebar__subitem" data-roles="admin">
+                                <li class="cd-sidebar__subitem" data-roles="all">
                                     <asp:HyperLink ID="lnkRearrangeLogs" runat="server" NavigateUrl="~/COOPERP/NewScreens/StudentRearrangeLogs.aspx" CssClass="cd-sidebar__sublink">
                                         <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline><line x1="16" y1="13" x2="8" y2="13"></line><line x1="16" y1="17" x2="8" y2="17"></line></svg>
                                         <span>Rearrangement Logs</span>

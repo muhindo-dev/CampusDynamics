@@ -208,17 +208,24 @@ SELECT 'schema ready' AS status,
        (SELECT COUNT(*) FROM sys_role_permissions WHERE menu_slug LIKE 'academics.rearrange%') AS grants;
 
 -- ============================================================================
--- OPEN UP — run only after review, to add the other three roles.
+-- OPEN UP
 -- ----------------------------------------------------------------------------
--- INSERT INTO sys_role_permissions (role_id, menu_slug, can_view, can_edit, can_delete, granted_by)
--- SELECT r.id, m.slug, 1, 1, 0, 'rearrange-open-up'
---   FROM sys_roles r
---   JOIN (SELECT 'academics.rearrange' slug
---         UNION ALL SELECT 'academics.rearrange.dashboard'
---         UNION ALL SELECT 'academics.rearrange.manage'
---         UNION ALL SELECT 'academics.rearrange.logs') m
---  WHERE r.role_code IN ('registrar','dean','hod')
---    AND NOT EXISTS (SELECT 1 FROM sys_role_permissions p WHERE p.role_id=r.id AND p.menu_slug=m.slug);
+-- APPLIED 2026-09-21 for the hod role only, on request. registrar and dean are
+-- still NOT granted; run the same statement with their role codes to add them.
+--
+-- INSERT IGNORE INTO sys_role_permissions (role_id, menu_slug, can_view, can_edit, can_delete, granted_by, granted_at)
+-- SELECT 43, m.menu_slug, 1, 1, 0, 'open-to-hod', NOW()
+--   FROM sys_menu_items m
+--  WHERE m.menu_slug IN ('academics.rearrange','academics.rearrange.dashboard',
+--                        'academics.rearrange.manage','academics.rearrange.logs');
+--
+-- Overriding a results status lock remains closed to HODs regardless of this
+-- grant: StudentRearrangeService.CanOverrideLock() tests the role code directly
+-- and admits only admin, registrar and dean.
+--
+-- TO REVERSE (removes the hod grant and nothing else):
+-- DELETE FROM sys_role_permissions
+--  WHERE role_id = 43 AND menu_slug LIKE 'academics.rearrange%';
 -- ============================================================================
 
 -- ============================================================================
