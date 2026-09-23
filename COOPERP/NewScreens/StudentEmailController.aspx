@@ -738,16 +738,44 @@ function renderDetail(r,host){
 
  // ── Credentials, shown in full and changeable in place ──
  h+='<div class="g-sec">Mailbox</div>';
- h+='<div class="g-edit"><span class="g-edit__l">Current address</span>'
-  +'<div class="g-cred">'+(d.email?('<code id="gEmailVal">'+esc(d.email)+'</code>'
-      +'<button type="button" class="g-cpy" id="gcpE" title="Copy the address" onclick="gCopy(\'gEmailVal\',\'gcpE\')">'+ICON_COPY+'</button>')
-      :'<span style="color:#b45309">No address issued yet.</span>')+'</div>'
-  +'<div class="g-edit__row" style="margin-top:7px">'
-    +'<input type="text" id="gEmailNew" class="se-fi" placeholder="new.address@mru.ac.ug" value="'+esc(d.email||'')+'" autocomplete="off" />'
-    +'<button type="button" class="g-abtn g-abtn--p" onclick="gEmailSave()">Change address</button>'
-  +'</div>'
-  +'<div class="g-edit__hint">Changing this frees the old name for reuse and claims the new one in the '
-  +'directory. The password is <b>not</b> touched, and the student is notified.</div></div>';
+ if(d.email){
+   h+='<div class="g-edit"><span class="g-edit__l">Current address</span>'
+    +'<div class="g-cred"><code id="gEmailVal">'+esc(d.email)+'</code>'
+      +'<button type="button" class="g-cpy" id="gcpE" title="Copy the address" onclick="gCopy(\'gEmailVal\',\'gcpE\')">'+ICON_COPY+'</button></div>'
+    +'<div class="g-edit__row" style="margin-top:7px">'
+      +'<input type="text" id="gEmailNew" class="se-fi" placeholder="new.address@mru.ac.ug" value="'+esc(d.email)+'" autocomplete="off" />'
+      +'<button type="button" class="g-abtn g-abtn--p" onclick="gEmailSave()">Change address</button>'
+    +'</div>'
+    +'<div class="g-edit__hint">Changing this frees the old name for reuse and claims the new one in the '
+    +'directory. The password is <b>not</b> touched, and the student is notified.</div></div>';
+ } else {
+   // No address is the commonest reason a student complains at all, so the panel offers the
+   // two names the batch allocator itself would pick rather than leaving the admin to invent
+   // one. Both are checked free against the same directory the allocator uses.
+   h+='<div class="g-edit" style="border-left:3px solid #d97706">'
+    +'<span class="g-edit__l">Current address</span>'
+    +'<div class="g-cred"><span style="color:#b45309;font-weight:700">No address issued yet.</span></div>'
+    +'<div class="se-sug" style="margin:9px 0 8px">'
+      +'<div class="se-sug__h">Suggested addresses <span id="gSugNote" style="font-weight:400;color:#94a3b8">(checking\u2026)</span></div>'
+      +'<div class="se-sug__r">'
+        +'<span class="se-sug__v" id="gsug1" title="Click to use this address" onclick="gUseSug(1)">\u2014</span>'
+        +'<button type="button" class="se-use" onclick="gUseSug(1)">Use</button>'
+        +'<button type="button" class="g-cpy" id="gcs1" title="Copy" onclick="gCopy(\'gsug1\',\'gcs1\')">'+ICON_COPY+'</button>'
+      +'</div>'
+      +'<div class="se-sug__r">'
+        +'<span class="se-sug__v" id="gsug2" title="Click to use this address" onclick="gUseSug(2)">\u2014</span>'
+        +'<button type="button" class="se-use" onclick="gUseSug(2)">Use</button>'
+        +'<button type="button" class="g-cpy" id="gcs2" title="Copy" onclick="gCopy(\'gsug2\',\'gcs2\')">'+ICON_COPY+'</button>'
+      +'</div>'
+    +'</div>'
+    +'<div class="g-edit__row">'
+      +'<input type="text" id="gIssEmail" class="se-fi" placeholder="name26@mru.ac.ug" autocomplete="off" oninput="gIssCheck()" />'
+      +'<input type="text" id="gIssPw" class="se-fi" style="flex:0 0 170px" value="'+esc(DEFAULT_PW)+'" placeholder="temporary password" autocomplete="off" />'
+      +'<button type="button" class="g-abtn g-abtn--p" onclick="gIssue()">Issue this address</button>'
+    +'</div>'
+    +'<div class="g-edit__hint" id="gIssHint">Issuing an address sets the student to '
+    +'<b>Ready for collection</b> and tells them to collect it in the portal.</div></div>';
+ }
 
  h+='<div class="g-edit"><span class="g-edit__l">Temporary password</span>'
   +'<div class="g-cred">'+(d.pw?('<code id="gPwVal">'+esc(d.pw)+'</code>'
@@ -792,7 +820,65 @@ function renderDetail(r,host){
  h+='</div>';
 
  qs(_gHost).innerHTML=h;
- gStageHint();}
+ gStageHint();
+ if(!d.email) gLoadSug(d.regno);}
+
+/* The same server rule the batch allocator applies: surname + three letters of the other
+   name + intake year, checked against every address on the domain. Asking the server rather
+   than guessing here is why the suggestion is one the batch would actually have issued. */
+function gLoadSug(reg){
+ ajax('SuggestFor',{regno:reg,otherLen:3},function(r){
+   var note=qs('gSugNote');if(!note)return;
+   if(!r||!r.success){note.textContent='(could not be worked out)';return;}
+   var a=r.suggestions||[];
+   if(qs('gsug1')) qs('gsug1').textContent=a[0]||'\u2014';
+   if(qs('gsug2')) qs('gsug2').textContent=a[1]||'\u2014';
+   note.textContent=a.length?'(free to use)':'(none available)';
+   if(r.password&&qs('gIssPw')) qs('gIssPw').value=r.password;
+   // Pre-fill the first, which is what the batch would have given them. Replacing it is
+   // one click.
+   if(a[0]&&qs('gIssEmail')&&!qs('gIssEmail').value.trim()){qs('gIssEmail').value=a[0];gIssCheck();}
+ });}
+
+window.gUseSug=function(n){
+ var el=qs('gsug'+n);if(!el)return;
+ var v=(el.textContent||'').trim();
+ if(!v||v==='\u2014')return;
+ qs('gIssEmail').value=v;gIssCheck();qs('gIssEmail').focus();};
+
+/* Live "is this name free?" against the same directory, so a clash is seen before the
+   Issue button is pressed rather than as a refusal after it. */
+var _gIssTimer=null;
+// Called from an inline oninput, which resolves against window - a plain function
+// inside this IIFE would not be found.
+window.gIssCheck=function(){
+ clearTimeout(_gIssTimer);
+ var hint=qs('gIssHint');if(!hint)return;
+ var v=(qs('gIssEmail').value||'').trim().toLowerCase();
+ if(!v){hint.innerHTML='Issuing an address sets the student to <b>Ready for collection</b> and tells them to collect it in the portal.';return;}
+ hint.textContent='Checking whether '+v+' is free\u2026';
+ _gIssTimer=setTimeout(function(){
+   // CheckAddress is the same test the create modal runs: {available, reason}.
+   ajax('CheckAddress',{email:v,regno:_gReg},function(r){
+     var hi=qs('gIssHint');if(!hi)return;
+     if((qs('gIssEmail').value||'').trim().toLowerCase()!==v)return;   // typed on since
+     if(!r||!r.success){hi.textContent='Could not check that address.';return;}
+     hi.innerHTML = r.available
+       ? '<span style="color:#0b5c3a;font-weight:700">'+esc(v)+' is free.</span> '
+         +esc(r.reason||'')+' Issuing it sets the student to <b>Ready for collection</b>.'
+       : '<span style="color:#b3261e;font-weight:700">'+esc(r.reason||(v+' is not available.'))+'</span> Pick another.';
+   });
+ },350);}
+
+window.gIssue=function(){
+ var v=(qs('gIssEmail').value||'').trim().toLowerCase();
+ var pw=(qs('gIssPw').value||'').trim();
+ if(!v){topMsg('Choose or type the address to issue.',false);return;}
+ if(!pw){topMsg('A temporary password is required.',false);return;}
+ if(!confirm('Issue '+v+' to this student?\n\nThey will be set to Ready for collection and told to collect it in the portal.'))return;
+ ajax('CreateEmail',{regno:_gReg,email:v,tempPw:pw,notes:'issued while handling a complaint'},function(r){
+   if(r&&r.success){topMsg(r.message,true);gReload();loadKpis();doSearch(st.page);}
+   else topMsg((r&&r.message)||'Could not issue the address.',false);});};
 
 /* Redraw wherever the panel currently lives, so an edit made from a complaint refreshes the
    complaint’s copy and an edit made from Manage refreshes Manage’s. */
