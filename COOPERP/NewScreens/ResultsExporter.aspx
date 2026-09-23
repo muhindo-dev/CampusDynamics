@@ -193,6 +193,19 @@
     .sr-status--load { color:#174DA4; } .sr-status--ok { color:#16a34a; } .sr-status--warn { color:#b45309; }
     .sr-spin { width:11px; height:11px; border:2px solid #cfe0f5; border-top-color:#174DA4; border-radius:50%; animation:respin .7s linear infinite; display:inline-block; flex-shrink:0; }
     @media (max-width:560px){ .sr-ft{flex-direction:column;align-items:stretch;} .sr-ft__sp{display:none;} .sr-btn{justify-content:center;} }
+
+/* The insights toggle. Deliberately quiet: it is a switch on a cost, not a headline. */
+.re-insbar{display:flex;align-items:center;gap:9px;background:#fff;border:1px solid #e0e5ed;
+  border-radius:4px;padding:8px 12px;margin-bottom:10px;cursor:pointer;user-select:none;}
+.re-insbar:hover{border-color:#174DA4;}
+.re-insbar svg{width:14px;height:14px;color:#174DA4;flex:0 0 14px;transition:transform .15s;}
+.re-insbar.is-open svg{transform:rotate(90deg);}
+.re-insbar b{font-size:12px;color:#05275C;}
+.re-insbar span{font-size:11px;color:#9098a5;flex:1 1 auto;min-width:0;overflow:hidden;
+  text-overflow:ellipsis;white-space:nowrap;}
+.re-insbar em{font-style:normal;font-size:10px;font-weight:700;text-transform:uppercase;
+  letter-spacing:.4px;color:#9098a5;background:#f5f7fa;border:1px solid #e0e5ed;padding:2px 7px;}
+.re-insbar.is-open em{color:#0b5c3a;background:#e6f4ec;border-color:#c3e6cb;}
 </style>
 </asp:Content>
 
@@ -265,6 +278,18 @@
         <div class="re-srcnote" id="reSrcNote" style="display:none;"></div>
     </div>
 
+    <%-- The analytics below are a dashboard bolted onto an export screen. They cost five
+         passes over the marks table, and most visits here are to filter and download, not to
+         read charts. So they are opt-in, remembered per user, and fetched once per filter
+         change rather than on every one. --%>
+    <div class="re-insbar" id="reInsBar" title="Analytics are loaded only while this is open">
+        <svg id="reInsChev" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="9 18 15 12 9 6"></polyline></svg>
+        <b>Insights</b>
+        <span>KPIs, grade distribution, class of degree, performers, submission pipeline</span>
+        <em id="reInsState">off</em>
+    </div>
+
+    <div id="reInsights" style="display:none;">
     <!-- STATS -->
     <div class="re-stats">
         <div class="re-kpi"><b id="kRec">&ndash;</b><span>Records</span></div>
@@ -295,6 +320,7 @@
             <div class="re-tblwrap" style="max-height:320px;"><table class="re-tbl" id="reBreakTable"><thead></thead><tbody></tbody></table></div>
         </div>
     </div>
+    </div><%-- /reInsights --%>
 
     <div class="re-card" style="margin-top:12px;">
         <div class="re-card__h">
@@ -493,24 +519,60 @@ function srcNote(source,label){
     } else { el.style.display='none'; }
 }
 
+// ── Preview: the table, and nothing that is not the table ──────────────────
+var insCfg=null, insData=null;          // the config the cached analytics belong to
+function cfgKey(c){ return JSON.stringify(c); }
+
 function preview(){
     hideErr(); setL(true);
     if(mode!==lastMode){ hiddenSet={}; lastMode=mode; }   // columns differ per mode → reset
-    var c=config();
-    ajax('GetPreview',{ configJson: JSON.stringify(c) }, function(d){
+    var c=config(), key=cfgKey(c);
+    ajax('GetPreview',{ configJson: key }, function(d){
         setL(false);
         if(!d||!d.success){ showErr((d&&d.message)||'Unable to build preview.'); return; }
         qs('reTblTitle').textContent=MODE_TITLE[d.mode]||'Preview';
         srcNote(d.source, d.sourceLabel);
-        renderStats(d.stats);
-        renderSubmission(d.submission);
-        renderBreakdown(d.breakdown);
-        perfList('rePerfTop', d.stats?d.stats.topPerformers:[], true);
-        perfList('rePerfBot', d.stats?d.stats.bottomPerformers:[], false);
         lastData={ columns:d.columns, rows:d.rows, total:d.total, previewCount:d.previewCount };
         buildCols(d.columns);
         renderTable();
+        // The analytics belong to the OLD filter now. Drop them, and refetch only if the
+        // panel showing them is actually open.
+        if(key!==insCfg){ insCfg=null; insData=null; }
+        if(insOpen()) loadInsights();
     });
+}
+
+// ── Insights: opt-in, remembered, and fetched once per filter change ──────────
+function insOpen(){
+    try{ return localStorage.getItem('re_insights')==='1'; }catch(e){ return false; }
+}
+function insPaint(){
+    var open=insOpen();
+    qs('reInsights').style.display = open?'block':'none';
+    qs('reInsBar').className = 're-insbar'+(open?' is-open':'');
+    qs('reInsState').textContent = open?'on':'off';
+}
+function toggleInsights(){
+    try{ localStorage.setItem('re_insights', insOpen()?'0':'1'); }catch(e){}
+    insPaint();
+    if(insOpen()) loadInsights();
+}
+function loadInsights(){
+    var c=config(), key=cfgKey(c);
+    if(key===insCfg && insData){ renderInsights(insData); return; }   // already have these
+    qs('reInsState').textContent='loading\u2026';
+    ajax('GetInsights',{ configJson: key }, function(d){
+        if(!d||!d.success){ qs('reInsState').textContent='unavailable'; return; }
+        insCfg=key; insData=d; qs('reInsState').textContent='on';
+        renderInsights(d);
+    });
+}
+function renderInsights(d){
+    renderStats(d.stats);
+    renderSubmission(d.submission);
+    renderBreakdown(d.breakdown);
+    perfList('rePerfTop', d.stats?d.stats.topPerformers:[], true);
+    perfList('rePerfBot', d.stats?d.stats.bottomPerformers:[], false);
 }
 function doExport(action){
     config();
@@ -541,6 +603,7 @@ function init(){
         fill('fDept',o.departments,'All departments');
         fill('fProg',o.programmes,'All programmes');
         if(o.currentYear) qs('fYear').value=o.currentYear;
+        insPaint();
         preview();
     });
 }
@@ -555,6 +618,7 @@ document.addEventListener('DOMContentLoaded',function(){
     qs('btnXlsxTop').addEventListener('click',function(){ doExport('xlsx'); });
     qs('btnCsvTop').addEventListener('click',function(){ doExport('csv'); });
     qs('btnPrintTop').addEventListener('click',doPrint);
+    qs('reInsBar').addEventListener('click',toggleInsights);
     qs('fFaculty').addEventListener('change',function(){ cascadeDept(); cascadeProg(); });
     qs('fDept').addEventListener('change',cascadeProg);
     qs('fSource').addEventListener('change',preview);
