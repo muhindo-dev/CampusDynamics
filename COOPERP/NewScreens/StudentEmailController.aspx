@@ -150,6 +150,8 @@
 .g-cpy{border:1px solid #d8e0ea;background:#fff;color:#64748b;border-radius:2px;padding:3px 6px;cursor:pointer;line-height:0;}
 .g-cpy:hover{border-color:#174DA4;color:#174DA4;}
 .g-cpy.ok{border-color:#0b5c3a;color:#0b5c3a;}
+.g-cpy--i{padding:2px 5px;margin-left:7px;vertical-align:middle;display:inline-block;}
+.g-hid{display:none;}
 
 /* ── Complaint header ── */
 .c-head{border:1px solid #e8eef6;border-left:3px solid #d97706;border-radius:3px;padding:10px 12px;margin-bottom:11px;background:#fffdf7;}
@@ -726,8 +728,17 @@ var _gHost='gBody';     // which container the panel is currently drawn into
 function renderDetail(r,host){
  _gHost=host||'gBody';
  var d=r.record;var h='';
+ /* A name on its own is rarely what the copy is for: it gets pasted into a ticket, a
+    handover note or a message to ICT, where it has to be traceable back to exactly one
+    student. So the number travels with it, and the button is on the name rather than
+    asking for two copies. */
+ var nmFull=(d.name?(d.name+' - '):'')+d.regno;
  h+='<div class="g-grid">'
-  +'<div><span>Name</span><b>'+esc(d.name||'-')+'</b></div><div><span>Student No.</span><b>'+esc(d.regno)+'</b></div>'
+  +'<div><span>Name</span><b>'+esc(d.name||'-')
+     +'<span id="gNameFull" class="g-hid">'+esc(nmFull)+'</span>'
+     +'<button type="button" class="g-cpy g-cpy--i" id="gcpN" title="Copy the name and student number" onclick="gCopy(\'gNameFull\',\'gcpN\')">'+ICON_COPY+'</button>'
+   +'</b></div>'
+  +'<div><span>Student No.</span><b>'+esc(d.regno)+'</b></div>'
   +'<div><span>Programme</span><b>'+esc(d.programme||'-')+'</b></div><div><span>Campus · Year</span><b>'+esc(d.campus)+' · '+esc(d.year)+'</b></div>'
   +'<div><span>Entry No.</span><b>'+(d.entryno?esc(d.entryno):'—')+'</b></div><div><span>Paid</span><b>'+payBadge(d.paid)+'</b></div>'
   +'<div><span>Stage</span><b>'+stageBadge(d.stage)+'</b></div>'
