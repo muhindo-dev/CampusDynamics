@@ -78,6 +78,14 @@ public partial class COOPERP_NewScreens_StudentEmailController : System.Web.UI.P
     { return NoAuth() ? DENIED : SemsAdmin.SetPassword(regno, tempPw); }
 
     [WebMethod(EnableSession = true)]
+    public static string SetEmail(string regno, string email, string note)
+    { return NoAuth() ? DENIED : SemsAdmin.SetEmail(regno, email, note); }
+
+    [WebMethod(EnableSession = true)]
+    public static string SetNotes(string regno, string notes)
+    { return NoAuth() ? DENIED : SemsAdmin.SetNotes(regno, notes); }
+
+    [WebMethod(EnableSession = true)]
     public static string DeleteRecord(string regno, string note)
     { return NoAuth() ? DENIED : SemsAdmin.DeleteRecord(regno, note); }
 

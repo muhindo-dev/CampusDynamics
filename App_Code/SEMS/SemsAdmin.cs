@@ -498,16 +498,29 @@ public static class SemsAdmin
                 c.Open();
                 string w = string.IsNullOrWhiteSpace(status) ? "WHERE status NOT IN ('RESOLVED','CLOSED')" : "WHERE status=@s";
                 var list = new List<object>();
+                // Joined to the pipeline record so the list says WHO is complaining and what
+                // address they hold. Without it every row was a student number, and an
+                // administrator had to open each one to find out whether it was even actionable.
                 using (var cmd = new MySqlCommand(
-                    "SELECT id, regno, category, description, status, priority, IFNULL(admin_response,'') resp, DATE_FORMAT(created_at,'%Y-%m-%d %H:%i') cat " +
-                    "FROM campus_dynamics_portal.sems_complaints " + w + " ORDER BY (status='SUBMITTED') DESC, id DESC LIMIT 200", c))
+                    "SELECT k.id, k.regno, k.category, k.description, k.status, k.priority, " +
+                    "IFNULL(k.admin_response,'') resp, DATE_FORMAT(k.created_at,'%Y-%m-%d %H:%i') cat, " +
+                    "DATE_FORMAT(k.updated_at,'%Y-%m-%d %H:%i') uat, IFNULL(k.handled_by,'') handled, " +
+                    "IFNULL(e.student_name,'') sname, IFNULL(e.email_address,'') email, " +
+                    "IFNULL(e.current_stage,'') stage, IFNULL(e.programme,'') programme " +
+                    "FROM campus_dynamics_portal.sems_complaints k " +
+                    "LEFT JOIN campus_dynamics_portal.sems_email_creations e ON e.regno = k.regno " +
+                    w.Replace("WHERE status", "WHERE k.status") +
+                    " ORDER BY (k.status='SUBMITTED') DESC, k.id DESC LIMIT 200", c))
                 {
                     if (!string.IsNullOrWhiteSpace(status)) cmd.Parameters.AddWithValue("@s", status);
                     using (var rd = cmd.ExecuteReader())
                         while (rd.Read())
                             list.Add(new { id = Convert.ToInt64(rd["id"]), regno = rd["regno"].ToString(), category = rd["category"].ToString(),
                                 description = rd["description"].ToString(), status = rd["status"].ToString(), priority = rd["priority"].ToString(),
-                                response = rd["resp"].ToString(), created = rd["cat"].ToString() });
+                                response = rd["resp"].ToString(), created = rd["cat"].ToString(), updated = rd["uat"].ToString(),
+                                handledBy = rd["handled"].ToString(), name = rd["sname"].ToString(), email = rd["email"].ToString(),
+                                stage = rd["stage"].ToString(), programme = rd["programme"].ToString(),
+                                inPipeline = rd["sname"].ToString() != "" || rd["email"].ToString() != "" });
                 }
                 return js.Serialize(new { success = true, complaints = list });
             }
@@ -902,6 +915,182 @@ public static class SemsAdmin
                 Log(c, null, 0, regno, "reset_password", null, null, "temporary password reset by admin");
                 Notify(c, null, regno, "Your email password was reset", "Please open the portal, view your new temporary password and set your own.", "key");
                 return js.Serialize(new { success = true, message = "Temporary password reset." });
+            }
+        }
+        catch (Exception ex) { return js.Serialize(new { success = false, message = ex.Message }); }
+    }
+
+    /// <summary>
+    /// Changes the address on a record that already has one.
+    ///
+    /// CreateEmail issues a first address; this replaces a live one, which is a different job
+    /// because something is already holding the old name. Two tables have to agree:
+    /// sems_email_creations carries the address under a UNIQUE index, and sems_email_directory
+    /// is the oracle every other part of SEMS asks before handing a name out. Changing one and
+    /// not the other either leaks a name that is still in use or strands one that nobody holds
+    /// — so both move inside a single transaction, or neither does.
+    ///
+    /// The old address is released rather than deleted-and-forgotten: it goes back to the pool
+    /// and can be issued again, which is what an administrator correcting a typo expects.
+    /// </summary>
+    public static string SetEmail(string regno, string email, string note)
+    {
+        var js = new JavaScriptSerializer();
+        regno = (regno ?? "").Trim();
+        // Normalised exactly as CreateEmail and the directory store it, so case and stray
+        // spaces can never produce two records for one mailbox.
+        email = (email ?? "").Trim().ToLowerInvariant();
+        note = (note ?? "").Trim();
+
+        if (regno == "" || email == "")
+            return js.Serialize(new { success = false, message = "Student and the new address are both required." });
+        if (!SemsBatch.IsValidEmail(email))
+            return js.Serialize(new { success = false, message = "\"" + email + "\" is not a valid address. Use letters, digits and dots only, starting with a letter." });
+
+        try
+        {
+            using (var c = new MySqlConnection(Conn))
+            {
+                c.Open();
+
+                int id = 0; string oldEmail = "", stage = "", name = "";
+                using (var q = new MySqlCommand(
+                    "SELECT id, IFNULL(email_address,''), current_stage, IFNULL(student_name,'') " +
+                    "FROM campus_dynamics_portal.sems_email_creations WHERE regno=@r LIMIT 1", c))
+                {
+                    q.Parameters.AddWithValue("@r", regno);
+                    using (var rd = q.ExecuteReader())
+                        if (rd.Read()) { id = Convert.ToInt32(rd[0]); oldEmail = rd[1].ToString(); stage = rd[2].ToString(); name = rd[3].ToString(); }
+                }
+                if (id == 0) return js.Serialize(new { success = false, message = "No pipeline record for that student." });
+                if (string.Equals(oldEmail, email, StringComparison.OrdinalIgnoreCase))
+                    return js.Serialize(new { success = false, message = "That is already this student\u2019s address \u2014 nothing to change." });
+
+                string heldElsewhere = "";   // set when the OLD name is a real Workspace mailbox
+
+                // Asked before the write so the refusal can name WHO holds it, which a
+                // duplicate-key error cannot.
+                using (var q = new MySqlCommand(
+                    "SELECT IFNULL(owner_ref,''), source FROM campus_dynamics_portal.sems_email_directory " +
+                    "WHERE email=@e AND status<>'RELEASED' LIMIT 1", c))
+                {
+                    q.Parameters.AddWithValue("@e", email);
+                    using (var rd = q.ExecuteReader())
+                        if (rd.Read() && !rd[0].ToString().Equals(regno, StringComparison.OrdinalIgnoreCase))
+                            return js.Serialize(new { success = false, message = email + " is already held by " +
+                                rd[1].ToString().ToLowerInvariant() + " record " +
+                                (rd[0].ToString() == "" ? "(reserved)" : rd[0].ToString()) + "." });
+                }
+
+                using (var tx = c.BeginTransaction())
+                {
+                    try
+                    {
+                        using (var up = new MySqlCommand(
+                            "UPDATE campus_dynamics_portal.sems_email_creations SET email_address=@e, " +
+                            "last_updated_by=@who, last_updated_at=NOW() WHERE id=@id", c, tx))
+                        {
+                            up.Parameters.AddWithValue("@e", email);
+                            up.Parameters.AddWithValue("@who", Actor());
+                            up.Parameters.AddWithValue("@id", id);
+                            up.ExecuteNonQuery();
+                        }
+
+                        // Releasing the old name is only safe for names this system reserved.
+                        // A GOOGLE-sourced row means the mailbox really exists in Workspace, and
+                        // deleting the row would tell SEMS the name is free while Google still
+                        // holds it - 831 of the 1,150 live addresses are in exactly that state.
+                        // Those rows stay, and the caller is told the rename must be done in
+                        // Google too.
+                        if (oldEmail != "")
+                        {
+                            using (var d = new MySqlCommand(
+                                "DELETE FROM campus_dynamics_portal.sems_email_directory " +
+                                "WHERE email=@e AND owner_ref=@r AND source IN ('PIPELINE','RESERVED')", c, tx))
+                            { d.Parameters.AddWithValue("@e", oldEmail.ToLowerInvariant()); d.Parameters.AddWithValue("@r", regno); d.ExecuteNonQuery(); }
+
+                            using (var q2 = new MySqlCommand(
+                                "SELECT source FROM campus_dynamics_portal.sems_email_directory WHERE email=@e LIMIT 1", c, tx))
+                            {
+                                q2.Parameters.AddWithValue("@e", oldEmail.ToLowerInvariant());
+                                var o2 = q2.ExecuteScalar();
+                                if (o2 != null && o2 != DBNull.Value) heldElsewhere = o2.ToString();
+                            }
+                        }
+
+                        // The new one is claimed, in the same shape the batch reserver uses.
+                        int at = email.IndexOf('@');
+                        string local = at > 0 ? email.Substring(0, at) : email;
+                        string domain = at > 0 ? email.Substring(at + 1) : "";
+                        using (var ins = new MySqlCommand(
+                            "INSERT INTO campus_dynamics_portal.sems_email_directory " +
+                            "(email,local_part,domain,source,owner_type,owner_ref,display_name,status,first_seen_at,last_seen_at,notes) " +
+                            "VALUES (@e,@l,@d,'PIPELINE','STUDENT',@o,@n,'ACTIVE',NOW(),NOW(),@nt) " +
+                            "ON DUPLICATE KEY UPDATE owner_ref=@o, owner_type='STUDENT', " +
+                            "status='ACTIVE', display_name=@n, last_seen_at=NOW(), notes=@nt", c, tx))
+                        {
+                            ins.Parameters.AddWithValue("@e", email);
+                            ins.Parameters.AddWithValue("@l", local);
+                            ins.Parameters.AddWithValue("@d", domain);
+                            ins.Parameters.AddWithValue("@o", regno);
+                            ins.Parameters.AddWithValue("@n", name.Length > 150 ? name.Substring(0, 150) : name);
+                            ins.Parameters.AddWithValue("@nt", "changed by admin" + (note == "" ? "" : ": " + (note.Length > 180 ? note.Substring(0, 180) : note)));
+                            ins.ExecuteNonQuery();
+                        }
+
+                        Log(c, tx, id, regno, "change_email", stage, stage,
+                            (oldEmail == "" ? "(none)" : oldEmail) + " \u2192 " + email + (note == "" ? "" : " | " + note));
+                        Notify(c, tx, regno, "Your university email address has changed",
+                               "Your address is now " + email + ". Your password is unchanged. Open the portal if you need to see your details again.", "mail");
+                        tx.Commit();
+                    }
+                    catch { try { tx.Rollback(); } catch { } throw; }
+                }
+
+                string tail;
+                if (oldEmail == "") tail = ".";
+                else if (heldElsewhere != "")
+                    tail = ". " + oldEmail + " is still a real " + heldElsewhere.ToLowerInvariant() +
+                           " mailbox - rename or delete it in Google Workspace too, or the student keeps two.";
+                else tail = ". " + oldEmail + " is free again.";
+                return js.Serialize(new { success = true, message = "Address changed to " + email + tail,
+                                          warnGoogle = heldElsewhere != "" });
+            }
+        }
+        catch (MySqlException mex)
+        {
+            if (mex.Number == 1062)
+                return js.Serialize(new { success = false, message = "That address is already assigned to another student." });
+            return js.Serialize(new { success = false, message = mex.Message });
+        }
+        catch (Exception ex) { return js.Serialize(new { success = false, message = ex.Message }); }
+    }
+
+    /// <summary>Replaces the free-text notes on a record. Empty clears them.</summary>
+    public static string SetNotes(string regno, string notes)
+    {
+        var js = new JavaScriptSerializer(); regno = (regno ?? "").Trim();
+        notes = (notes ?? "").Trim();
+        if (regno == "") return js.Serialize(new { success = false, message = "Student is required." });
+        if (notes.Length > 1000) notes = notes.Substring(0, 1000);
+        try
+        {
+            using (var c = new MySqlConnection(Conn))
+            {
+                c.Open();
+                int n;
+                using (var up = new MySqlCommand(
+                    "UPDATE campus_dynamics_portal.sems_email_creations SET notes=@n, last_updated_by=@who, " +
+                    "last_updated_at=NOW() WHERE regno=@r", c))
+                {
+                    up.Parameters.AddWithValue("@n", notes);
+                    up.Parameters.AddWithValue("@who", Actor());
+                    up.Parameters.AddWithValue("@r", regno);
+                    n = up.ExecuteNonQuery();
+                }
+                if (n == 0) return js.Serialize(new { success = false, message = "No pipeline record for that student." });
+                Log(c, null, 0, regno, "edit_notes", null, null, notes == "" ? "notes cleared" : notes);
+                return js.Serialize(new { success = true, message = "Notes saved." });
             }
         }
         catch (Exception ex) { return js.Serialize(new { success = false, message = ex.Message }); }

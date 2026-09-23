@@ -135,6 +135,35 @@
 .se-chk--ok{color:#0b5c3a;}
 .se-chk--bad{color:#b91c1c;}
 
+/* ── Inline editors inside the 360 panel ─────────────────────────────
+   An address or a password is changed here, next to the value being changed, rather than
+   through a prompt() that shows nothing and validates nothing. */
+.g-edit{border:1px solid #e8eef6;border-radius:3px;padding:9px 11px;margin-bottom:9px;background:#fbfdff;}
+.g-edit__l{font-size:10.5px;font-weight:800;text-transform:uppercase;letter-spacing:.35px;color:#64748b;display:block;margin-bottom:5px;}
+.g-edit__row{display:flex;gap:7px;flex-wrap:wrap;align-items:center;}
+.g-edit__row .se-fi{flex:1 1 220px;width:auto;margin:0;}
+.g-edit__hint{font-size:10.5px;color:#94a3b8;margin-top:5px;line-height:1.5;}
+.g-edit__hint b{color:#475569;}
+.g-cred{display:flex;gap:7px;align-items:center;font-size:12.5px;}
+.g-cred code{background:#f1f5f9;border:1px solid #e2e8f0;padding:3px 7px;border-radius:2px;font-size:12px;
+  font-family:ui-monospace,SFMono-Regular,Menlo,monospace;color:#05275C;word-break:break-all;}
+.g-cpy{border:1px solid #d8e0ea;background:#fff;color:#64748b;border-radius:2px;padding:3px 6px;cursor:pointer;line-height:0;}
+.g-cpy:hover{border-color:#174DA4;color:#174DA4;}
+.g-cpy.ok{border-color:#0b5c3a;color:#0b5c3a;}
+
+/* ── Complaint header ── */
+.c-head{border:1px solid #e8eef6;border-left:3px solid #d97706;border-radius:3px;padding:10px 12px;margin-bottom:11px;background:#fffdf7;}
+.c-head__top{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:6px;}
+.c-head__cat{font-size:13px;font-weight:800;color:#05275C;}
+.c-head__txt{font-size:12.5px;line-height:1.6;color:#1a1a2e;white-space:pre-wrap;word-break:break-word;}
+.c-head__meta{font-size:10.5px;color:#94a3b8;margin-top:6px;}
+.c-prev{border:1px solid #e2e8f0;border-left:3px solid #0b5c3a;background:#f6fbf8;border-radius:3px;
+  padding:8px 10px;margin-top:8px;font-size:12px;color:#0b5c3a;line-height:1.55;white-space:pre-wrap;}
+.c-reply{border:1px solid #e8eef6;border-radius:3px;padding:10px 12px;background:#fbfdff;}
+.c-reply__row{display:flex;gap:9px;flex-wrap:wrap;margin-bottom:6px;}
+.c-hint{font-size:10.5px;color:#94a3b8;margin-top:5px;}
+.c-none{font-size:12px;color:#b45309;background:#fff8e1;border:1px solid #ffe08a;border-radius:3px;padding:8px 10px;margin-bottom:10px;}
+
 /* the change-stage row inside Manage */
 .g-stage{border:1px solid #e0e5ed;background:#f8fafc;padding:11px 13px;margin:12px 0;}
 .g-stage__l{display:block;font-size:10.5px;font-weight:700;text-transform:uppercase;letter-spacing:.4px;color:#64748b;margin-bottom:6px;}
@@ -344,23 +373,40 @@
     </div>
 </div>
 
-<!-- Complaint respond modal -->
-<div class="se-modal" id="mResp" role="dialog" aria-modal="true">
-    <div class="se-modal__h"><span class="se-modal__t">Respond to complaint</span><button type="button" class="se-modal__x" onclick="closeM()">&times;</button></div>
-    <div class="se-modal__b">
+<%-- A complaint is almost always about the address or the password, so answering one from a
+     student number and a category alone meant opening Manage in another tab to see anything.
+     The panel now carries the whole record, editable, with the reply at the bottom. --%>
+<div class="se-modal se-modal--wide" id="mResp" role="dialog" aria-modal="true">
+    <div class="se-modal__h"><span class="se-modal__t" id="rTitle">Complaint</span><button type="button" class="se-modal__x" onclick="closeM()">&times;</button></div>
+    <div class="se-modal__b" id="rBody" style="max-height:74vh;overflow:auto;">
         <div class="se-msg" id="rMsg"></div>
-        <div id="rWho" style="font-size:12.5px;color:#64748b;margin-bottom:6px;"></div>
-        <label class="se-fl">Status</label>
-        <select id="rStatus" class="se-fi">
-            <option value="UNDER_REVIEW">Under review</option>
-            <option value="RESPONDED">Responded</option>
-            <option value="RESOLVED">Resolved</option>
-            <option value="CLOSED">Closed</option>
-        </select>
-        <label class="se-fl">Response to student</label>
-        <textarea id="rText" class="se-fi" rows="3"></textarea>
+        <div id="rComp"></div>
+        <div id="rDetail"><div style="text-align:center;color:#94a3b8;padding:24px">Loading the student record&hellip;</div></div>
+        <div class="g-sec">Reply to the student</div>
+        <div class="c-reply">
+            <div class="c-reply__row">
+                <div style="flex:0 0 190px">
+                    <label class="se-fl">Set the complaint to</label>
+                    <select id="rStatus" class="se-fi">
+                        <option value="UNDER_REVIEW">Under review</option>
+                        <option value="RESPONDED">Responded</option>
+                        <option value="RESOLVED">Resolved</option>
+                        <option value="CLOSED">Closed</option>
+                    </select>
+                </div>
+                <div style="flex:1 1 260px">
+                    <label class="se-fl">Quick replies</label>
+                    <select id="rCanned" class="se-fi" onchange="rCannedPick()">
+                        <option value="">— choose a common answer —</option>
+                    </select>
+                </div>
+            </div>
+            <label class="se-fl">Response to student</label>
+            <textarea id="rText" class="se-fi" rows="3" placeholder="What has been done, and what the student should do next."></textarea>
+            <div class="c-hint">The student is notified in the portal with whatever is typed here.</div>
+        </div>
     </div>
-    <div class="se-modal__f"><button type="button" class="se-btn" onclick="closeM()">Cancel</button><button type="button" class="se-btn se-btn--p" onclick="saveResp()">Send update</button></div>
+    <div class="se-modal__f"><button type="button" class="se-btn" onclick="closeM()">Close</button><button type="button" class="se-btn se-btn--p" onclick="saveResp()">Send update</button></div>
 </div>
 
 <!-- 360 Manage modal -->
@@ -670,42 +716,125 @@ window.addCand=function(reg,name){if(!confirm('Add '+name+' ('+reg+') to the ema
 // ── 360 Manage ──
 var _gReg='';
 window.openManage=function(reg){_gReg=reg;qs('gTitle').textContent='Manage · '+reg;qs('gBody').innerHTML='<div style="text-align:center;color:#94a3b8;padding:30px">Loading…</div>';qs('ov').style.display='block';qs('mManage').style.display='block';
- ajax('Detail',{regno:reg},function(r){if(!r||!r.success){qs('gBody').innerHTML='<div class="se-msg se-msg--err" style="display:block">'+esc((r&&r.message)||'Could not load')+'</div>';return;}renderDetail(r);});};
+ ajax('Detail',{regno:reg},function(r){if(!r||!r.success){qs('gBody').innerHTML='<div class="se-msg se-msg--err" style="display:block">'+esc((r&&r.message)||'Could not load')+'</div>';return;}renderDetail(r,'gBody');});};
 function tl(label,v){return v?('<li>'+label+' <b>'+esc(v)+'</b></li>'):('<li style="opacity:.5">'+label+' <b>—</b></li>');}
-function renderDetail(r){var d=r.record;var h='';
+
+/* The 360 panel. Manage shows it on its own; a complaint shows it under the complaint.
+   Both get the same editors, because the fix for a complaint about an address IS changing
+   the address, and making the admin leave the panel to do it was the whole problem. */
+var _gHost='gBody';     // which container the panel is currently drawn into
+function renderDetail(r,host){
+ _gHost=host||'gBody';
+ var d=r.record;var h='';
  h+='<div class="g-grid">'
   +'<div><span>Name</span><b>'+esc(d.name||'-')+'</b></div><div><span>Student No.</span><b>'+esc(d.regno)+'</b></div>'
   +'<div><span>Programme</span><b>'+esc(d.programme||'-')+'</b></div><div><span>Campus · Year</span><b>'+esc(d.campus)+' · '+esc(d.year)+'</b></div>'
-  +'<div><span>Paid</span><b>'+payBadge(d.paid)+'</b></div><div><span>Stage</span><b>'+stageBadge(d.stage)+'</b></div>'
-  +'<div><span>Email</span><b>'+(d.email?esc(d.email):'—')+'</b></div><div><span>Temp password</span><b>'+(d.pw?esc(d.pw):'—')+'</b></div>'
-  +'<div><span>Verification</span><b>'+(d.verification==='VERIFIED'?'<span class="se-badge se-b--verified">Verified</span>':esc(d.verification||'—'))+'</b></div><div><span>Password changed</span><b>'+esc(d.pwChanged)+'</b></div>'
-  +'</div>';
- if(d.notes)h+='<div style="font-size:12px;background:#f8fafc;border:1px solid #eef2f7;padding:8px 10px;margin-bottom:10px"><b>Notes:</b> '+esc(d.notes)+'</div>';
- h+='<div class="g-act">'
-  +(d.stage==='PENDING_CREATION'?'<button type="button" class="g-abtn g-abtn--p" onclick="closeM();openCreate(\''+_gReg+'\',\''+esc(d.name).replace(/\x27/g,"")+'\',\''+esc(d.year)+'\')">Issue an address</button>':'')
-  +'<button type="button" class="g-abtn" onclick="gPw()">Reset password</button>'
-  +'<button type="button" class="g-abtn g-abtn--d" onclick="gDel()">Remove record</button>'
+  +'<div><span>Entry No.</span><b>'+(d.entryno?esc(d.entryno):'—')+'</b></div><div><span>Paid</span><b>'+payBadge(d.paid)+'</b></div>'
+  +'<div><span>Stage</span><b>'+stageBadge(d.stage)+'</b></div>'
+  +'<div><span>Verification</span><b>'+(d.verification==='VERIFIED'?'<span class="se-badge se-b--verified">Verified</span>':esc(d.verification||'—'))+'</b></div>'
+  +'<div><span>Password changed by student</span><b>'+esc(d.pwChanged||'—')+'</b></div>'
+  +'<div><span>Credentials viewed</span><b>'+(d.t_viewed?esc(d.t_viewed):'not yet')+'</b></div>'
   +'</div>';
 
- // Changing the stage is a choice between three named things, so it is a dropdown sitting in
- // the panel — not a prompt asking the admin to type a constant from memory. The old one
- // offered EMAIL_CREATED and SUSPENDED, which are not stages: typing either wrote a value the
- // badge could not render and the filter could never find again.
+ // ── Credentials, shown in full and changeable in place ──
+ h+='<div class="g-sec">Mailbox</div>';
+ h+='<div class="g-edit"><span class="g-edit__l">Current address</span>'
+  +'<div class="g-cred">'+(d.email?('<code id="gEmailVal">'+esc(d.email)+'</code>'
+      +'<button type="button" class="g-cpy" id="gcpE" title="Copy the address" onclick="gCopy(\'gEmailVal\',\'gcpE\')">'+ICON_COPY+'</button>')
+      :'<span style="color:#b45309">No address issued yet.</span>')+'</div>'
+  +'<div class="g-edit__row" style="margin-top:7px">'
+    +'<input type="text" id="gEmailNew" class="se-fi" placeholder="new.address@mru.ac.ug" value="'+esc(d.email||'')+'" autocomplete="off" />'
+    +'<button type="button" class="g-abtn g-abtn--p" onclick="gEmailSave()">Change address</button>'
+  +'</div>'
+  +'<div class="g-edit__hint">Changing this frees the old name for reuse and claims the new one in the '
+  +'directory. The password is <b>not</b> touched, and the student is notified.</div></div>';
+
+ h+='<div class="g-edit"><span class="g-edit__l">Temporary password</span>'
+  +'<div class="g-cred">'+(d.pw?('<code id="gPwVal">'+esc(d.pw)+'</code>'
+      +'<button type="button" class="g-cpy" id="gcpP" title="Copy the password" onclick="gCopy(\'gPwVal\',\'gcpP\')">'+ICON_COPY+'</button>')
+      :'<span style="color:#94a3b8">—</span>')+'</div>'
+  +'<div class="g-edit__row" style="margin-top:7px">'
+    +'<input type="text" id="gPwNew" class="se-fi" placeholder="new temporary password" value="'+esc(DEFAULT_PW)+'" autocomplete="off" />'
+    +'<button type="button" class="g-abtn" onclick="gPwSave()">Reset password</button>'
+  +'</div>'
+  +'<div class="g-edit__hint">'
+  +(d.pwChanged==='Yes'
+     ? 'The student has already set their own password. Resetting replaces it, and they will have to collect the new one from the portal.'
+     : 'The student has not yet set their own password.')
+  +'</div></div>';
+
+ // ── Stage ──
  h+='<div class="g-stage"><label class="g-stage__l" for="gStageSel">Stage</label>'
   +'<div class="g-stage__row">'
   +'<select id="gStageSel" class="se-sel" onchange="gStageHint()">'+stageOptions(d.stage)+'</select>'
   +'<input type="text" id="gStageNote" class="se-fi" style="flex:2 1 200px;width:auto" placeholder="Why (kept on the record)" />'
   +'<button type="button" class="g-abtn g-abtn--p" id="gStageBtn" onclick="gStageSave()" disabled>Apply</button>'
   +'</div><div class="g-stage__hint" id="gStageHint"></div></div>';
+
+ // ── Notes ──
+ h+='<div class="g-edit"><span class="g-edit__l">Notes on this record</span>'
+  +'<textarea id="gNotes" class="se-fi" rows="2" placeholder="Anything the next person handling this student should know.">'+esc(d.notes||'')+'</textarea>'
+  +'<div class="g-edit__row" style="margin-top:6px"><button type="button" class="g-abtn" onclick="gNotesSave()">Save notes</button></div></div>';
+
+ h+='<div class="g-act">'
+  +(d.stage==='PENDING_CREATION'?'<button type="button" class="g-abtn g-abtn--p" onclick="closeM();openCreate(\''+_gReg+'\',\''+esc(d.name).replace(/\x27/g,"")+'\',\''+esc(d.year)+'\')">Issue an address</button>':'')
+  +'<button type="button" class="g-abtn g-abtn--d" onclick="gDel()">Remove record</button>'
+  +'</div>';
+
  h+='<div class="g-sec">Journey timeline</div><ul class="g-tl">'
   +tl('Added to pipeline',d.t_created)+tl('Email created',d.t_email)+tl('Learn done',d.t_edu)+tl('Gmail guide done',d.t_gmail)+tl('Quiz passed',d.t_quiz)+tl('Credentials viewed',d.t_viewed)+tl('Verified (Active Student)',d.t_verified)+tl('Completed',d.t_completed)+'</ul>';
- if(r.complaints&&r.complaints.length){h+='<div class="g-sec">Complaints</div>';r.complaints.forEach(function(c){h+='<div style="font-size:12px;padding:5px 0;border-bottom:1px dashed #eef2f7"><b>'+esc(c.category)+'</b> — '+esc(c.status)+' <span style="color:#94a3b8">'+esc(c.at)+'</span>'+(c.response?'<br><span style="color:#0b5c3a">'+esc(c.response)+'</span>':'')+'</div>';});}
+
+ if(r.complaints&&r.complaints.length){h+='<div class="g-sec">Complaints on this student</div>';r.complaints.forEach(function(c){h+='<div style="font-size:12px;padding:5px 0;border-bottom:1px dashed #eef2f7"><b>'+esc(c.category)+'</b> — '+esc(c.status)+' <span style="color:#94a3b8">'+esc(c.at)+'</span>'+(c.response?'<br><span style="color:#0b5c3a">'+esc(c.response)+'</span>':'')+'</div>';});}
+
  h+='<div class="g-sec">Activity log</div><div class="g-log">';
  (r.activity||[]).forEach(function(a){h+='<div><b>'+esc((a.action||'').replace(/_/g,' '))+'</b>'+(a.detail?(' — '+esc(a.detail)):'')+' <span>'+esc(a.at)+' · '+esc(a.actor)+'</span></div>';});
  if(!(r.activity||[]).length)h+='<div style="color:#94a3b8">No activity yet.</div>';
  h+='</div>';
- qs('gBody').innerHTML=h;
+
+ qs(_gHost).innerHTML=h;
  gStageHint();}
+
+/* Redraw wherever the panel currently lives, so an edit made from a complaint refreshes the
+   complaint’s copy and an edit made from Manage refreshes Manage’s. */
+function gReload(){
+ ajax('Detail',{regno:_gReg},function(r){
+   if(r&&r.success)renderDetail(r,_gHost);
+   if(_gHost==='rDetail')loadComplaints();
+ });}
+
+window.gCopy=function(srcId,btnId){
+ var el=qs(srcId);if(!el)return;
+ var t=el.textContent||'';
+ function done(){var b=qs(btnId);if(!b)return;b.classList.add('ok');setTimeout(function(){b.classList.remove('ok');},1200);}
+ if(navigator.clipboard&&navigator.clipboard.writeText){navigator.clipboard.writeText(t).then(done,function(){});return;}
+ var ta=document.createElement('textarea');ta.value=t;document.body.appendChild(ta);ta.select();
+ try{document.execCommand('copy');done();}catch(e){}document.body.removeChild(ta);};
+
+window.gEmailSave=function(){
+ var v=(qs('gEmailNew').value||'').trim().toLowerCase();
+ if(!v){topMsg('Type the new address first.',false);return;}
+ var cur=qs('gEmailVal')?qs('gEmailVal').textContent:'';
+ if(v===cur){topMsg('That is already the address on this record.',false);return;}
+ if(!confirm('Change this student\u2019s address to\n\n  '+v+'\n\n'+(cur?('It replaces '+cur+', which goes back into the pool.'):'')))return;
+ var note=prompt('Why is the address changing? (kept on the record)','')||'';
+ ajax('SetEmail',{regno:_gReg,email:v,note:note},function(r){
+   if(r&&r.success){topMsg(r.message,true);gReload();doSearch(st.page);}
+   else topMsg((r&&r.message)||'Could not change the address.',false);});};
+
+window.gPwSave=function(){
+ var v=(qs('gPwNew').value||'').trim();
+ if(!v){topMsg('Type the new temporary password first.',false);return;}
+ if(!confirm('Reset this student\u2019s temporary password?\n\nThey will need to collect the new one from the portal.'))return;
+ ajax('SetPassword',{regno:_gReg,tempPw:v},function(r){
+   if(r&&r.success){topMsg(r.message,true);gReload();}
+   else topMsg((r&&r.message)||'Could not reset the password.',false);});};
+
+window.gNotesSave=function(){
+ var v=(qs('gNotes').value||'').trim();
+ ajax('SetNotes',{regno:_gReg,notes:v},function(r){
+   if(r&&r.success){topMsg(r.message,true);gReload();}
+   else topMsg((r&&r.message)||'Could not save the notes.',false);});};
+
 // Options are the server's list, with the record's own stage selected and marked so it is
 // obvious that choosing it again does nothing.
 var _gStageNow='';
@@ -738,7 +867,6 @@ window.gStageSave=function(){
         if(r&&r.success){topMsg(r.message,true);openManage(_gReg);loadKpis();doSearch(st.page);}
         else{btn.disabled=false;btn.textContent='Apply';topMsg((r&&r.message)||'Could not change the stage.',false);}
     });};
-window.gPw=function(){var p=prompt('New temporary password for this student:',DEFAULT_PW);if(!p||!p.trim())return;ajax('SetPassword',{regno:_gReg,tempPw:p.trim()},function(r){if(r&&r.success){topMsg(r.message,true);openManage(_gReg);}else topMsg((r&&r.message)||'Failed',false);});};
 window.gDel=function(){if(!confirm('Remove '+_gReg+' from the email pipeline? This deletes the record.'))return;var note=prompt('Reason (optional):','')||'';ajax('DeleteRecord',{regno:_gReg,note:note},function(r){if(r&&r.success){closeM();topMsg(r.message,true);loadKpis();doSearch(st.page);}else topMsg((r&&r.message)||'Failed',false);});};
 
 // =====================================================================
@@ -881,8 +1009,98 @@ window.saveNew=function(){
 
 // Complaints
 var _rId=0;
-window.loadComplaints=function(){ajax('Complaints',{status:qs('cStatus').value},function(r){var b=qs('cBody');b.innerHTML='';if(!r||!r.success){return;}qs('cEmpty').style.display=r.complaints.length?'none':'block';r.complaints.forEach(function(c){var tr=document.createElement('tr');tr.innerHTML='<td><strong>'+esc(c.regno)+'</strong></td><td>'+esc(c.category)+'</td><td style="max-width:280px">'+esc(c.description||'')+'</td><td><span class="se-badge se-b--'+(c.status==='RESOLVED'||c.status==='CLOSED'?'done':'ready')+'">'+esc(c.status)+'</span></td><td style="color:#94a3b8">'+esc(c.created)+'</td><td><span class="se-act" onclick="openResp('+c.id+',\''+esc(c.regno)+'\',\''+esc(c.category)+'\')">Respond</span></td>';b.appendChild(tr);});});};
-window.openResp=function(id,reg,cat){_rId=id;qs('rWho').textContent=reg+' · '+cat;qs('rText').value='';qs('rMsg').style.display='none';qs('ov').style.display='block';qs('mResp').style.display='block';};
+var _cRows={};   // id -> the row, so the panel can show the whole complaint without a refetch
+
+window.loadComplaints=function(){
+  ajax('Complaints',{status:qs('cStatus').value},function(r){
+    var b=qs('cBody');b.innerHTML='';_cRows={};
+    if(!r||!r.success){return;}
+    qs('cEmpty').style.display=r.complaints.length?'none':'block';
+    r.complaints.forEach(function(c){
+      _cRows[c.id]=c;
+      var tr=document.createElement('tr');
+      // The student, not just their number: an administrator triaging a list should be able
+      // to see who it is and what address they hold without opening every row.
+      var who='<strong>'+esc(c.regno)+'</strong>'
+             +(c.name?'<div style="color:#475569">'+esc(c.name)+'</div>':'')
+             +(c.email?'<div style="color:#94a3b8;font-size:11px">'+esc(c.email)+'</div>'
+                      :'<div style="color:#b45309;font-size:11px">no address issued</div>');
+      var pr=(c.priority||'').toUpperCase();
+      var prB=pr&&pr!=='NORMAL'?' <span class="se-badge se-b--'+(pr==='HIGH'||pr==='URGENT'?'warn':'muted')+'">'+esc(pr)+'</span>':'';
+      tr.innerHTML='<td>'+who+'</td>'
+        +'<td>'+esc(c.category)+prB+'</td>'
+        +'<td style="max-width:300px"><div style="max-height:34px;overflow:hidden;color:#475569">'+esc(c.description||'')+'</div></td>'
+        +'<td><span class="se-badge se-b--'+(c.status==='RESOLVED'||c.status==='CLOSED'?'done':'ready')+'">'+esc(c.status)+'</span></td>'
+        +'<td style="color:#94a3b8">'+esc(c.created)+'</td>'
+        +'<td style="white-space:nowrap"><span class="se-act" onclick="openResp('+c.id+')">Open</span></td>';
+      b.appendChild(tr);
+    });
+  });};
+
+/* Opening a complaint loads the student's whole record under it. Answering one of these
+   nearly always means changing the address or the password, so the thing that fixes it is
+   in the same panel as the thing that reports it. */
+window.openResp=function(id){
+  var c=_cRows[id];if(!c)return;
+  _rId=id;_gReg=c.regno;
+  qs('rTitle').textContent='Complaint \u00b7 '+c.regno+(c.name?(' \u00b7 '+c.name):'');
+  qs('rMsg').style.display='none';
+  qs('rText').value=c.response||'';
+  qs('rStatus').value=(c.status==='RESOLVED'||c.status==='CLOSED')?c.status:'UNDER_REVIEW';
+  fillCanned(c);
+
+  var pr=(c.priority||'').toUpperCase();
+  qs('rComp').innerHTML=
+    '<div class="c-head">'
+     +'<div class="c-head__top"><span class="c-head__cat">'+esc(c.category)+'</span>'
+       +'<span class="se-badge se-b--'+(c.status==='RESOLVED'||c.status==='CLOSED'?'done':'ready')+'">'+esc(c.status)+'</span>'
+       +(pr&&pr!=='NORMAL'?'<span class="se-badge se-b--warn">'+esc(pr)+'</span>':'')
+     +'</div>'
+     +'<div class="c-head__txt">'+esc(c.description||'(no description was given)')+'</div>'
+     +'<div class="c-head__meta">Raised '+esc(c.created)
+       +(c.updated?(' \u00b7 last updated '+esc(c.updated)):'')
+       +(c.handledBy?(' \u00b7 last handled by '+esc(c.handledBy)):'')+'</div>'
+     +(c.response?('<div class="c-prev"><b>Previous reply:</b> '+esc(c.response)+'</div>'):'')
+    +'</div>';
+
+  qs('rDetail').innerHTML='<div style="text-align:center;color:#94a3b8;padding:24px">Loading the student record\u2026</div>';
+  qs('ov').style.display='block';qs('mResp').style.display='block';
+
+  ajax('Detail',{regno:c.regno},function(r){
+    if(!r||!r.success){
+      // A complaint can exist for a student who was never added to the pipeline \u2014 say so
+      // plainly and keep the reply box usable, rather than showing a bare error.
+      qs('rDetail').innerHTML='<div class="c-none"><b>No email pipeline record for '+esc(c.regno)+'.</b><br>'
+        +esc((r&&r.message)||'')+' You can still reply below. To give this student an address, '
+        +'add them from the Candidates tab first.</div>';
+      return;}
+    renderDetail(r,'rDetail');
+  });};
+
+/* Common answers, so a reply is a click and a sentence rather than a paragraph typed from
+   scratch every time. The address and password are filled in from the record where known. */
+function fillCanned(c){
+  var sel=qs('rCanned');if(!sel)return;
+  var mail=c.email||'your university address';
+  var list=[
+    ['Password reset','Your temporary password has been reset. Open the portal, view your credentials again and set a password of your own.'],
+    ['Address corrected','Your address has been corrected to '+mail+'. Please use it from now on; the old one no longer works.'],
+    ['Address is correct','We have checked the record and '+mail+' is the correct address for you. Sign in at mail.google.com using it.'],
+    ['Use the portal to collect','Your address and password are ready. Open the portal, finish the short guide and your credentials will be shown to you.'],
+    ['Wrong password being used','The password you are using is not the one on record. Open the portal to view the current one, then try again.'],
+    ['Not yet eligible','Your email will be issued once your fees reach the required threshold. Please check with the Bursar.'],
+    ['Referred to ICT','This has been passed to ICT. You will be contacted once it is resolved.']
+  ];
+  var h='<option value="">\u2014 choose a common answer \u2014</option>';
+  for(var i=0;i<list.length;i++) h+='<option value="'+esc(list[i][1])+'">'+esc(list[i][0])+'</option>';
+  sel.innerHTML=h;}
+
+window.rCannedPick=function(){
+  var sel=qs('rCanned');if(!sel||!sel.value)return;
+  var t=qs('rText');
+  t.value=t.value.trim()?(t.value.trim()+'\n\n'+sel.value):sel.value;
+  sel.value='';t.focus();};
+
 window.saveResp=function(){ajax('RespondComplaint',{id:_rId,status:qs('rStatus').value,response:qs('rText').value.trim()},function(r){if(r&&r.success){closeM();loadComplaints();loadKpis();}else modMsg('rMsg',(r&&r.message)||'Failed',false);});};
 
 // init
