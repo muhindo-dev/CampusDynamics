@@ -1078,37 +1078,67 @@ module uses — the same ninety pixels the other four pages were already spendin
 
 ## 14. The review panel, re-ordered around the evidence — 2026-09-24
 
-Brief: *"when previewing a student, show results first … in grid format (2 per row) in years
-starting with year 1, y2, y3 … make the width of modal more wide … make the warnings collapsible
-and by default collapsed … ensure easiness and going direct to the point."*
+Brief, in two passes: *"when previewing a student, show results first … in grid format (2 per row)
+in years starting with year 1, y2, y3 … make the width of modal more wide … make the warnings
+collapsible and by default collapsed"*, then *"learn from this how you should arrange things
+(2 tables per row) each table, 1 semester — StudentRearrangeManage.aspx"*.
 
-**Results first, by study year, two years to a row.** What a student actually did is the evidence;
-everything else on the panel is a conclusion drawn from it. It was the third fold down, collapsed,
-behind eight checks and six statistics. It is now the first thing on the panel and it opens
-expanded.
+### 14a. The layout, taken from StudentRearrangeManage
 
-They are grouped by *study year*, not listed by academic year, because that is how a degree is
-read. Each panel carries the academic year it maps to, the course count, the credits earned and the
-number failed; a year containing a fail takes a red border and header, so the problem year is
-visible before a single row is read. Within a panel, semesters are separated and courses sort by
-code. Results the system cannot place in a study year get their own panel, always last — never
-first, which a naive numeric sort would have done since their year is 0.
+The second instruction settles what the first left open: the unit of a table is a **semester**, not
+a year. `StudentRearrangeManage.aspx` already lays a student record out this way, and it is the
+screen a reviewer is most likely to have come from, so the structure is lifted rather than
+reinvented:
 
-A three-year degree is therefore two rows and fits without scrolling. The grid falls to one column
-below 900px, and `align-items:start` keeps a short year from stretching to match the tall one
-beside it.
+| Rearrange | Graduation review |
+|---|---|
+| `.rx-year` / `.rx-year__hd` | `.g-year` / `.g-year__hd` |
+| `.rx-sems` (grid of semesters) | `.g-sems` |
+| `.rx-sem` (one semester) | `.g-sem` |
+| `.rx-split` (year straddles two academic years) | `.g-year__split` |
 
-**The modal is 1180px wide**, up from 880. Two panels side by side in 880px put each year's courses
-in a scrolling sliver. The export dialog keeps its own narrower 660px through `.g-modal--x`: a form
-of six short questions wants the opposite treatment.
+A year heading with a navy rule under it, then that year semesters as separate tables, two to a row.
+The one deliberate divergence: rearrange uses `repeat(auto-fit, minmax(290px, 1fr))` because it owns
+the whole window, which inside an 1180px modal would give four narrow columns. Here it is
+`repeat(2, minmax(0, 1fr))`, falling to one below 900px.
 
-**Warnings collapse, blockers do not.** On this data most candidates carry several warnings — 12,829
-of the 14,547-strong backlog are WARN — and an open list of them buried the one or two lines that
-decide the case. What is *blocking* a candidate stays on the face of the verdict; what merely wants
-a look is one click away, with its count on the button.
+Carried across with it: the **split-year** case. A year of study whose semesters sit in different
+academic years is real and common — the rearrangement work found 704 students like it — so the year
+heading shows `2023/2024 + 2024/2025` rather than printing one and hiding the rest, and in that case
+each semester names its own academic year. Where the year does not straddle, the semester does not
+repeat it, because it would say nothing the heading had not.
 
-**A fold bug fixed on the way.** `foldState` read the stored value and then forced any default-open
-section back open whenever it was stored closed:
+Each semester header carries its course count and credits, and badges what is wrong inside it:
+*n failed* in red, *n unmarked* in amber, with the whole panel taking a red border when it holds a
+fail. The problem semester is identifiable before a single row is read.
+
+### 14b. Results first
+
+What a student actually did is the evidence; everything else on the panel is a conclusion drawn from
+it. It was the third fold down, collapsed, behind eight checks and six statistics. It is now the
+first thing on the panel and it opens expanded. Results the system cannot place in a study year get
+their own group, always last — never first, which a naive numeric sort would have done since their
+year is 0; the same applies to a semester with no number recorded.
+
+The two notes that change what you may *do* with a student — already on a list, or held — stay above
+the results. They are two short lines, and finding that out after scrolling three years of marks
+would be worse.
+
+### 14c. Wider, and warnings folded
+
+**1180px**, up from 880. Two tables side by side in 880px put each semester courses in a scrolling
+sliver. The export dialog keeps its own 660px through `.g-modal--x`: a form of six short questions
+wants the opposite treatment.
+
+**Warnings collapse, blockers do not.** Most candidates carry several warnings — 12,829 of the
+14,547-strong backlog are WARN — and an open list of them buried the one or two lines that decide
+the case. What is *blocking* a candidate stays on the face of the verdict; what merely wants a look
+is one click away with its count on the button.
+
+### 14d. A fold bug fixed on the way
+
+`foldState` read the stored value and then forced any default-open section back open whenever it was
+stored closed:
 
 ```js
 if (folds[key] === false && def) folds[key] = true;   // wrong
@@ -1118,9 +1148,19 @@ It could not tell "no stored value" from "stored closed", so a section you delib
 reopened on the next student, every time. It now distinguishes the two, and a remembered choice
 beats the default in both directions.
 
-**Verified** headless against the real shared script with a three-year degree carrying a fail, a
-zero, an unmarked paper and an unplaced result: first block is the year grid; panels read
-`Year 1, Year 2, Year 3, Not placed in a year`; the grid computes to 2 columns at 1280px and 1 at
-820px; the warnings fold starts collapsed, opens on click, persists the choice, and holds all 3
-warnings; the structure fold stays closed and decision history stays open; the Clear button remains
-on screen with a live handler.
+### 14e. Verified
+
+Headless against the real shared script, with a degree carrying a fail, a zero, an unmarked paper
+and an unplaced result:
+
+```
+first=g-year | Year 1[Semester 1|Semester 2] Year 2[Semester 1|Semester 2]
+              Year 3[Semester 1|Semester 2] Not placed in a year[Semester not recorded]
+gridCols=2 | tablesPerRow=2,2,2,1 | warnsCollapsed=true | modalW=1180 | clearBtnVisible=true
+```
+
+At 820px: `gridCols=1`, `tablesPerRow=1,1,1,1,1,1,1`. On a four-year degree: `tablesPerRow=2,2,2,2,1`.
+On a year straddling two academic years the heading reads `2023/2024 + 2024/2025` and exactly the two
+semesters involved name their own. The warnings fold starts collapsed, opens on click, persists that
+choice, and holds all three warnings; the structure fold stays closed, decision history stays open,
+and the Clear button is on screen with a live handler throughout.

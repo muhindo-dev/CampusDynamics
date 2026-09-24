@@ -235,54 +235,95 @@ window.G = (function () {
         return '<div><span>' + esc(label) + '</span><b>' + esc(val) + '</b></div>';
     }
 
-    /// One study year's results, as its own panel. Two of these sit side by side, so a
-    /// three-year degree is two rows and a reviewer sees the whole degree without scrolling.
-    function yearPanel(yr, list) {
-        var i, courses = 0, cu = 0, fails = 0, zeros = 0, acads = {}, acadList = [];
-
+    /// One semester's results, as its own table.
+    ///
+    /// The shape is borrowed from StudentRearrangeManage, which lays a student's record out the
+    /// same way: a year heading, then one table per semester, two to a row. A reviewer moving
+    /// between the two screens should not have to learn a second way of reading the same record.
+    function semPanel(sem, list, showAcad) {
+        var i, cu = 0, fails = 0, gaps = 0;
         for (i = 0; i < list.length; i++) {
             var r = list[i];
-            courses++;
             if (r.score !== null && r.score >= 50) cu += (+r.cu || 0);
             if (r.score !== null && r.score > 0 && r.score < 50) fails++;
-            if (r.score === 0 || r.score === null) zeros++;
-            if (r.acad && !acads[r.acad]) { acads[r.acad] = 1; acadList.push(r.acad); }
+            if (r.score === 0 || r.score === null) gaps++;
         }
-        acadList.sort();
 
-        // Semester first, then course code, so the panel reads the way a transcript does.
-        list.sort(function (a, b) {
-            var d1 = (+a.sem || 0) - (+b.sem || 0);
-            return d1 !== 0 ? d1 : String(a.code).localeCompare(String(b.code));
-        });
+        list.sort(function (a, b) { return String(a.code).localeCompare(String(b.code)); });
+
+        var h = '<div class="g-sem' + (fails ? ' has-fail' : '') + '">' +
+                '<div class="g-sem__hd">' +
+                  '<span class="g-sem__n">' + esc(sem ? 'Semester ' + sem : 'Semester not recorded') + '</span>' +
+                  (showAcad ? '<span class="g-sem__a">' + esc(showAcad) + '</span>' : '') +
+                  (fails ? '<span class="g-sem__f">' + fails + ' failed</span>' : '') +
+                  (gaps ? '<span class="g-sem__z">' + gaps + ' unmarked</span>' : '') +
+                  '<span class="g-sem__c">' + list.length +
+                    (list.length === 1 ? ' course' : ' courses') + '  ·  ' + n0(cu) + ' CU</span>' +
+                '</div><table class="g-tbl g-sem__t"><tbody>';
+
+        for (i = 0; i < list.length; i++) {
+            var x = list[i];
+            var bad = (x.score !== null && x.score > 0 && x.score < 50);
+            var zero = (x.score === 0 || x.score === null);
+            var cls = bad ? ' is-fail' : (zero ? ' is-zero' : '');
+            h += '<tr><td class="g-sem__course"><b>' + esc(x.code) + '</b>' +
+                 '<span>' + esc(x.name) + '</span></td>' +
+                 '<td class="g-num g-sub">' + n0(x.cu) + '</td>' +
+                 '<td class="g-num g-sem__s' + cls + '">' + (x.score === null ? '&ndash;' : esc(x.score)) + '</td>' +
+                 '<td class="g-sem__g' + cls + '">' + esc(x.grade || '') + '</td></tr>';
+        }
+        return h + '</tbody></table></div>';
+    }
+
+    /// One year of study: a heading, then its semesters two to a row.
+    function yearBlock(yr, sems, semKeys) {
+        var i, j, courses = 0, cu = 0, fails = 0, acads = [], multi;
+
+        for (i = 0; i < semKeys.length; i++) {
+            var list = sems[semKeys[i]];
+            for (j = 0; j < list.length; j++) {
+                var r = list[j];
+                courses++;
+                if (r.score !== null && r.score >= 50) cu += (+r.cu || 0);
+                if (r.score !== null && r.score > 0 && r.score < 50) fails++;
+                if (r.acad && acads.indexOf(r.acad) === -1) acads.push(r.acad);
+            }
+        }
+        acads.sort();
+
+        // A year of study whose semesters sit in different academic years is real and common —
+        // the rearrangement screen found 704 students like it. Say so, rather than printing one
+        // of them and hiding the rest.
+        multi = acads.length > 1;
 
         var meta = courses + ' course' + (courses === 1 ? '' : 's') + '  ·  ' + n0(cu) + ' CU';
         if (fails) meta += '  ·  ' + fails + ' failed';
 
-        var h = '<div class="g-yr' + (fails ? ' has-fail' : '') + '">' +
-                '<div class="g-yr__h"><b>' + esc(yr === 0 ? 'Not placed in a year' : 'Year ' + yr) + '</b>' +
-                '<span>' + esc(acadList.join(', ')) + '</span>' +
-                '<em>' + esc(meta) + '</em></div>' +
-                '<table class="g-tbl g-yr__t"><tbody>';
+        var h = '<div class="g-year">' +
+                '<div class="g-year__hd"><b>' + esc(yr === 0 ? 'Not placed in a year' : 'Year ' + yr) + '</b>' +
+                (acads.length
+                    ? (multi
+                        ? '<span class="g-year__split" title="This year of study spans more than one academic year">' +
+                          esc(acads.join(' + ')) + '</span>'
+                        : '<span class="g-year__a">' + esc(acads[0]) + '</span>')
+                    : '') +
+                '<span class="g-year__m">' + esc(meta) + '</span></div>' +
+                '<div class="g-sems">';
 
-        var sem = null;
-        for (i = 0; i < list.length; i++) {
-            var x = list[i];
-            if (x.sem !== sem) {
-                sem = x.sem;
-                h += '<tr class="g-yr__sem"><td colspan="4">' +
-                     esc(sem ? 'Semester ' + sem : 'Semester not recorded') + '</td></tr>';
+        for (i = 0; i < semKeys.length; i++) {
+            // The academic year is repeated on the semester only when the year straddles two,
+            // because that is the only time it tells the reader something the heading did not.
+            var sl = sems[semKeys[i]];
+            var sa = '';
+            if (multi) {
+                var seen = [];
+                for (j = 0; j < sl.length; j++)
+                    if (sl[j].acad && seen.indexOf(sl[j].acad) === -1) seen.push(sl[j].acad);
+                sa = seen.sort().join(', ');
             }
-            var bad = (x.score !== null && x.score > 0 && x.score < 50);
-            var zero = (x.score === 0);
-            var cls = bad ? ' is-fail' : (zero || x.score === null ? ' is-zero' : '');
-            h += '<tr><td class="g-yr__c"><b>' + esc(x.code) + '</b>' +
-                 '<span>' + esc(x.name) + '</span></td>' +
-                 '<td class="g-num g-sub">' + n0(x.cu) + '</td>' +
-                 '<td class="g-num g-yr__s' + cls + '">' + (x.score === null ? '&ndash;' : esc(x.score)) + '</td>' +
-                 '<td class="g-yr__g' + cls + '">' + esc(x.grade || '') + '</td></tr>';
+            h += semPanel(semKeys[i], sl, sa);
         }
-        return h + '</tbody></table></div>';
+        return h + '</div></div>';
     }
 
     function renderStudent(d) {
@@ -317,9 +358,10 @@ window.G = (function () {
         var byYear = {}, years = [];
         for (i = 0; i < (d.results || []).length; i++) {
             var r = d.results[i];
-            var y = +r.sy || 0;
-            if (!byYear[y]) { byYear[y] = []; years.push(y); }
-            byYear[y].push(r);
+            var y = +r.sy || 0, sm = +r.sem || 0;
+            if (!byYear[y]) { byYear[y] = { sems: {}, keys: [] }; years.push(y); }
+            if (!byYear[y].sems[sm]) { byYear[y].sems[sm] = []; byYear[y].keys.push(sm); }
+            byYear[y].sems[sm].push(r);
         }
         years.sort(function (a, b) {
             if (a === 0) return 1;          // unplaced results last, never first
@@ -328,9 +370,15 @@ window.G = (function () {
         });
 
         if (years.length) {
-            h += '<div class="g-yrs">';
-            for (i = 0; i < years.length; i++) h += yearPanel(years[i], byYear[years[i]]);
-            h += '</div>';
+            for (i = 0; i < years.length; i++) {
+                var yb = byYear[years[i]];
+                yb.keys.sort(function (a, b) {
+                    if (a === 0) return 1;  // "semester not recorded" after the real ones
+                    if (b === 0) return -1;
+                    return a - b;
+                });
+                h += yearBlock(years[i], yb.sems, yb.keys);
+            }
         } else {
             h += '<div class="g-note g-note--warn">No results on record for this student.</div>';
         }
