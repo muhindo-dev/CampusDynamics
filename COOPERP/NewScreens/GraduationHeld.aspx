@@ -89,12 +89,11 @@ function footer(g) {
            '<button type="button" class="g-btn" id="mClear">Clear for graduation</button>';
 }
 function open(reg) {
-    G.openStudent(PAGE, reg, footer);
-    setTimeout(function () {
+    G.openStudent(PAGE, reg, footer, function () {
         if (G.qs('mRelease')) G.qs('mRelease').addEventListener('click', doRelease);
         if (G.qs('mEdit')) G.qs('mEdit').addEventListener('click', doEdit);
         if (G.qs('mClear')) G.qs('mClear').addEventListener('click', doClear);
-    }, 0);
+    });
 }
 
 function year() { return G.qs('fYear').value; }

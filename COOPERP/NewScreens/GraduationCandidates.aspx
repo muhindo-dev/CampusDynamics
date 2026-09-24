@@ -158,14 +158,17 @@ function footer(g) {
                '<button type="button" class="g-btn" id="mClear">Clear for graduation</button>';
     return '<button type="button" class="g-btn g-btn--p" id="mClear">Clear for graduation</button>' +
            '<button type="button" class="g-btn g-btn--d" id="mHold">Hold&hellip;</button>' +
-           '<span class="g-sub" style="margin-left:auto;">' +
-           (g.readiness === 'BLOCKED' ? 'Blocked — clearing will ask you to justify it.'
-            : g.readiness === 'WARN' ? 'Read the warnings before clearing.' : 'Nothing outstanding.') + '</span>';
+           '<span class="g-hint">' +
+           (g.readiness === 'BLOCKED' ? 'Blocked — clearing will ask you to justify it in writing.'
+            : g.readiness === 'WARN' ? 'Read the points above before clearing.'
+            : 'Nothing outstanding — safe to clear.') + '</span>';
 }
 
+// The footer only exists once the record has come back, so it is wired from the callback
+// that writes it. The old setTimeout(fn, 0) fired long before the response landed, which is
+// why the decision buttons did nothing even when they were on screen.
 function open(reg) {
-    G.openStudent(PAGE, reg, footer);
-    setTimeout(wireFooter, 0);
+    G.openStudent(PAGE, reg, footer, wireFooter);
 }
 function wireFooter() {
     var c = G.qs('mClear'), h = G.qs('mHold'), r = G.qs('mRelease');

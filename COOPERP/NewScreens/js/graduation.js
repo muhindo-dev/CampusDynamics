@@ -203,7 +203,11 @@ window.G = (function () {
        decision is not taken on the numbers a list rendered some minutes ago.                */
     var current = null;
 
-    function openStudent(page, regno, buildFooter) {
+    /// The footer is written inside the AJAX callback, so a caller that wires its buttons
+    /// with setTimeout(fn, 0) wires nothing — the timer fires long before the response lands.
+    /// onReady is called after the footer exists, which is the only moment the buttons are
+    /// there to be wired.
+    function openStudent(page, regno, buildFooter, onReady) {
         current = null;
         qs('gModalName').textContent = regno;
         qs('gModalSub').textContent = 'Reading the record…';
@@ -221,6 +225,7 @@ window.G = (function () {
             current = d;
             renderStudent(d);
             qs('gModalFoot').innerHTML = buildFooter ? buildFooter(d.student) : '';
+            if (onReady) onReady(d.student);
         });
     }
 
@@ -237,6 +242,35 @@ window.G = (function () {
         qs('gModalSub').textContent = (g.progname || g.progcode) + '  ·  intake ' + (g.entryyear || '–') +
             '  ·  ' + (g.firstYear ? g.firstYear + ' to ' + g.lastYear : 'no results on record');
 
+        // ── The verdict, first and in one line ──────────────────────────────
+        //  A reviewer opens this to answer one question: can this person graduate? So that
+        //  answer is the first thing on the page, with the reasons under it — rather than
+        //  making them read eight checks and work it out.
+        var blocks = [], warns = [];
+        for (i = 0; i < (g.findings || []).length; i++) {
+            if (g.findings[i].level === 'BLOCK') blocks.push(g.findings[i]);
+            else if (g.findings[i].level === 'WARN' || g.findings[i].level === 'NA') warns.push(g.findings[i]);
+        }
+
+        var kind = blocks.length ? 'bad' : (warns.length ? 'warn' : 'ok');
+        var head = blocks.length
+            ? (blocks.length === 1 ? 'One thing is blocking this candidate' : blocks.length + ' things are blocking this candidate')
+            : (warns.length
+                ? (warns.length === 1 ? 'Ready, with one thing to look at' : 'Ready, with ' + warns.length + ' things to look at')
+                : 'Ready — nothing outstanding');
+
+        h += '<div class="g-verdict g-verdict--' + kind + '">' +
+             '<div class="g-verdict__h">' + esc(head) + '</div>';
+        if (blocks.length || warns.length) {
+            h += '<ul class="g-verdict__l">';
+            for (i = 0; i < blocks.length; i++)
+                h += '<li class="is-block"><b>' + esc(blocks[i].name) + '</b> ' + esc(blocks[i].detail) + '</li>';
+            for (i = 0; i < warns.length; i++)
+                h += '<li class="is-warn"><b>' + esc(warns[i].name) + '</b> ' + esc(warns[i].detail) + '</li>';
+            h += '</ul>';
+        }
+        h += '</div>';
+
         if (g.graduatedYear)
             h += '<div class="g-note g-note--info"><b>Already on the ' + esc(g.graduatedYear) +
                  ' graduation list.</b>' + (g.clearedActor ? ' Cleared by ' + esc(g.clearedActor) +
@@ -245,74 +279,135 @@ window.G = (function () {
             h += '<div class="g-note g-note--warn"><b>Held by ' + esc(g.holdActor) + ' on ' +
                  esc(g.holdAt) + '.</b><br>' + esc(g.holdReason) + '</div>';
 
-        h += '<div class="g-grid">' +
-            cell('Credits earned', n0(g.cuEarned) + ' CU') +
-            cell('Credits required', g.cuSource === 'NONE' ? 'Not assessable' : (n0(g.cuRequired) + ' CU')) +
-            cell('CGPA', g.cgpa ? n2(g.cgpa) : '–') +
-            cell('Class of award', g.degClass || '–') +
-            cell('Courses on record', String(g.coursesTaken)) +
-            cell('Reached year', g.maxStudyYear + ' of ' + g.progLength) +
+        // ── The numbers behind it ───────────────────────────────────
+        var pct = g.cuRequired > 0 ? Math.min(100, Math.round(g.cuEarned * 100 / g.cuRequired)) : 0;
+        h += '<div class="g-facts">' +
+            fact('Credits', g.cuSource === 'NONE'
+                    ? (n0(g.cuEarned) + ' earned')
+                    : (n0(g.cuEarned) + ' of ' + n0(g.cuRequired)),
+                 g.cuSource === 'NONE' ? 'no requirement recorded'
+                    : '<div class="g-bar2" style="margin-top:3px"><div class="g-bar2__t"><div class="g-bar2__f' +
+                      (g.cuEarned < g.cuRequired ? ' is-short' : '') + '" style="width:' + pct + '%"></div></div></div>', true) +
+            fact('CGPA', g.cgpa ? n2(g.cgpa) : '–', g.degClass || 'no class mapped') +
+            fact('Year reached', g.maxStudyYear + ' of ' + g.progLength, 'programme length') +
+            fact('Courses', String(g.coursesTaken), 'on record') +
+            fact('Failed papers', String(g.failedPapers), g.failedPapers ? 'marks of 1–49' : 'none') +
+            fact('Zero / unmarked', (g.zeroMarks + g.missingScores) + '', 'usually not yet marked') +
             '</div>';
 
-        h += '<div class="g-note g-note--info" style="font-size:10.5px;"><b>Where the credit bar comes from:</b> ' +
-             esc(g.cuSourceLabel || 'not established') + '.' +
-             (g.specIsPlaceholder ? ' This student carries no real specialisation — the value on their record is a ' +
-              'placeholder — so their courses cannot be matched to a curriculum.' : '') + '</div>';
+        h += '<div class="g-src">Credit requirement: ' + esc(g.cuSourceLabel || 'not established') +
+             (g.specIsPlaceholder
+                ? '. This student carries no real specialisation, so their courses cannot be matched to a curriculum.'
+                : '.') + '</div>';
 
-        h += '<div class="g-sec">What the checks say</div>';
-        for (i = 0; i < (g.findings || []).length; i++) {
-            var f = g.findings[i];
-            h += '<div class="g-find g-find--' + esc(f.level) + '">' +
-                 '<div class="g-find__n">' + esc(f.name) + '</div>' +
-                 '<div class="g-find__d">' + esc(f.detail) + '</div></div>';
+        // ── Everything else, folded away until wanted ───────────────────────
+        //  The detail matters when it matters. Leaving it all open pushed the decision off
+        //  the screen and buried the two lines that actually decide the case.
+        var passes = [];
+        for (i = 0; i < (g.findings || []).length; i++)
+            if (g.findings[i].level === 'PASS') passes.push(g.findings[i]);
+
+        if (passes.length) {
+            h += fold('checks', 'Checks that passed', passes.length, (function () {
+                var x = '';
+                for (var j = 0; j < passes.length; j++)
+                    x += '<div class="g-find g-find--PASS"><div class="g-find__n">' + esc(passes[j].name) +
+                         '</div><div class="g-find__d">' + esc(passes[j].detail) + '</div></div>';
+                return x;
+            })());
         }
 
         if (d.structure && d.structure.length) {
-            h += '<div class="g-sec">Against the programme structure</div>' +
-                 '<div class="g-wrap" style="max-height:220px;"><table class="g-tbl g-struct"><thead><tr>' +
-                 '<th>Yr</th><th>Sem</th><th>Course</th><th class="g-num">CU</th><th>Result</th></tr></thead><tbody>';
+            var miss = 0;
+            for (i = 0; i < d.structure.length; i++) if (d.structure[i].score === null) miss++;
+            var st = '<div class="g-wrap" style="max-height:230px;"><table class="g-tbl g-struct"><thead><tr>' +
+                     '<th>Yr</th><th>Sem</th><th>Course</th><th class="g-num">CU</th><th>Result</th></tr></thead><tbody>';
             for (i = 0; i < d.structure.length; i++) {
                 var c = d.structure[i];
                 var cls = c.score === null ? 'miss' : (c.score > 0 && c.score < 50 ? 'fail' : '');
-                var txt = c.score === null ? 'no result' : (c.score + '%');
-                h += '<tr><td>' + esc(c.sy) + '</td><td>' + esc(c.sem) + '</td>' +
-                     '<td>' + esc(c.code) + '<div class="g-sub">' + esc(c.name) + '</div></td>' +
-                     '<td class="g-num">' + n0(c.cu) + '</td><td class="' + cls + '">' + esc(txt) + '</td></tr>';
+                st += '<tr><td>' + esc(c.sy) + '</td><td>' + esc(c.sem) + '</td>' +
+                      '<td>' + esc(c.code) + '<div class="g-sub">' + esc(c.name) + '</div></td>' +
+                      '<td class="g-num">' + n0(c.cu) + '</td><td class="' + cls + '">' +
+                      (c.score === null ? 'no result' : c.score + '%') + '</td></tr>';
             }
-            h += '</tbody></table></div>';
+            st += '</tbody></table></div>';
+            h += fold('struct', 'Against the programme structure',
+                      miss ? (miss + ' of ' + d.structure.length + ' with no result') : d.structure.length, st);
         }
 
-        h += '<div class="g-sec">Results on record (' + (d.results || []).length + ')</div>' +
-             '<div class="g-wrap" style="max-height:240px;"><table class="g-tbl"><thead><tr>' +
-             '<th>Year</th><th>Yr/Sem</th><th>Course</th><th class="g-num">CU</th>' +
-             '<th class="g-num">Score</th><th>Grade</th></tr></thead><tbody>';
+        var rs = '<div class="g-wrap" style="max-height:260px;"><table class="g-tbl"><thead><tr>' +
+                 '<th>Year</th><th>Yr/Sem</th><th>Course</th><th class="g-num">CU</th>' +
+                 '<th class="g-num">Score</th><th>Grade</th></tr></thead><tbody>';
         for (i = 0; i < (d.results || []).length; i++) {
             var x = d.results[i];
             var bad = (x.score !== null && x.score > 0 && x.score < 50), zero = (x.score === 0);
-            h += '<tr><td class="g-sub">' + esc(x.acad) + '</td><td class="g-sub">' + esc(x.sy) + '/' + esc(x.sem) + '</td>' +
-                 '<td>' + esc(x.code) + '<div class="g-sub">' + esc(x.name) + '</div></td>' +
-                 '<td class="g-num">' + n0(x.cu) + '</td>' +
-                 '<td class="g-num"' + (bad ? ' style="color:#8c2019;font-weight:700"'
-                                            : (zero ? ' style="color:#92400e;font-weight:700"' : '')) + '>' +
-                 (x.score === null ? '–' : x.score) + '</td><td>' + esc(x.grade) + '</td></tr>';
+            rs += '<tr><td class="g-sub">' + esc(x.acad) + '</td><td class="g-sub">' + esc(x.sy) + '/' + esc(x.sem) + '</td>' +
+                  '<td>' + esc(x.code) + '<div class="g-sub">' + esc(x.name) + '</div></td>' +
+                  '<td class="g-num">' + n0(x.cu) + '</td>' +
+                  '<td class="g-num"' + (bad ? ' style="color:#8c2019;font-weight:700"'
+                                             : (zero ? ' style="color:#92400e;font-weight:700"' : '')) + '>' +
+                  (x.score === null ? '–' : x.score) + '</td><td>' + esc(x.grade) + '</td></tr>';
         }
-        h += '</tbody></table></div>';
+        rs += '</tbody></table></div>';
+        h += fold('results', 'Results on record', (d.results || []).length, rs);
 
         if (d.history && d.history.length) {
-            h += '<div class="g-sec">Decision history</div>';
+            var hi = '';
             for (i = 0; i < d.history.length; i++) {
                 var e = d.history[i];
-                h += '<div class="g-find g-find--' +
-                     (e.verdict === 'HELD' ? 'WARN' : (e.verdict === 'CLEARED' ? 'PASS' : 'NA')) + '">' +
-                     '<div class="g-find__n">' + esc(e.verdict) + (e.inForce ? ' · in force' : '') + '</div>' +
-                     '<div class="g-find__d">' + esc(e.reason || '(no note)') +
-                     '<div class="g-sub">' + esc(e.actor) + (e.role ? ' (' + esc(e.role) + ')' : '') +
-                     ' · ' + esc(e.at) + (e.year && e.year !== '-' ? ' · ' + esc(e.year) : '') +
-                     '</div></div></div>';
+                hi += '<div class="g-find g-find--' +
+                      (e.verdict === 'HELD' ? 'WARN' : (e.verdict === 'CLEARED' ? 'PASS' : 'NA')) + '">' +
+                      '<div class="g-find__n">' + esc(e.verdict) + (e.inForce ? ' · in force' : '') + '</div>' +
+                      '<div class="g-find__d">' + esc(e.reason || '(no note)') +
+                      '<div class="g-sub">' + esc(e.actor) + (e.role ? ' (' + esc(e.role) + ')' : '') +
+                      ' · ' + esc(e.at) + (e.year && e.year !== '-' ? ' · ' + esc(e.year) : '') +
+                      '</div></div></div>';
             }
+            h += fold('history', 'Decision history', d.history.length, hi, true);
         }
 
         qs('gModalBody').innerHTML = h;
+        wireFolds();
+    }
+
+    function fact(label, value, sub, rawSub) {
+        return '<div class="g-fact"><span>' + esc(label) + '</span><b>' + esc(value) + '</b>' +
+               (sub ? '<small>' + (rawSub ? sub : esc(sub)) + '</small>' : '') + '</div>';
+    }
+
+    /// A collapsed section. Open it and it stays open for the rest of the session, because a
+    /// reviewer who wants to see results for one student usually wants them for the next.
+    function fold(key, title, count, body, openByDefault) {
+        var open = foldState(key, openByDefault);
+        return '<div class="g-fold' + (open ? ' is-open' : '') + '" data-fold="' + key + '">' +
+               '<button type="button" class="g-fold__h">' +
+                 '<svg viewBox="0 0 24 24" width="11" height="11" fill="none" stroke="currentColor" ' +
+                 'stroke-width="3"><polyline points="9 18 15 12 9 6"></polyline></svg>' +
+                 '<span>' + esc(title) + '</span><em>' + esc(String(count)) + '</em>' +
+               '</button>' +
+               '<div class="g-fold__b">' + body + '</div></div>';
+    }
+
+    var folds = {};
+    function foldState(key, def) {
+        if (folds[key] === undefined) {
+            try { folds[key] = sessionStorage.getItem('gfold_' + key) === '1'; }
+            catch (e) { folds[key] = !!def; }
+            if (folds[key] === false && def) folds[key] = true;
+        }
+        return folds[key];
+    }
+    function wireFolds() {
+        var els = qs('gModalBody').querySelectorAll('.g-fold__h');
+        for (var i = 0; i < els.length; i++) {
+            els[i].addEventListener('click', function () {
+                var box = this.parentNode, key = box.getAttribute('data-fold');
+                var now = !box.classList.contains('is-open');
+                box.classList.toggle('is-open', now);
+                folds[key] = now;
+                try { sessionStorage.setItem('gfold_' + key, now ? '1' : '0'); } catch (e) { }
+            });
+        }
     }
 
     /* ── CSV, for the small exports the browser can do honestly. Anything that

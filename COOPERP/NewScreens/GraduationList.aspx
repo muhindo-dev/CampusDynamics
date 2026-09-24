@@ -143,11 +143,10 @@ function footer(g) {
            '<span class="g-sub" style="margin-left:auto;">The decision history is kept either way.</span>';
 }
 function open(reg) {
-    G.openStudent(PAGE, reg, footer);
-    setTimeout(function () {
+    G.openStudent(PAGE, reg, footer, function () {
         var b = G.qs('mRemove');
         if (b) b.addEventListener('click', doRemove);
-    }, 0);
+    });
 }
 function doRemove() {
     var cur = G.currentStudent(); if (!cur) return;
