@@ -8,7 +8,8 @@
 <div class="g">
 
   <div class="g-bar" id="gToolbar">
-    <div class="g-bar__id"><b>Candidates</b><span id="gScope">&nbsp;</span></div>
+    <div class="g-bar__id"><b>Candidates</b><span id="gScope">&nbsp;</span>
+      <span class="g-age" id="gAge">&nbsp;</span></div>
     <div class="g-f" style="flex:0 0 118px;"><label for="fYear">Graduation year</label><select id="fYear"></select></div>
     <div class="g-f" style="flex:0 0 184px;"><label for="fFocus">Who to show</label>
       <select id="fFocus"><option value="cycle">This cycle &mdash; finishing now</option><option value="all">Everyone not yet graduated</option></select></div>
@@ -18,14 +19,21 @@
     <div class="g-f" style="flex:0 0 88px;"><label for="fIntake">Intake</label><select id="fIntake"></select></div>
     <div class="g-f" style="flex:0 0 116px;"><label for="fReady">Readiness</label>
       <select id="fReady"><option value="">Any</option><option value="ready">Ready</option><option value="warn">Needs a look</option><option value="blocked">Blocked</option></select></div>
+    <div class="g-f" style="flex:0 0 108px;"><label for="fSort">Order</label>
+      <select id="fSort"><option value="regno">Student number</option><option value="name">Name</option>
+        <option value="prog">Programme</option><option value="entry">Newest intake</option></select></div>
     <div class="g-f" style="flex:1 1 130px;"><label for="fQ">Search</label>
       <input type="text" id="fQ" placeholder="Number or name&hellip;" autocomplete="off" /></div>
     <div class="g-bar__sp">
       <button type="button" class="g-btn g-btn--p" id="btnBulk" disabled="disabled">Clear selected</button>
-      <button type="button" class="g-btn" id="btnXls">Export</button>
+      <button type="button" class="g-btn" id="btnXls">Export&hellip;</button>
       <button type="button" class="g-btn" id="btnReset">Reset</button>
     </div>
   </div>
+
+  <%-- What is narrowing the view, each chip removable on its own. Without this, a filter left
+       set three controls away makes "no candidates match" read like a fault in the data. --%>
+  <div class="g-chips" id="gChips"></div>
 
   <div class="g-card">
     <div class="g-card__h">
@@ -48,28 +56,61 @@
 <script type="text/javascript">
 // Rendered into the page by Page_Load, so the controls are populated without a round trip.
 window.G_BOOT = <%= BootJson %>;
+window.G_COLS = <%= ColsJson %>;
 window.G_AGE  = '<%= StatsAge %>';
 </script>
 <script src="js/graduation.js"></script>
 <script type="text/javascript">
 (function () {
 'use strict';
-var PAGE = 'GraduationCandidates.aspx', boot = null, page = 1, rows = [];
+/* BOOT, not boot. Each page declared "var boot = null" here and then "function boot(o)"
+   inside DOMContentLoaded; the inner declaration shadowed the outer variable, so "boot = o"
+   only ever assigned to the local function binding. Reset then read boot.currentYear off a
+   FUNCTION - undefined - and blanked the graduation year, silently widening every view to all
+   years. Renaming the store leaves nothing for the callback to shadow. */
+var PAGE = 'GraduationCandidates.aspx', BOOT = null, page = 1, rows = [];
 
 function state() {
     return { year: G.qs('fYear').value, focus: G.qs('fFocus').value, faculty: G.qs('fFac').value,
              dept: G.qs('fDep').value, prog: G.qs('fProg').value, intake: G.qs('fIntake').value,
-             ready: G.qs('fReady').value, q: G.qs('fQ').value.trim(), page: page > 1 ? page : '' };
+             ready: G.qs('fReady').value, sort: G.qs('fSort').value === 'regno' ? '' : G.qs('fSort').value,
+             q: G.qs('fQ').value.trim(), page: page > 1 ? page : '' };
 }
 function cfg(extra) {
     var s = state();
     var c = { acadYear: s.year, focus: s.focus, faculty: s.faculty, department: s.dept,
               programme: s.prog, entryYear: s.intake, readiness: s.ready, search: s.q,
-              state: 'pending', page: String(page), size: '50' };
+              sort: G.qs('fSort').value, state: 'pending', page: String(page), size: '50' };
     if (extra) for (var k in extra) if (extra.hasOwnProperty(k)) c[k] = extra[k];
     return JSON.stringify(c);
 }
-function sync() { G.writeUrl(state()); load(); }
+function sync() { G.writeUrl(state()); chips(); load(); }
+
+/* The filter strip. Every chip names one filter and removes exactly that one. */
+function chips() {
+    function txt(id) {
+        var el = G.qs(id);
+        return el.selectedIndex >= 0 ? el.options[el.selectedIndex].text.replace(/\s*\(\d+\)\s*$/, '')
+                                              .replace(/\s*\(none\)\s*$/, '').trim() : '';
+    }
+    G.chips('gChips', [
+        { k: 'fFac',    label: 'Faculty',    value: G.qs('fFac').value ? txt('fFac') : '' },
+        { k: 'fDep',    label: 'Department', value: G.qs('fDep').value ? txt('fDep') : '' },
+        { k: 'fProg',   label: 'Programme',  value: G.qs('fProg').value ? txt('fProg') : '' },
+        { k: 'fIntake', label: 'Intake',     value: G.qs('fIntake').value },
+        { k: 'fReady',  label: 'Readiness',  value: G.qs('fReady').value ? txt('fReady') : '' },
+        { k: 'fQ',      label: 'Search',     value: G.qs('fQ').value.trim() }
+    ], function (k) {
+        if (k === '*') { resetFilters(); } else { G.qs(k).value = ''; }
+        G.cascade('fFac', 'fDep', 'fProg');
+        page = 1; sync();
+    });
+}
+
+function resetFilters() {
+    ['fFac', 'fDep', 'fProg', 'fIntake', 'fReady'].forEach(function (id) { G.qs(id).value = ''; });
+    G.qs('fQ').value = '';
+}
 
 function load() {
     G.qs('gBody').innerHTML = '<tr><td colspan="9" class="g-load">Loading&hellip;</td></tr>';
@@ -105,7 +146,7 @@ function render(d) {
     G.qs('gBody').innerHTML = h || '<tr><td colspan="9" class="g-empty">No candidates match these filters.</td></tr>';
 
     var scope = G.qs('fFocus').value === 'cycle'
-        ? (' · finishing ' + (boot && boot.previousYear ? boot.previousYear + ' or ' : '') + G.qs('fYear').value)
+        ? (' · finishing ' + (BOOT && BOOT.previousYear ? BOOT.previousYear + ' or ' : '') + G.qs('fYear').value)
         : ' · everyone not yet graduated';
     G.qs('gMeta').textContent = 'showing ' + rows.length + ' of ' + d.total +
         (d.pages > 1 ? (' · page ' + d.page + ' of ' + d.pages) : '') + scope;
@@ -147,6 +188,47 @@ function doBulk() {
         G.toast(d.message, d.cleared > 0);
         if (d.skipped && d.skipped.length) alert('Skipped ' + d.skipped.length + ':\n\n' + d.skipped.join('\n'));
         load();
+    });
+}
+
+/* ── export ──────────────────────────────────────────────────────────
+   The button no longer guesses. It opens a dialog that states what is included, counts the
+   rows on the server before anything is committed to, and lets the columns and extra sheets be
+   chosen. The count matters: the previous build asked for the whole queue and silently produced
+   fifty rows of it. */
+function openExport() {
+    function txt(id) {
+        var el = G.qs(id);
+        return el.selectedIndex >= 0 ? el.options[el.selectedIndex].text.replace(/\s*\(\d+\)\s*$/, '')
+                                              .replace(/\s*\(none\)\s*$/, '').trim() : '';
+    }
+    var sum = [
+        { label: 'Graduation year', value: G.qs('fYear').value || 'All years' },
+        { label: 'Population', value: G.qs('fFocus').value === 'cycle'
+            ? ('Finishing ' + (BOOT && BOOT.previousYear ? BOOT.previousYear + ' or ' : '') + G.qs('fYear').value)
+            : 'Everyone not yet graduated' },
+        { label: 'Faculty', value: G.qs('fFac').value ? txt('fFac') : 'All faculties' },
+        { label: 'Department', value: G.qs('fDep').value ? txt('fDep') : 'All departments' },
+        { label: 'Programme', value: G.qs('fProg').value ? txt('fProg') : 'All programmes' }
+    ];
+    if (G.qs('fIntake').value) sum.push({ label: 'Intake', value: G.qs('fIntake').value });
+    if (G.qs('fReady').value) sum.push({ label: 'Readiness', value: txt('fReady') });
+    if (G.qs('fQ').value.trim()) sum.push({ label: 'Search', value: G.qs('fQ').value.trim() });
+
+    G.exportDialog({
+        page: PAGE,
+        title: 'Export candidates',
+        subtitle: 'Everything here is branded and carries a cover sheet stating this exact scope.',
+        cfg: cfg(),
+        columns: window.G_COLS || [],
+        pageRows: rows.length,
+        countMethod: 'CountExport',
+        filterSummary: sum,
+        sheets: [
+            { k: 'byprog', t: 'Summary by programme', d: 'Candidates, ready, needs a look, blocked', on: true },
+            { k: 'byready', t: 'Summary by readiness', d: 'The queue in five figures', on: false },
+            { k: 'blockers', t: 'Why they are blocked', d: 'Each check, and how many it stops', on: true }
+        ]
     });
 }
 
@@ -250,25 +332,31 @@ document.addEventListener('DOMContentLoaded', function () {
     });
     G.qs('fFac').addEventListener('change', function () { G.cascade('fFac', 'fDep', 'fProg'); page = 1; sync(); });
     G.qs('fDep').addEventListener('change', function () { G.cascade('fFac', 'fDep', 'fProg'); page = 1; sync(); });
+    G.qs('fSort').addEventListener('change', function () { page = 1; sync(); });
+    // Typing is enough. Requiring Enter meant a filter that looked applied and was not.
+    var typed = G.debounce(function () { page = 1; sync(); }, 350);
+    G.qs('fQ').addEventListener('input', typed);
     G.qs('fQ').addEventListener('keydown', function (e) { if (e.key === 'Enter') { page = 1; sync(); } });
     G.qs('btnBulk').addEventListener('click', doBulk);
-    G.qs('btnXls').addEventListener('click', function () { G.serverExport(PAGE, 'xls', cfg()); });
+    G.qs('btnXls').addEventListener('click', openExport);
     G.qs('btnReset').addEventListener('click', function () {
-        ['fFac', 'fDep', 'fProg', 'fIntake', 'fReady'].forEach(function (id) { G.qs(id).value = ''; });
-        G.qs('fQ').value = ''; G.qs('fFocus').value = 'cycle';
-        if (boot && boot.currentYear) G.qs('fYear').value = boot.currentYear;
+        resetFilters();
+        G.qs('fFocus').value = 'cycle';
+        G.qs('fSort').value = 'regno';
+        if (BOOT && BOOT.currentYear) G.qs('fYear').value = BOOT.currentYear;
         G.cascade('fFac', 'fDep', 'fProg'); page = 1; sync();
     });
 
-    function boot(o) {
+    function applyBoot(o) {
         if (!o || !o.success || !o.hasAccess) {
             G.qs('gToolbar').style.display = 'none';
             var na = G.qs('gNoAccess'); na.style.display = 'block';
             na.textContent = (o && o.message) || 'You do not have access to graduation data.';
             return;
         }
-        boot = o;
+        BOOT = o;
         G.qs('gScope').textContent = (o.roleNote || '') + (o.scopeLabel ? ' · ' + o.scopeLabel : '');
+        G.freshness('gAge');
         G.fill('fYear', o.years.map(function (y) { return { v: y, t: y }; }), null);
         G.fill('fFac', o.faculties, 'All faculties');
         G.fill('fDep', o.departments, 'All departments');
@@ -281,14 +369,16 @@ document.addEventListener('DOMContentLoaded', function () {
         if (pre.prog) G.qs('fProg').value = pre.prog;
         if (pre.intake) G.qs('fIntake').value = pre.intake;
         if (pre.ready) G.qs('fReady').value = pre.ready;
+        if (pre.sort) G.qs('fSort').value = pre.sort;
         if (pre.q) G.qs('fQ').value = pre.q;
         page = parseInt(pre.page || '1', 10) || 1;
         G.cascade('fFac', 'fDep', 'fProg');
+        chips();
         load();
     }
 
-    if (window.G_BOOT) boot(window.G_BOOT);
-    else G.ajax(PAGE, 'GetBootstrap', {}, boot);
+    if (window.G_BOOT) applyBoot(window.G_BOOT);
+    else G.ajax(PAGE, 'GetBootstrap', {}, applyBoot);
 });
 })();
 </script>

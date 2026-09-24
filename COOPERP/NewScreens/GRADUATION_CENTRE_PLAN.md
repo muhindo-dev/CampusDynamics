@@ -885,3 +885,191 @@ ALTER TABLE acad_graduands ADD UNIQUE KEY uq_grad_regno (regno);
 
 Until then, `GraduationService.Clear` refuses a student who already has a row, which covers every
 path through the interface.
+
+---
+
+## 12. Filters, seamlessness and a configurable export — 2026-09-24
+
+Brief: *"improve the pages and filters, and ensure things are very seamless (under whole module of
+graduation) … improve on logic of export, user should be given modal and configure what they need."*
+
+Before designing anything, the four pages were read end to end against the live data. Four defects
+came out of that reading, and the first two are the reason the module does not feel finished.
+
+### 12a. What was broken
+
+**1. Every export was silently truncated to 50 rows.**
+
+`GraduationEngine.Page` opens with a guard against an absurd page size:
+
+```csharp
+if (f.size < 1 || f.size > 200) f.size = 50;
+```
+
+That is right for a screen. But the export handlers ask for the whole queue by setting a large size
+and calling the same method:
+
+| Caller | Asked for | Actually got |
+|---|---|---|
+| `GraduationCandidates` export | `f.size = 5000` | **50** |
+| `GraduationHeld` export | `f.size = 2000` | **50** |
+| `GraduationHeld` screen | `size: '300'` | **50**, and the page has no pager |
+
+Measured on the live database at the module's own default view — 2026/2027, cycle focus, all
+faculties — there are **996 pending candidates**. The Excel file contained **50 of them**, its cover
+sheet stated "Rows in this workbook: 50", and nothing anywhere said rows had been dropped. A
+workbook that quietly omits 95% of a Senate list is worse than no workbook.
+
+The held queue is 1 student today, so nobody has hit that one yet. They would have.
+
+**2. `boot` is shadowed on all four pages, so Reset loses the graduation year.**
+
+Each page declares `var PAGE = '…', boot = null;` at module scope, then declares
+`function boot(o) { … boot = o; … }` *inside* the `DOMContentLoaded` handler. The inner function
+declaration shadows the outer variable, so:
+
+* `boot = o` assigns to the local function binding. The module-scope `boot` stays `null` forever.
+* The Reset handler closes over the *function*, which is truthy, so `boot.currentYear` is
+  `undefined` and `fYear.value = undefined` blanks the year. **Reset silently widened every view to
+  all years** on all four pages.
+* On Candidates, `render()` sits at module scope where `boot` really is `null`, so the meta line
+  never showed the "finishing 2025/2026 or 2026/2027" range it was written to show.
+
+**3. The summary-table freshness is computed, shipped to the browser, and never displayed.**
+
+All four pages emit `window.G_AGE = '<%= StatsAge %>'`. Nothing reads it. The Centre's Refresh
+button therefore rebuilds something the user cannot see the age of, which makes it a button with no
+visible purpose. Counts come from `acad_grad_stats`; how stale they are is exactly what a reviewer
+needs to know before trusting a number.
+
+**4. Cover sheets identify the filter by code, not by name.**
+
+`CoverOf` writes `Faculty: 01`, `Department: 7`, `Programme: BIT`. A cover sheet exists so the file
+can be defended in a meeting; `Faculty: 01` defends nothing.
+
+### 12b. The export modal
+
+Export stops being a button that guesses and becomes a short conversation. One shared dialog,
+`G.exportDialog`, used by all four pages, laid out as a top-popup in the module's existing modal
+language:
+
+1. **What's included** — the live filter restated in plain English, with the true row count fetched
+   from the server before the dialog can be used. The user sees "996 rows" *before* choosing, not a
+   surprise afterwards.
+2. **Rows** — everything that matches, or only the page on screen.
+3. **Columns** — the page's full catalogue as grouped checkboxes (Identity / Academic / Progress /
+   Decision), with select-all and select-none. Choices persist per page for the session.
+4. **Extra sheets** — the summaries that page can produce, each off or on.
+5. **Format** — Excel workbook or CSV.
+
+The footer echoes what is about to happen: "996 rows · 11 columns · Excel workbook".
+
+### 12c. Server side
+
+* `GraduationEngine.All(scope, f, cap, out total, out truncated)` walks `Page` in 200-row chunks, so
+  every query keeps the shape it was tuned for and no `IN` list grows unbounded. It returns an
+  explicit `truncated` flag; the cover sheet states the cap in words when it is hit, rather than
+  quietly stopping.
+* Each page declares a **column catalogue** — key, header, numeric, and how to read the value off a
+  candidate — and the selected keys drive the sheet. One list to maintain, and the dialog and the
+  workbook can never disagree about what a column is.
+* Readiness is computed in C#, not SQL, so it is applied *before* paging for export purposes by
+  requesting the full set and filtering, and the count shown in the dialog is the count after that
+  filter.
+* `CoverOf` resolves faculty, department and programme to their names.
+
+### 12d. Filters
+
+* Reset restores the default graduation year instead of blanking it (the `boot` fix).
+* Search debounces at 350 ms instead of requiring Enter.
+* An active-filter strip under the toolbar shows what is narrowing the view, each removable with one
+  click. On a screen with eight controls, this is the difference between "no candidates match" being
+  informative and being mystifying.
+* Held gains a pager and honours the size it asks for.
+* The freshness of the counts is shown next to the scope on every page.
+
+### 12e. Verification — run 2026-09-24
+
+A temporary harness (`ZZGradVerify.aspx`, since removed) exercised the real engine against the
+live database with a synthetic admin scope. Read-only throughout.
+
+**The truncation, measured rather than assumed.**
+
+| Filter | Matched | Old export | New export | Time |
+|---|---|---|---|---|
+| 2026/2027, cycle, all faculties | 996 | **50** | **996** | 1.30 s |
+| 2026/2027, cycle, readiness = blocked | 996 → 297 after assessment | **50** | **297** | 0.75 s |
+| 2026/2027, everyone not yet graduated | 14,547 | **50** | **14,547** | 13.0 s |
+
+996 distinct students, **0 duplicates, 0 out-of-order chunk boundaries** — the chunked walk does
+not skip or repeat rows across page joins, which is the failure a paged export would otherwise be
+prone to.
+
+**The count in the dialog.** The SQL count is exact for every filter except readiness, which is
+decided per student in C#. Blocked on the 2026/2027 cycle matches 996 in SQL and writes 297 — so
+below 3,000 candidates the exact figure is computed (0.75 s, affordable while a dialog is open) and
+above it the discrepancy is stated instead of hidden. Over 5,000 rows the dialog also says roughly
+how long the file will take, because 14,547 rows is a thirteen-second wait someone should agree to
+before it starts, not during.
+
+**The workbook.** Loaded through a real XML parser: parses clean, 3 worksheets, sheet names
+sanitised to Excel's 31 characters with its illegal characters replaced, no raw angle bracket
+reaches a data cell, the incomplete-export banner appears on the cover. The CSV guards
+formula injection (`=1+1` → `'=1+1`), quotes embedded quotes and ampersands, and carries the row
+count and any truncation in its comment header.
+
+**The catalogue.** Selecting `n,off,a` returns columns in *catalogue* order, not request order, so
+two people exporting the same columns get identical files. An unrecognised selection falls back to
+the catalogue defaults rather than producing a sheet with no columns.
+
+**The dialog.** Driven headless against the real shared script: the footer reads
+`996 rows · 16 columns · 2 extra sheets · Excel workbook`; the Export button is on screen with a
+live handler at 1000, 700 and 560 pixels of viewport height; choosing CSV disables the extra-sheet
+checkboxes and shows why; unticking a column removes it from the posted `gradCols` and nothing else.
+
+---
+
+## 13. Graduation Analysis — what the seamlessness pass found there
+
+`GraduationAnalysis.aspx` sits in the same sidebar group as the four pages above and predates them.
+Reading it for consistency turned up two defects worth more than the styling.
+
+**1. It had no scope at all.** Every query read `acad_graduands` unrestricted, and the faculty
+dropdown was `SELECT DISTINCT faculty_code, faculty_name FROM acad_faculty`. A Dean or HOD opening
+Graduation Analysis saw **the whole university's graduands**, while the four pages beside it in the
+same menu correctly showed them only their own. That is not a difference in presentation — it is
+one menu answering the same question two different ways depending on which item you click.
+
+Fixed at the single choke point: all five queries build their WHERE through one
+`GetWhereClause(alias)`, so `Scope.ProgFilter(alias, "progcode")` goes there and a sixth query
+cannot quietly forget it. The faculty and programme dropdowns are scoped too, and a user with no
+scope now gets the same plain refusal the other four pages give. Verified against MySQL: a scope of
+three programmes returns 196 graduands across 2 faculties and offers exactly those 2 in the
+dropdown, where an unscoped read returns 1,621.
+
+**2. Its Excel exports produced empty files.** `ExportToExcel(gv)` set `AllowPaging = false` and
+called `gv.DataBind()`. `LoadAnalysisData()` only runs when `!IsPostBack`, so on an export postback
+the grid had no DataSource and `DataBind()` discarded the ViewState rows: the file that came out had
+headings and no data. On top of that it wrote an HTML table with a `.xls` extension, which makes
+Excel open a "the file format does not match" warning every time, and recorded nothing about which
+filters produced it.
+
+The handlers now rebuild the data for the filters on screen and write through `GraduationExport`,
+so a file from this page is branded, carries the same cover sheet as one from the graduation list,
+and is a real workbook. The detail export ships all four tables in one file, because a reader
+asking for the detail almost always wants the summaries that explain it.
+
+The navy `cd-page-header` banner is gone, replaced by the compact identity line the rest of the
+module uses — the same ninety pixels the other four pages were already spending on data.
+
+### 13a. Still open, and deliberately not decided here
+
+* **`GraduationAnalysis` largely duplicates the new pages.** Its faculty, programme and class
+  tables are what `GraduationList`'s three summary sheets now produce, properly scoped. Retiring
+  it would remove a whole design system from the module. That is a call for the Registrar, not a
+  refactor to slip in.
+* **`GraduateStudents.aspx`** ("Masters Certificate Management") is in the same menu group, has its
+  own third design system (`ft-` prefix), and **also has no scope resolution**. It is a different
+  function — thesis and supervisor tracking — rather than a duplicate, so it was left alone. Its
+  scope gap is real and should be closed the same way.
+* Its "Chart Placeholder" was never built, and the PDF button calls `window.print()`.

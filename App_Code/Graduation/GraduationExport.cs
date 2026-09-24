@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Globalization;
 using System.Text;
@@ -26,6 +26,12 @@ public static class GraduationExport
 {
     public const string UNIVERSITY = "Muteesa I Royal University";
 
+    /// <summary>
+    /// Set by a caller that had to stop short of the full result set. Printed on the cover in
+    /// words. [ThreadStatic] because one request must never inherit another's warning.
+    /// </summary>
+    [ThreadStatic] public static string Truncation;
+
     /// <summary>One tab of a workbook.</summary>
     public class Sheet
     {
@@ -35,6 +41,109 @@ public static class GraduationExport
         public List<string[]> Rows = new List<string[]>();
         /// <summary>Column indexes that hold numbers, so Excel treats them as numbers.</summary>
         public List<int> NumericColumns = new List<int>();
+    }
+
+    // =================================================================
+    //  The column catalogue.
+    //
+    //  A page declares its columns once - key, heading, which group it
+    //  belongs to in the dialog, whether it is a number, and how to read
+    //  it off a row. That one list drives BOTH the checkboxes the user
+    //  sees and the sheet that comes back, so the dialog and the workbook
+    //  cannot disagree about what a column is or what order they come in.
+    // =================================================================
+
+    /// <summary>One selectable column of an export.</summary>
+    public class Col<T>
+    {
+        public string Key;
+        public string Header;
+        /// <summary>Heading the dialog files this column under.</summary>
+        public string Group;
+        public bool Numeric;
+        /// <summary>True for a column that is on unless the user turns it off.</summary>
+        public bool Default = true;
+        public Func<T, string> Read;
+
+        public Col(string key, string header, string group, Func<T, string> read)
+        { Key = key; Header = header; Group = group; Read = read; }
+
+        public Col(string key, string header, string group, bool numeric, Func<T, string> read)
+        { Key = key; Header = header; Group = group; Numeric = numeric; Read = read; }
+
+        public Col<T> Off() { Default = false; return this; }
+    }
+
+    /// <summary>
+    /// The catalogue as the dialog needs it: key, label, group and whether it starts ticked.
+    /// Emitted into the page so the checkboxes are built from the same list the sheet is.
+    /// </summary>
+    public static object Catalogue<T>(List<Col<T>> cols)
+    {
+        var outp = new List<object>();
+        foreach (Col<T> c in cols)
+            outp.Add(new { k = c.Key, t = c.Header, g = c.Group, on = c.Default });
+        return outp;
+    }
+
+    /// <summary>
+    /// Builds a sheet from the catalogue and the keys the user ticked.
+    ///
+    /// Column ORDER always follows the catalogue, never the order the keys arrived in, so two
+    /// people exporting the same columns get identical files. An empty or unrecognised selection
+    /// falls back to the catalogue's own defaults rather than producing a sheet with no columns.
+    /// </summary>
+    public static Sheet Build<T>(string name, string subtitle, List<Col<T>> cols,
+                                 IEnumerable<T> rows, string selectedKeys)
+    {
+        var want = new List<string>();
+        if (!string.IsNullOrEmpty(selectedKeys))
+            foreach (string k in selectedKeys.Split(','))
+            { string t = k.Trim(); if (t != "") want.Add(t); }
+
+        var use = new List<Col<T>>();
+        foreach (Col<T> c in cols)
+        {
+            bool on = want.Count == 0 ? c.Default : want.Contains(c.Key);
+            if (on) use.Add(c);
+        }
+        if (use.Count == 0)
+            foreach (Col<T> c in cols) if (c.Default) use.Add(c);
+
+        var sh = new Sheet();
+        sh.Name = name;
+        sh.Subtitle = subtitle ?? "";
+        var heads = new string[use.Count];
+        for (int i = 0; i < use.Count; i++)
+        {
+            heads[i] = use[i].Header;
+            if (use[i].Numeric) sh.NumericColumns.Add(i);
+        }
+        sh.Columns = heads;
+
+        if (rows != null)
+        {
+            foreach (T row in rows)
+            {
+                var cells = new string[use.Count];
+                for (int i = 0; i < use.Count; i++)
+                {
+                    try { cells[i] = use[i].Read(row) ?? ""; }
+                    catch { cells[i] = ""; }
+                }
+                sh.Rows.Add(cells);
+            }
+        }
+        return sh;
+    }
+
+    /// <summary>Which of a page's optional extra sheets the user asked for.</summary>
+    public static bool Wants(string list, string key)
+    {
+        if (string.IsNullOrEmpty(list)) return false;
+        foreach (string k in list.Split(','))
+            if (k.Trim() == key) return true;
+        return false;
     }
 
     private static string X(string s)
@@ -133,6 +242,14 @@ public static class GraduationExport
         if (sheets != null) foreach (Sheet s in sheets) total += (s.Rows == null ? 0 : s.Rows.Count);
         Kv(sb, "Rows in this workbook", total.ToString(CultureInfo.InvariantCulture));
         Blank(sb);
+        // A file that stops short must say so on its own face. The previous build capped every
+        // export at fifty rows and stated that number here as though it were the whole answer.
+        if (!string.IsNullOrEmpty(Truncation))
+        {
+            Row(sb, "sRpt", "THIS EXPORT IS INCOMPLETE");
+            Row(sb, "sCell", Truncation);
+            Blank(sb);
+        }
         Row(sb, "sFoot", "Every name on a graduation list produced here was cleared by a named reviewer");
         Row(sb, "sFoot", "against the results on record at the time. The evidence behind each decision is");
         Row(sb, "sFoot", "retained in full and can be produced on request.");
@@ -213,6 +330,9 @@ public static class GraduationExport
         if (cover != null)
             foreach (KeyValuePair<string, string> kv in cover)
                 sb.AppendLine("# " + kv.Key + ": " + (kv.Value ?? ""));
+        sb.AppendLine("# Rows: " + (rows == null ? 0 : rows.Count).ToString(CultureInfo.InvariantCulture));
+        if (!string.IsNullOrEmpty(Truncation))
+            sb.AppendLine("# INCOMPLETE: " + Truncation);
         sb.AppendLine("#");
 
         sb.AppendLine(Line(columns));

@@ -257,3 +257,92 @@
     .g-bar__id{border-right:0;padding-right:0;width:100%;}
     .g-bar__sp{margin-left:0;width:100%;}
 }
+
+/* ════════════════════════════════════════════════════════════════════
+   The active-filter strip.
+
+   Eight controls in one toolbar make it easy to leave a filter set and
+   then not understand why the screen is empty. Each narrowing filter
+   appears here as a chip that names itself and removes itself when
+   clicked, so "no candidates match" is informative instead of
+   mystifying.
+   ════════════════════════════════════════════════════════════════════ */
+.g-chips{display:none;align-items:center;gap:5px;flex-wrap:wrap;margin:0 0 9px;}
+.g-chips__l{font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:.4px;
+    color:var(--mute);margin-right:1px;}
+/* One line per chip. A long programme name truncates rather than wrapping: a chip that grows
+   to two lines makes every chip beside it look misaligned and pushes Clear all onto its own
+   row. The full text stays in the title attribute. */
+.g-fchip{display:inline-flex;align-items:center;gap:4px;border:1px solid #cddffa;background:#f0f6ff;
+    color:#1e3a6b;border-radius:2px;font:inherit;font-size:10.5px;padding:2px 5px 2px 6px;
+    cursor:pointer;max-width:250px;min-width:0;height:21px;white-space:nowrap;}
+.g-fchip__k{font-weight:700;text-transform:uppercase;letter-spacing:.3px;font-size:8.5px;
+    color:var(--accent);flex:0 0 auto;}
+.g-fchip__v{min-width:0;overflow:hidden;text-overflow:ellipsis;}
+.g-fchip em{font-style:normal;font-size:13px;line-height:1;color:var(--mute);margin-left:2px;flex:0 0 auto;}
+.g-fchip:hover{border-color:var(--accent);background:#e4eefc;}
+.g-fchip:hover em{color:var(--bad);}
+.g-fchip--all{background:#fff;border-color:var(--line);color:var(--ink2);font-weight:700;
+    text-transform:uppercase;letter-spacing:.3px;font-size:8.5px;}
+.g-fchip--all:hover{border-color:var(--bad-line);color:var(--bad);background:var(--bad-bg);}
+
+/* How old the stored counts are. Shown on every page, next to the scope. */
+.g-age{font-size:9.5px;color:var(--mute);white-space:nowrap;}
+
+/* ════════════════════════════════════════════════════════════════════
+   The export dialog.
+
+   Export used to be a button that guessed — it chose the columns, took
+   the current filter, and silently produced fifty rows of it. This is
+   the conversation that replaces it: what is included, how many rows
+   that really is, which columns, which extra sheets, what format.
+   ════════════════════════════════════════════════════════════════════ */
+.g-modal--x{max-width:660px;}
+.g-xs{border:1px solid var(--line);border-radius:3px;margin-bottom:9px;}
+.g-xs__h{padding:5px 10px;background:var(--surface);border-bottom:1px solid var(--line);
+    font-size:9.5px;font-weight:700;text-transform:uppercase;letter-spacing:.45px;
+    color:var(--navy);display:flex;align-items:center;gap:6px;}
+.g-xlink{margin-left:auto;background:none;border:0;padding:0 3px;font:inherit;font-size:9.5px;
+    text-transform:uppercase;letter-spacing:.4px;color:var(--accent);cursor:pointer;
+    text-decoration:underline;}
+.g-xlink+.g-xlink{margin-left:0;}
+.g-xlink:hover{color:var(--navy);}
+
+/* what's included — the filter restated in words, not codes */
+.g-xkv{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:8px 14px;padding:9px 10px;}
+.g-xkv>div{min-width:0;}
+.g-xkv span{display:block;font-size:9px;text-transform:uppercase;letter-spacing:.4px;color:var(--mute);}
+.g-xkv b{display:block;font-size:11.5px;color:var(--ink);line-height:1.35;
+    overflow:hidden;text-overflow:ellipsis;}
+.g-xcount{padding:7px 10px;border-top:1px solid var(--line);background:#fbfcfe;
+    font-size:11.5px;color:var(--ink2);line-height:1.45;}
+.g-xcount b{font-size:15px;color:var(--navy);}
+.g-xwarn{color:var(--warn);}
+
+.g-xr{padding:7px 10px;display:flex;flex-direction:column;gap:5px;}
+.g-xg+.g-xg{border-top:1px solid #eef2f7;}
+.g-xg__h{padding:5px 10px 1px;font-size:9px;font-weight:700;text-transform:uppercase;
+    letter-spacing:.4px;color:var(--mute);}
+.g-xg__b{padding:4px 10px 8px;display:grid;grid-template-columns:repeat(auto-fit,minmax(166px,1fr));gap:2px 10px;}
+
+.g-ck{display:flex;align-items:flex-start;gap:6px;font-size:11.5px;color:var(--ink);
+    cursor:pointer;padding:2px 0;line-height:1.35;min-width:0;}
+.g-ck input{margin:2px 0 0;flex:0 0 auto;cursor:pointer;}
+.g-ck span{min-width:0;}
+.g-ck small{display:block;font-size:10px;color:var(--mute);line-height:1.3;}
+.g-ck:hover{color:var(--accent);}
+.g-ck.is-off{opacity:.45;cursor:not-allowed;}
+.g-ck.is-off input{cursor:not-allowed;}
+
+.g-xnote{padding:0 10px 8px;font-size:10.5px;color:var(--warn);line-height:1.4;}
+
+/* The footer states the outcome before anything downloads. */
+.g-modal--x .g-modal__f .g-hint{margin-left:0;margin-right:auto;text-align:left;max-width:none;
+    font-size:11px;color:var(--ink2);font-variant-numeric:tabular-nums;}
+
+@media (max-width:620px){
+    .g-xkv{grid-template-columns:1fr;}
+    .g-xg__b{grid-template-columns:1fr;}
+    .g-modal--x .g-modal__f{flex-direction:column;align-items:stretch;}
+    .g-modal--x .g-modal__f .g-hint{margin-bottom:2px;}
+}

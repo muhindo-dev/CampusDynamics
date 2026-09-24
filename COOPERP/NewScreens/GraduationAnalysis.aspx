@@ -11,6 +11,16 @@
 .cd-page-header__sub { font-size:12px; color:rgba(255,255,255,.75); margin-top:2px; }
 /* Graduation Analysis Module Styles - ga- prefix */
 .ga-container { padding: 8px; font-size: 11px; }
+
+/* The compact identity line the rest of the Graduation module uses, so this page stops
+   announcing itself in a navy banner nothing else in the menu has. */
+.ga-id { display:flex; align-items:baseline; gap:8px; flex-wrap:wrap;
+    padding:0 0 7px; margin-bottom:9px; border-bottom:1px solid #e0e5ed; }
+.ga-id b { font-size:13px; color:#05275C; line-height:1.2; }
+.ga-id span { font-size:10.5px; color:#8a94a6; }
+.ga-id__scope { font-size:10px; color:#8a94a6; margin-left:auto; white-space:nowrap; }
+.ga-noaccess { background:#fff8e1; border:1px solid #fde68a; border-left:3px solid #d97706;
+    color:#92400e; font-size:11px; line-height:1.5; padding:8px 10px; border-radius:3px; }
 .ga-header { margin-bottom: 6px; }
 .ga-title { font-size: 14px; font-weight: 600; color: #1a1a2e; margin: 0 0 4px 0; }
 
@@ -89,18 +99,21 @@ function toggleFilters() {
 
 <asp:Content ID="Content2" ContentPlaceHolderID="ContentPlaceHolder1" runat="Server">
 <div class="ga-container">
-<!-- ======= PAGE HEADER =========================================== -->
-<div class="cd-page-header">
-    <div class="cd-page-header__left">
-        <div class="cd-page-header__icon">
-            <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="1.8"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg>
-        </div>
-        <div>
-            <div class="cd-page-header__title">Graduation Analysis</div>
-            <div class="cd-page-header__sub">Analyse graduation outcomes and semester completion statistics</div>
-        </div>
-    </div>
+
+<%-- The navy banner is gone. The sidebar already says where you are, and the other four pages
+     in this menu spend that ninety pixels on data instead. What replaces it is the same compact
+     identity line they use: what this page is, and whose data you are looking at. --%>
+<div class="ga-id">
+    <b>Graduation analysis</b>
+    <span>Outcomes on the graduation lists on record</span>
+    <asp:Label ID="lblScope" runat="server" CssClass="ga-id__scope" />
 </div>
+
+<asp:Panel ID="pnlNoAccess" runat="server" Visible="false" CssClass="ga-noaccess">
+    Your account is not linked to a faculty or department, so no graduation data is available.
+</asp:Panel>
+
+<asp:Panel ID="pnlAnalysis" runat="server">
     <!-- Stats Bar with Filter Toggle -->
     <div class="ga-stats-bar">
         <div class="ga-stat ga-stat--primary">
@@ -262,5 +275,6 @@ function toggleFilters() {
     
     <!-- Excel Exporter -->
     <dx:ASPxGridViewExporter ID="gvExporter" runat="server" GridViewID="gvGraduandsDetail" />
+</asp:Panel>
 </div>
 </asp:Content>

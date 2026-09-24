@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Configuration;
 using System.Web.Script.Serialization;
@@ -63,6 +63,7 @@ public static class GraduationBootstrap
             f.finishedIn = S(d, "finishedIn");
             f.search = S(d, "search");
             f.readiness = S(d, "readiness");
+            f.award = S(d, "award");
             string v = S(d, "state"); if (v != "") f.state = v;
             v = S(d, "focus"); if (v != "") f.focus = v;
             v = S(d, "sort"); if (v != "") f.sort = v;
@@ -199,19 +200,73 @@ public static class GraduationBootstrap
         catch (Exception ex) { return J.Serialize(new { success = false, message = ex.Message }); }
     }
 
-    /// <summary>The filter spelled out for an export cover sheet.</summary>
+    /// <summary>
+    /// The filter spelled out for an export cover sheet.
+    ///
+    /// A cover sheet exists so the file can be defended in a meeting, and "Faculty: 01" defends
+    /// nothing. Codes are resolved to the names a reader recognises; the code is kept in brackets
+    /// so the file can still be tied back to the system that produced it.
+    /// </summary>
     public static List<KeyValuePair<string, string>> CoverOf(GraduationEngine.GradFilter f, string focusLabel)
     {
         var l = new List<KeyValuePair<string, string>>();
         l.Add(new KeyValuePair<string, string>("Graduation year", f.acadYear == "" ? "All years" : f.acadYear));
         if (focusLabel != "") l.Add(new KeyValuePair<string, string>("Population", focusLabel));
-        l.Add(new KeyValuePair<string, string>("Faculty", f.faculty == "" ? "All" : f.faculty));
-        l.Add(new KeyValuePair<string, string>("Department", f.department == "" ? "All" : f.department));
-        l.Add(new KeyValuePair<string, string>("Programme", f.programme == "" ? "All" : f.programme));
+
+        Names n = Resolve(f);
+        l.Add(new KeyValuePair<string, string>("Faculty", f.faculty == "" ? "All faculties" : n.faculty));
+        l.Add(new KeyValuePair<string, string>("Department", f.department == "" ? "All departments" : n.department));
+        l.Add(new KeyValuePair<string, string>("Programme", f.programme == "" ? "All programmes" : n.programme));
+
         if (f.entryYear != "") l.Add(new KeyValuePair<string, string>("Intake", f.entryYear));
-        if (f.finishedIn != "") l.Add(new KeyValuePair<string, string>("Finished in", f.finishedIn));
-        if (f.readiness != "") l.Add(new KeyValuePair<string, string>("Readiness", f.readiness));
+        if (f.finishedIn != "") l.Add(new KeyValuePair<string, string>("Last sat a paper in", f.finishedIn));
+        if (f.readiness != "")
+            l.Add(new KeyValuePair<string, string>("Readiness",
+                f.readiness == "ready" ? "Ready - nothing outstanding"
+                : f.readiness == "warn" ? "Needs a look"
+                : f.readiness == "blocked" ? "Blocked by at least one check" : f.readiness));
+        if (f.award != "") l.Add(new KeyValuePair<string, string>("Class of award", f.award));
         if (f.search != "") l.Add(new KeyValuePair<string, string>("Search", f.search));
         return l;
+    }
+
+    private class Names { public string faculty = "", department = "", programme = ""; }
+
+    /// <summary>Codes to names, in one round trip, and never at the cost of the export itself.</summary>
+    private static Names Resolve(GraduationEngine.GradFilter f)
+    {
+        var n = new Names();
+        n.faculty = f.faculty; n.department = f.department; n.programme = f.programme;
+        if (f.faculty == "" && f.department == "" && f.programme == "") return n;
+        try
+        {
+            using (var c = new MySqlConnection(Conn()))
+            {
+                c.Open();
+                if (f.faculty != "")
+                    n.faculty = Label(c, "SELECT faculty_name FROM acad_faculty WHERE TRIM(faculty_code)=@v",
+                                      f.faculty, f.faculty);
+                int dep;
+                if (f.department != "" && int.TryParse(f.department, out dep))
+                    n.department = Label(c, "SELECT dept_name FROM hrm_departments WHERE ID=@v",
+                                         f.department, f.department);
+                if (f.programme != "")
+                    n.programme = Label(c, "SELECT progname FROM acad_programme WHERE TRIM(progcode)=@v",
+                                        f.programme, f.programme);
+            }
+        }
+        catch { /* a cover sheet is never worth failing an export over */ }
+        return n;
+    }
+
+    private static string Label(MySqlConnection c, string sql, string val, string code)
+    {
+        using (var cmd = new MySqlCommand(sql, c))
+        {
+            cmd.Parameters.AddWithValue("@v", val);
+            object o = cmd.ExecuteScalar();
+            string name = o == null || o == DBNull.Value ? "" : o.ToString().Trim();
+            return name == "" ? code : name + "  (" + code + ")";
+        }
     }
 }

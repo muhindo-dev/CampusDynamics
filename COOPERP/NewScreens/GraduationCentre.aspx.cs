@@ -1,4 +1,5 @@
-using System;
+﻿using System;
+using System.Globalization;
 using System.Collections.Generic;
 using System.Web.Script.Serialization;
 using System.Web.Services;
@@ -45,51 +46,134 @@ public partial class COOPERP_NewScreens_GraduationCentre : System.Web.UI.Page
         GraduationEngine.GradFilter f = GraduationBootstrap.Parse(Request.Form["gradConfig"] ?? "");
         GraduationEngine.GradOverview o = GraduationEngine.Overview(scope, f);
 
+        // Which tabs the user asked for in the dialog. An empty list means they arrived some
+        // other way, so fall back to what the button used to produce.
+        string want = Request.Form["gradSheets"] ?? "";
+        bool none = want.Trim() == "";
         var sheets = new List<GraduationExport.Sheet>();
 
-        var blockers = new GraduationExport.Sheet();
-        blockers.Name = "Summary";
-        blockers.Subtitle = o.focusLabel;
-        blockers.Columns = new[] { "Measure", "Candidates" };
-        blockers.NumericColumns.Add(1);
-        blockers.Rows.Add(new[] { "Candidates in scope", o.candidates.ToString() });
-        blockers.Rows.Add(new[] { "Ready", o.ready.ToString() });
-        blockers.Rows.Add(new[] { "Blocked", o.blocked.ToString() });
-        blockers.Rows.Add(new[] { "Held", o.held.ToString() });
-        blockers.Rows.Add(new[] { "On the graduation list", o.listed.ToString() });
-        foreach (GraduationEngine.GC2 b in o.blockers)
-            blockers.Rows.Add(new[] { b.name, b.count.ToString() });
-        sheets.Add(blockers);
-
-        var prog = new GraduationExport.Sheet();
-        prog.Name = "By programme";
-        prog.Columns = new[] { "Code", "Programme", "Faculty", "Candidates", "On a list", "Held", "Failed papers", "To review" };
-        for (int i = 3; i <= 7; i++) prog.NumericColumns.Add(i);
-        foreach (GraduationEngine.ProgProgress p in o.programmes)
-        {
-            int left = p.candidates - p.listed - p.held; if (left < 0) left = 0;
-            prog.Rows.Add(new[] { p.progcode, p.progname, p.faculty,
-                p.candidates.ToString(), p.listed.ToString(), p.held.ToString(),
-                p.blocked.ToString(), left.ToString() });
-        }
-        sheets.Add(prog);
-
-        if (o.integrity.Count > 0)
-        {
-            var ig = new GraduationExport.Sheet();
-            ig.Name = "Data integrity";
-            ig.Columns = new[] { "Finding" };
-            foreach (string s in o.integrity) ig.Rows.Add(new[] { s });
-            sheets.Add(ig);
-        }
+        if (none || GraduationExport.Wants(want, "summary")) sheets.Add(SummarySheet(o));
+        if (none || GraduationExport.Wants(want, "byfac")) sheets.Add(ByFaculty(o));
+        if (none || GraduationExport.Wants(want, "byprog")) sheets.Add(ByProgramme(o));
+        if ((none || GraduationExport.Wants(want, "integrity")) && o.integrity.Count > 0)
+            sheets.Add(IntegritySheet(o));
+        if (sheets.Count == 0) sheets.Add(SummarySheet(o));
 
         var cover = GraduationBootstrap.CoverOf(f, o.focusLabel);
         string file = GraduationExport.FileName("graduation-overview", f.acadYear);
         if (fmt == "csv")
+        {
+            // A CSV is one sheet, and the one worth having flat is the programme table.
+            GraduationExport.Sheet flat = ByProgramme(o);
             GraduationExport.Csv(Response, file, "Graduation Overview", scope.Label, cover,
-                                 prog.Columns, prog.Rows);
+                                 flat.Columns, flat.Rows);
+        }
         else
             GraduationExport.Workbook(Response, file, "Graduation Overview", scope.Label, cover, sheets);
+    }
+
+    private static string N(int v) { return v.ToString(CultureInfo.InvariantCulture); }
+
+    /// <summary>The five figures the page opens with, plus what is stopping the rest.</summary>
+    private static GraduationExport.Sheet SummarySheet(GraduationEngine.GradOverview o)
+    {
+        var s = new GraduationExport.Sheet();
+        s.Name = "Summary";
+        s.Subtitle = o.focusLabel;
+        s.Columns = new[] { "Measure", "Candidates" };
+        s.NumericColumns.Add(1);
+        s.Rows.Add(new[] { "Candidates in scope", N(o.candidates) });
+        s.Rows.Add(new[] { "Ready - nothing outstanding", N(o.ready) });
+        s.Rows.Add(new[] { "Blocked by at least one check", N(o.blocked) });
+        s.Rows.Add(new[] { "Held by a reviewer", N(o.held) });
+        s.Rows.Add(new[] { "On the graduation list", N(o.listed) });
+        if (o.backlogEarlier > 0)
+            s.Rows.Add(new[] { "Finished earlier and still on no list", N(o.backlogEarlier) });
+        s.Rows.Add(new[] { "", "" });
+        s.Rows.Add(new[] { "WHAT IS STOPPING THEM", "" });
+        foreach (GraduationEngine.GC2 b in o.blockers) s.Rows.Add(new[] { b.name, N(b.count) });
+        return s;
+    }
+
+    private static GraduationExport.Sheet ByProgramme(GraduationEngine.GradOverview o)
+    {
+        var s = new GraduationExport.Sheet();
+        s.Name = "By programme";
+        s.Columns = new[] { "Code", "Programme", "Faculty", "Candidates", "On a list",
+                            "Held", "Failed papers", "To review" };
+        for (int i = 3; i <= 7; i++) s.NumericColumns.Add(i);
+        foreach (GraduationEngine.ProgProgress p in o.programmes)
+        {
+            int left = p.candidates - p.listed - p.held; if (left < 0) left = 0;
+            s.Rows.Add(new[] { p.progcode, p.progname, p.faculty,
+                N(p.candidates), N(p.listed), N(p.held), N(p.blocked), N(left) });
+        }
+        return s;
+    }
+
+    /// <summary>
+    /// The same table rolled up to faculties, which is the level a Dean or a VC reads. Built
+    /// from the programme rows rather than a second query, so the two tabs always agree.
+    /// </summary>
+    private static GraduationExport.Sheet ByFaculty(GraduationEngine.GradOverview o)
+    {
+        var s = new GraduationExport.Sheet();
+        s.Name = "By faculty";
+        s.Columns = new[] { "Faculty", "Programmes", "Candidates", "On a list", "Held",
+                            "Failed papers", "To review" };
+        for (int i = 1; i <= 6; i++) s.NumericColumns.Add(i);
+
+        var tally = new Dictionary<string, int[]>();
+        var order = new List<string>();
+        foreach (GraduationEngine.ProgProgress p in o.programmes)
+        {
+            string k = p.faculty == "" ? "(none recorded)" : p.faculty;
+            if (!tally.ContainsKey(k)) { tally[k] = new int[5]; order.Add(k); }
+            int[] t = tally[k];
+            t[0]++; t[1] += p.candidates; t[2] += p.listed; t[3] += p.held; t[4] += p.blocked;
+        }
+        order.Sort(StringComparer.OrdinalIgnoreCase);
+        foreach (string k in order)
+        {
+            int[] t = tally[k];
+            int left = t[1] - t[2] - t[3]; if (left < 0) left = 0;
+            s.Rows.Add(new[] { k, N(t[0]), N(t[1]), N(t[2]), N(t[3]), N(t[4]), N(left) });
+        }
+        return s;
+    }
+
+    private static GraduationExport.Sheet IntegritySheet(GraduationEngine.GradOverview o)
+    {
+        var s = new GraduationExport.Sheet();
+        s.Name = "Data integrity";
+        s.Columns = new[] { "Finding" };
+        foreach (string x in o.integrity) s.Rows.Add(new[] { x });
+        return s;
+    }
+
+    /// <summary>
+    /// What the overview export would cover. There are no per-student rows here, so this
+    /// reports the population the summaries are drawn from rather than a row count.
+    /// </summary>
+    [WebMethod(EnableSession = true)]
+    public static string CountExport(string configJson)
+    {
+        try
+        {
+            MarksScope scope = MarksScopeResolver.Resolve();
+            if (!scope.HasAccess) return GraduationBootstrap.Denied();
+            GraduationEngine.GradFilter f = GraduationBootstrap.Parse(configJson);
+            GraduationEngine.GradOverview o = GraduationEngine.Overview(scope, f);
+            return J.Serialize(new
+            {
+                success = true,
+                total = o.programmes.Count,
+                capped = 0,
+                note = "Summarising " + N(o.candidates) + " candidates across " +
+                       N(o.programmes.Count) + " programmes."
+            });
+        }
+        catch (Exception ex) { return J.Serialize(new { success = false, message = ex.Message }); }
     }
 
     /// <summary>Builds the first paint into the page. See BootJson.</summary>

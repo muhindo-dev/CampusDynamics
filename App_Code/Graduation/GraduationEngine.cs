@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Configuration;
 using System.Globalization;
@@ -277,6 +277,9 @@ public static class GraduationEngine
         public string focus = "cycle";
         public string state = "pending";  // pending | held | listed | all
         public string readiness = "";     // '' | ready | warn | blocked
+        /// <summary>Class of award, for the graduation list. Matched as a prefix, so "First"
+        /// catches both "First Class Honours" and "First Class".</summary>
+        public string award = "";
         public string search = "";
         public string sort = "regno";
         public int page = 1;
@@ -449,6 +452,91 @@ public static class GraduationEngine
             foreach (GradCandidate g in list) Assess(c, g);
         }
         return list;
+    }
+
+    /// <summary>
+    /// Every candidate matching the filter, not just one page of them.
+    ///
+    /// This exists because the export handlers used to ask <see cref="Page"/> for five thousand
+    /// rows and silently receive fifty. Page opens with a guard - "if (f.size &lt; 1 || f.size &gt; 200)
+    /// f.size = 50" - which is right for a screen and wrong for a file: at the module's own default
+    /// view there are 996 pending candidates, and the workbook contained 50 of them with a cover
+    /// sheet that said so as though it were the whole answer.
+    ///
+    /// Rather than raise that guard and let one query assemble an unbounded IN list, this walks
+    /// Page in chunks of 200. Every query keeps exactly the shape it was tuned for, and the caller
+    /// gets an explicit truncated flag when the cap is reached so the file can say so in words
+    /// instead of stopping quietly.
+    /// </summary>
+    /// <param name="cap">Hard ceiling on rows returned. 0 or less means the default 20,000.</param>
+    /// <param name="total">How many rows matched the filter, before the cap.</param>
+    /// <param name="truncated">True when the cap stopped the walk short of total.</param>
+    public static List<GradCandidate> All(MarksScope scope, GradFilter f, int cap,
+                                          out int total, out bool truncated)
+    {
+        const int CHUNK = 200;
+        var all = new List<GradCandidate>();
+        total = 0;
+        truncated = false;
+        if (scope == null || !scope.HasAccess) return all;
+        if (cap <= 0) cap = 20000;
+
+        // Page mutates f.size and f.page, and the caller's filter is reused afterwards for the
+        // cover sheet, so walk a copy.
+        GradFilter w = Copy(f);
+        w.size = CHUNK;
+
+        for (int pageNo = 1; ; pageNo++)
+        {
+            w.page = pageNo;
+            w.size = CHUNK;                 // Page clamps in place; reset it every turn
+            int t;
+            List<GradCandidate> chunk = Page(scope, w, out t);
+            if (pageNo == 1) total = t;
+            if (chunk.Count == 0) break;
+
+            all.AddRange(chunk);
+            if (all.Count >= cap)
+            {
+                if (all.Count > cap) all.RemoveRange(cap, all.Count - cap);
+                truncated = all.Count < total;
+                break;
+            }
+            if (all.Count >= total) break;
+            // Defensive: a filter that somehow never exhausts must not spin forever.
+            if (pageNo > (cap / CHUNK) + 2) { truncated = all.Count < total; break; }
+        }
+        return all;
+    }
+
+    /// <summary>A field-for-field copy, so a walk cannot disturb the caller's filter.</summary>
+    public static GradFilter Copy(GradFilter f)
+    {
+        var c = new GradFilter();
+        if (f == null) return c;
+        c.acadYear = f.acadYear; c.faculty = f.faculty; c.department = f.department;
+        c.programme = f.programme; c.entryYear = f.entryYear; c.finishedIn = f.finishedIn;
+        c.focus = f.focus; c.state = f.state; c.readiness = f.readiness;
+        c.search = f.search; c.sort = f.sort; c.page = f.page; c.size = f.size;
+        return c;
+    }
+
+    /// <summary>
+    /// Readiness (READY / WARN / BLOCKED) is decided in C# by <see cref="Assess"/>, not in SQL, so
+    /// it cannot be part of the WHERE clause and cannot be counted by the database. Applying it
+    /// here - in one place - is what keeps the count shown in the export dialog equal to the number
+    /// of rows that actually land in the file.
+    /// </summary>
+    public static List<GradCandidate> FilterByReadiness(List<GradCandidate> rows, string readiness)
+    {
+        if (rows == null) return new List<GradCandidate>();
+        string want = (readiness ?? "").Trim().ToLowerInvariant();
+        if (want == "") return rows;
+        string code = want == "ready" ? "READY" : want == "warn" ? "WARN" : want == "blocked" ? "BLOCKED" : "";
+        if (code == "") return rows;
+        var outp = new List<GradCandidate>();
+        foreach (GradCandidate g in rows) if (g.readiness == code) outp.Add(g);
+        return outp;
     }
 
     /// <summary>Phase 2: the results arithmetic for exactly the students on this page.</summary>

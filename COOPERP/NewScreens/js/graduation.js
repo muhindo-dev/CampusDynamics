@@ -410,6 +410,313 @@ window.G = (function () {
         }
     }
 
+    /* ── Small shared helpers the four pages kept reinventing ────────── */
+
+    /// Waits for typing to stop. Search used to need Enter, which meant a filter that looked
+    /// applied but was not until you remembered to press a key.
+    function debounce(fn, ms) {
+        var t = null;
+        return function () {
+            var self = this, a = arguments;
+            clearTimeout(t);
+            t = setTimeout(function () { fn.apply(self, a); }, ms || 350);
+        };
+    }
+
+    /// How old the counts are. Every page ships window.G_AGE and, until now, no page showed it:
+    /// the Centre's Refresh button rebuilt a summary whose staleness was invisible.
+    function freshness(id) {
+        var el = qs(id || 'gAge');
+        if (!el) return;
+        var a = window.G_AGE || '';
+        el.textContent = a ? ('counts ' + a) : '';
+        el.title = a ? 'Candidate counts read a stored summary, rebuilt ' + a +
+                       '. Every graduation decision is re-checked against live marks at the moment it is taken.'
+                     : '';
+    }
+
+    /* ── The active-filter strip ──────────────────────────────────────
+       With eight controls in the toolbar it is easy to leave one set and then not understand why
+       a screen is empty. Each narrowing filter shows as a chip that says what it is, and clicking
+       it removes that one filter. "No candidates match" stops being mystifying. */
+    function chips(id, items, onRemove) {
+        var el = qs(id);
+        if (!el) return;
+        var live = [];
+        for (var i = 0; i < items.length; i++)
+            if (items[i] && items[i].value !== '' && items[i].value != null) live.push(items[i]);
+
+        if (!live.length) { el.innerHTML = ''; el.style.display = 'none'; return; }
+        el.style.display = 'flex';
+        var h = '<span class="g-chips__l">Filtered by</span>';
+        for (i = 0; i < live.length; i++)
+            h += '<button type="button" class="g-fchip" data-k="' + esc(live[i].k) + '" ' +
+                 'title="' + esc(live[i].label + ': ' + live[i].value) + ' — click to remove">' +
+                 '<span class="g-fchip__k">' + esc(live[i].label) + '</span>' +
+                 '<span class="g-fchip__v">' + esc(live[i].value) + '</span>' +
+                 '<em>&times;</em></button>';
+        h += '<button type="button" class="g-fchip g-fchip--all" data-k="*">Clear all</button>';
+        el.innerHTML = h;
+
+        var b = el.querySelectorAll('.g-fchip');
+        for (i = 0; i < b.length; i++)
+            b[i].addEventListener('click', function () { onRemove(this.getAttribute('data-k')); });
+    }
+
+    /* ── The export dialog ────────────────────────────────────────────
+       Export used to be a button that guessed: it took the current filter, chose the columns for
+       you, and produced a file. Worse, it silently produced fifty rows of it. Now it is a short
+       conversation - what is included, how many rows that really is, which columns, which extra
+       sheets, and in what format - and the footer says exactly what is about to happen before
+       anything is downloaded. */
+    var XKEY = null, XOPT = null;
+
+    function xLoad(page) {
+        try { return JSON.parse(sessionStorage.getItem('gexp_' + page) || '{}') || {}; }
+        catch (e) { return {}; }
+    }
+    function xSave(page, o) {
+        try { sessionStorage.setItem('gexp_' + page, JSON.stringify(o)); } catch (e) { }
+    }
+
+    function xMount() {
+        if (qs('gXov')) return;
+        var d = document.createElement('div');
+        d.innerHTML =
+            '<div class="g-ov" id="gXov">' +
+              '<div class="g-modal g-modal--x" role="dialog" aria-modal="true" aria-labelledby="gXtitle">' +
+                '<div class="g-modal__h">' +
+                  '<div class="g-modal__t"><b id="gXtitle">Export</b>' +
+                    '<span id="gXsub">Choose what goes into the file.</span></div>' +
+                  '<button type="button" class="g-modal__x" id="gXx" aria-label="Close">&times;</button>' +
+                '</div>' +
+                '<div class="g-modal__b" id="gXbody"></div>' +
+                '<div class="g-modal__f">' +
+                  '<span class="g-hint" id="gXecho">&nbsp;</span>' +
+                  '<button type="button" class="g-btn" id="gXcancel">Cancel</button>' +
+                  '<button type="button" class="g-btn g-btn--p" id="gXgo">Export</button>' +
+                '</div>' +
+              '</div>' +
+            '</div>';
+        while (d.firstChild) document.body.appendChild(d.firstChild);
+
+        var ov = qs('gXov');
+        ov.addEventListener('mousedown', function (e) { if (e.target === ov) xClose(); });
+        qs('gXx').addEventListener('click', xClose);
+        qs('gXcancel').addEventListener('click', xClose);
+        qs('gXgo').addEventListener('click', xRun);
+        document.addEventListener('keydown', function (e) {
+            if (e.key === 'Escape' && ov.classList.contains('is-open')) xClose();
+        });
+    }
+
+    function xClose() {
+        var ov = qs('gXov');
+        if (!ov) return;
+        ov.classList.remove('is-open');
+        if (!qs('gOv') || !qs('gOv').classList.contains('is-open')) document.body.style.overflow = '';
+    }
+
+    /// The one call a page makes. Everything else in here is this dialog's own business.
+    function exportDialog(opts) {
+        xMount();
+        XOPT = opts || {};
+        XKEY = XOPT.page || 'x';
+        var saved = xLoad(XKEY);
+
+        qs('gXtitle').textContent = XOPT.title || 'Export';
+        qs('gXsub').textContent = XOPT.subtitle || 'Choose what goes into the file.';
+
+        var cols = XOPT.columns || [];
+        var chosen = saved.cols && saved.cols.length ? saved.cols : null;
+        var i, c;
+
+        // ── what's included ──
+        var h = '<div class="g-xs"><div class="g-xs__h">What\u2019s included</div>' +
+                '<div class="g-xkv">';
+        var fs = XOPT.filterSummary || [];
+        if (!fs.length) h += '<div><span>Scope</span><b>Everything you can see</b></div>';
+        for (i = 0; i < fs.length; i++)
+            h += '<div><span>' + esc(fs[i].label) + '</span><b>' + esc(fs[i].value) + '</b></div>';
+        h += '</div><div class="g-xcount" id="gXcount">Counting rows\u2026</div></div>';
+
+        // ── rows ──
+        var rowMode = saved.rows || 'all';
+        h += '<div class="g-xs"><div class="g-xs__h">Rows</div><div class="g-xr">' +
+             xRadio('gxr', 'all', 'Everything that matches these filters', rowMode === 'all') +
+             xRadio('gxr', 'page', 'Only the ' + (XOPT.pageRows || 0) + ' on screen now', rowMode === 'page') +
+             '</div></div>';
+
+        // ── columns, grouped ──
+        if (cols.length) {
+            var groups = [], seen = {};
+            for (i = 0; i < cols.length; i++) {
+                if (!seen[cols[i].g]) { seen[cols[i].g] = []; groups.push(cols[i].g); }
+                seen[cols[i].g].push(cols[i]);
+            }
+            h += '<div class="g-xs"><div class="g-xs__h">Columns' +
+                 '<button type="button" class="g-xlink" id="gXall">all</button>' +
+                 '<button type="button" class="g-xlink" id="gXnone">none</button>' +
+                 '<button type="button" class="g-xlink" id="gXdef">default</button></div>';
+            for (i = 0; i < groups.length; i++) {
+                h += '<div class="g-xg"><div class="g-xg__h">' + esc(groups[i]) + '</div><div class="g-xg__b">';
+                var g = seen[groups[i]];
+                for (var j = 0; j < g.length; j++) {
+                    c = g[j];
+                    var on = chosen ? (chosen.indexOf(c.k) >= 0) : !!c.on;
+                    h += '<label class="g-ck"><input type="checkbox" class="gxc" value="' + esc(c.k) + '"' +
+                         (on ? ' checked' : '') + ' data-def="' + (c.on ? 1 : 0) + '" /><span>' +
+                         esc(c.t) + '</span></label>';
+                }
+                h += '</div></div>';
+            }
+            h += '</div>';
+        }
+
+        // ── extra sheets ──
+        var sheets = XOPT.sheets || [];
+        if (sheets.length) {
+            var ss = saved.sheets && saved.sheets.length ? saved.sheets : null;
+            h += '<div class="g-xs"><div class="g-xs__h">Extra sheets</div><div class="g-xg__b">';
+            for (i = 0; i < sheets.length; i++) {
+                var son = ss ? (ss.indexOf(sheets[i].k) >= 0) : !!sheets[i].on;
+                h += '<label class="g-ck"><input type="checkbox" class="gxs" value="' + esc(sheets[i].k) + '"' +
+                     (son ? ' checked' : '') + ' /><span>' + esc(sheets[i].t) +
+                     (sheets[i].d ? '<small>' + esc(sheets[i].d) + '</small>' : '') + '</span></label>';
+            }
+            h += '</div></div>';
+        }
+
+        // ── format ──
+        var fmt = saved.fmt || 'xls';
+        h += '<div class="g-xs"><div class="g-xs__h">Format</div><div class="g-xr">' +
+             xRadio('gxf', 'xls', 'Excel workbook \u2014 branded, cover sheet, frozen headings', fmt === 'xls') +
+             xRadio('gxf', 'csv', 'CSV \u2014 one flat sheet, for loading elsewhere', fmt === 'csv') +
+             '</div></div>';
+
+        qs('gXbody').innerHTML = h;
+
+        // CSV cannot carry extra tabs. Saying so, and disabling them, beats producing a file
+        // that quietly lost half of what was asked for.
+        function fmtChanged() {
+            var csv = xVal('gxf') === 'csv';
+            var b = document.querySelectorAll('.gxs');
+            for (var k = 0; k < b.length; k++) {
+                b[k].disabled = csv;
+                b[k].parentNode.classList.toggle('is-off', csv);
+            }
+            var note = qs('gXcsvnote');
+            if (note) note.style.display = csv ? 'block' : 'none';
+            echo();
+        }
+        if (sheets.length) {
+            var sec = qs('gXbody').querySelectorAll('.g-xs');
+            var host = sec[sec.length - 2];
+            var n = document.createElement('div');
+            n.className = 'g-xnote'; n.id = 'gXcsvnote'; n.style.display = 'none';
+            n.textContent = 'A CSV is a single sheet, so these are not included in that format.';
+            host.appendChild(n);
+        }
+
+        var boxes = qs('gXbody').querySelectorAll('.gxc, .gxs');
+        for (i = 0; i < boxes.length; i++) boxes[i].addEventListener('change', echo);
+        var radios = qs('gXbody').querySelectorAll('input[name="gxf"]');
+        for (i = 0; i < radios.length; i++) radios[i].addEventListener('change', fmtChanged);
+        radios = qs('gXbody').querySelectorAll('input[name="gxr"]');
+        for (i = 0; i < radios.length; i++) radios[i].addEventListener('change', echo);
+
+        if (qs('gXall')) qs('gXall').addEventListener('click', function () { xSet(1); });
+        if (qs('gXnone')) qs('gXnone').addEventListener('click', function () { xSet(0); });
+        if (qs('gXdef')) qs('gXdef').addEventListener('click', function () { xSet(-1); });
+
+        fmtChanged();
+        qs('gXov').classList.add('is-open');
+        document.body.style.overflow = 'hidden';
+
+        // The honest row count, from the server, before the dialog can be used in anger.
+        var cnt = qs('gXcount');
+        if (XOPT.countMethod) {
+            ajax(XOPT.page, XOPT.countMethod, { configJson: XOPT.cfg }, function (d) {
+                if (!d || !d.success) { cnt.textContent = 'Could not count the rows; the export will still run.'; echo(); return; }
+                XOPT.total = d.total;
+                cnt.innerHTML = '<b>' + d.total + '</b> row' + (d.total === 1 ? '' : 's') + ' match' +
+                    (d.total === 1 ? 'es' : '') + ' these filters.' +
+                    (d.note ? ' <span class="g-xwarn">' + esc(d.note) + '</span>' : '') +
+                    (d.capped ? ' <span class="g-xwarn">The file stops at ' + d.capped + '.</span>' : '');
+                echo();
+            });
+        } else {
+            XOPT.total = XOPT.pageRows || 0;
+            cnt.textContent = '';
+            echo();
+        }
+
+        function xSet(mode) {
+            var b = document.querySelectorAll('.gxc');
+            for (var k = 0; k < b.length; k++)
+                b[k].checked = mode === 1 ? true : mode === 0 ? false : b[k].getAttribute('data-def') === '1';
+            echo();
+        }
+    }
+
+    function xRadio(name, val, label, on) {
+        return '<label class="g-ck"><input type="radio" name="' + name + '" value="' + val + '"' +
+               (on ? ' checked' : '') + ' /><span>' + esc(label) + '</span></label>';
+    }
+
+    function xVal(name) {
+        var b = document.querySelectorAll('input[name="' + name + '"]');
+        for (var i = 0; i < b.length; i++) if (b[i].checked) return b[i].value;
+        return '';
+    }
+
+    function xPicked(cls) {
+        var out = [], b = document.querySelectorAll('.' + cls);
+        for (var i = 0; i < b.length; i++) if (b[i].checked && !b[i].disabled) out.push(b[i].value);
+        return out;
+    }
+
+    /// The footer restates the decision in one line. Nobody should have to press Export to find
+    /// out how big the file is or what is in it.
+    function echo() {
+        var e = qs('gXecho');
+        if (!e) return;
+        var cols = xPicked('gxc').length, fmt = xVal('gxf'), mode = xVal('gxr');
+        var n = mode === 'page' ? (XOPT.pageRows || 0)
+                                : (XOPT.total === undefined ? null : XOPT.total);
+        var parts = [];
+        parts.push(n === null ? 'rows: counting…' : (n + ' row' + (n === 1 ? '' : 's')));
+        if (XOPT.columns && XOPT.columns.length) parts.push(cols + ' column' + (cols === 1 ? '' : 's'));
+        var sh = xPicked('gxs').length;
+        if (sh && fmt !== 'csv') parts.push(sh + ' extra sheet' + (sh === 1 ? '' : 's'));
+        parts.push(fmt === 'csv' ? 'CSV' : 'Excel workbook');
+        e.textContent = parts.join('  ·  ');
+
+        var go = qs('gXgo');
+        if (go) {
+            var none = (XOPT.columns && XOPT.columns.length && cols === 0);
+            go.disabled = none || n === 0;
+            go.title = none ? 'Pick at least one column.' : (n === 0 ? 'Nothing matches these filters.' : '');
+        }
+    }
+
+    function xRun() {
+        if (!XOPT) return;
+        var cols = xPicked('gxc'), sheets = xPicked('gxs'),
+            fmt = xVal('gxf'), mode = xVal('gxr');
+        xSave(XKEY, { cols: cols, sheets: sheets, fmt: fmt, rows: mode });
+
+        var extra = {
+            gradCols: cols.join(','),
+            gradSheets: sheets.join(','),
+            gradRows: mode,
+            gradPageSize: String(XOPT.pageRows || 0)
+        };
+        post(XOPT.page, fmt, XOPT.cfg, extra);
+        xClose();
+        toast('Building the file\u2026 it will download when it is ready.', true);
+    }
+
     /* ── CSV, for the small exports the browser can do honestly. Anything that
          needs a cover sheet and branding is built on the server instead. ── */
     function csv(rows, filename) {
@@ -432,7 +739,7 @@ window.G = (function () {
     /* A server-built export: post the current filter to a page's export handler and let the
        browser save what comes back. A form post rather than fetch, so the download lands in
        the normal place with the filename the server chose. */
-    function serverExport(page, format, cfgJson) {
+    function post(page, format, cfgJson, extra) {
         var f = document.createElement('form');
         f.method = 'post';
         f.action = page;
@@ -444,10 +751,13 @@ window.G = (function () {
         }
         add('gradExport', format);
         add('gradConfig', cfgJson);
+        if (extra) for (var k in extra) if (extra.hasOwnProperty(k)) add(k, extra[k]);
         document.body.appendChild(f);
         f.submit();
         setTimeout(function () { document.body.removeChild(f); }, 1500);
     }
+
+    function serverExport(page, format, cfgJson) { post(page, format, cfgJson, null); }
 
     return {
         qs: qs, esc: esc, n0: n0, n1: n1, n2: n2,
@@ -457,6 +767,7 @@ window.G = (function () {
         fill: fill, cascade: cascade,
         mount: mount, openModal: openModal, closeModal: closeModal, wireModal: wireModal,
         openStudent: openStudent, currentStudent: currentStudent,
-        csv: csv, serverExport: serverExport
+        csv: csv, serverExport: serverExport, exportDialog: exportDialog,
+        debounce: debounce, freshness: freshness, chips: chips
     };
 })();
