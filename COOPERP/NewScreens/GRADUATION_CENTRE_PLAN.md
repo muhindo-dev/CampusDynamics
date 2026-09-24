@@ -639,11 +639,38 @@ catch-all at the bottom of the menu that nobody would think to look in.
 
 **Fix:** the entry moved out of More Features into the **Exam** group, directly after *Publish
 Results (Senate)* — which is where it belongs in the academic sequence, marks published then
-graduation list — carrying `data-roles="admin registrar dean hod"` inside a group already
-admitting `exam_officer registrar faculty_staff dean hod admin`.
+graduation list.
+
+The item carries `data-roles="all"`, not a hand-written role list. The role filter skips `"all"`
+and leaves the decision entirely to the slug grant, which is what the sidebar's own comment calls
+the single source of truth: *show a menu item ⇔ the user can open its page*. A second hand-written
+gate is a thing that has to be kept in step with `sys_role_permissions` by hand, and the last time
+those two disagreed every Dean and HOD lost the page. One gate.
+
+**Super admin** is `role_code = "admin"` — `RoleAccessService` resolves the user's **lowest-id**
+active role and, when that is `admin`, adds the `"*"` wildcard, which makes
+`applyMenuAccessFilter` return before it hides anything. So a super admin sees it unconditionally.
+
+Who reaches it now, simulating both filters exactly as the JS runs them:
+
+| role | result |
+|---|---|
+| **admin** (super admin) | sees it — `"*"` wildcard |
+| **dean**, **hod** | sees it — the two roles §1 names |
+| registrar, exam_officer, faculty_staff | sees it — group + slug grant |
+| admissions, student_services | hidden by the Exam group, though they hold the legacy slug |
+| vc, bursar, hr_manager, … | hidden |
 
 The slug and its grants are deliberately **unchanged**. They already permitted the right roles;
 rewriting them would have been gratuitous risk for a cosmetic tidy.
+
+### A second instance of the same bug, found while checking this
+
+The **Exam** group admits `exam_officer registrar faculty_staff dean hod admin`. Inside it,
+*Publish Results (Senate)* carries `data-roles="admin vc dvc"`. `vc` and `dvc` are **not in the
+parent group**, so a Vice-Chancellor is hidden at the group level and can never see the page that
+is named for them. Not changed here — it belongs to the marks workflow, not this module, and
+touching it means re-verifying that menu — but it is the identical fault and worth a one-word fix.
 
 **The lesson for the rest of this plan:** "the markup contains it" is not the same as "a user can
 see it". Nothing in §9c's verification table proves a human can reach a thing — which is exactly

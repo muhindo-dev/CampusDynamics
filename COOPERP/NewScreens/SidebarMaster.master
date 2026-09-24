@@ -313,7 +313,19 @@
                                      carrying data-superadmin="1", which the sidebar JS hides for EVERY
                                      non-admin regardless of any slug grant - so nobody but a superadmin
                                      could ever see it. --%>
-                                <li class="cd-sidebar__subitem" data-roles="admin registrar dean hod">
+                                <%-- data-roles="all" deliberately. The role filter skips "all" and leaves
+                                     the decision entirely to the slug grant, which is what the sidebar's own
+                                     comment calls the single source of truth: show a menu item IFF the user
+                                     can open its page. sys_role_permissions already grants
+                                     system.more.graduation_centre to dean, hod, registrar, exam_officer,
+                                     faculty_staff, admissions and student_services, and a super admin
+                                     (role_code "admin") carries the "*" wildcard, which makes
+                                     applyMenuAccessFilter return before it hides anything.
+
+                                     A hand-written data-roles list here would be a second gate that has to
+                                     be kept in step with those grants by hand - and the last time these two
+                                     disagreed, every Dean and HOD lost the page. One gate. --%>
+                                <li class="cd-sidebar__subitem" data-roles="all">
                                     <asp:HyperLink ID="lnkGraduationCentre" runat="server" NavigateUrl="~/COOPERP/NewScreens/GraduationCentre.aspx" CssClass="cd-sidebar__sublink">
                                         <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 10v6M2 10l10-5 10 5-10 5z"></path><path d="M6 12v5c3 3 9 3 12 0v-5"></path></svg>
                                         <span>Graduation Centre</span>
