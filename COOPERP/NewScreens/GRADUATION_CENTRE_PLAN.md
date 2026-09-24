@@ -397,6 +397,90 @@ it has been checked against the database by hand.
 
 ---
 
+## 9a. Verification results — the step-3 gate, run 2026-09-24
+
+The plan said the interface would not be built until the engine's candidate rule reconciled
+against a year that has already graduated. It has been run, and it reconciles.
+
+### The rule that survived
+
+A student is a **candidate** when `MAX(acad_results.studyyear) >= acad_programme.couselength`
+— they have reached the final year of their own programme. That is the whole rule. Two earlier
+candidate rules were tried against the data and discarded:
+
+| Rule tried | Why it was wrong |
+|---|---|
+| "has results in the graduation year" | missed 3 of 522. All three finished in an *earlier* year and graduated at the later ceremony — MRU2021000091 (BBA, last results 2023/2024), MRU2022000659 (HEC, 2022/2023), MRU2022000179 (SWSA, 2023/2024), each with a complete result set. |
+| "last results year ≤ graduation year" | missed 18 of 522. Those students have results *after* the year they graduated in — post-graduation retakes and late entries. A year boundary is simply not what candidacy means. |
+
+Candidacy is about **completion, not about a year**. The academic year on screen is therefore the
+list being compiled, not a filter on who may appear; "when did they finish" is a column and an
+optional filter, not a gate.
+
+### Coverage against every graduation year on record
+
+| Graduation year | On `acad_graduands` | Engine identifies | |
+|---|---|---|---|
+| 2024/2025 | 522 | **522** | ✔ |
+| 2023/2024 | 599 | **599** | ✔ |
+| 2022/2023 | 59 | **59** | ✔ |
+| 2021/2022 | 27 | **27** | ✔ |
+| 2020/2021 | 13 | **13** | ✔ |
+| 2019/2020 | 34 | **34** | ✔ |
+| 2025/2026 | 190 | 187 | 3 unexplained by the rule — see below |
+| 2026/2027 | 14 | 2 | 12 unexplained by the rule — see below |
+
+**1,254 of 1,254** graduands across the six completed years are identified. Not one is missed.
+
+### The 15 the engine refuses — and why that is the point
+
+Every one of the 15 outstanding differences is a student **on a graduation list who has not
+reached the final year of their programme**:
+
+| Student | Programme | Length | Study year reached | Results |
+|---|---|---|---|---|
+| MRU2027000002 | `TEST` | 3 | 2 | 17 |
+| MRU2025004248 | BIT | 3 | **1** | 6 |
+| MRU2025002951 | BEE | 4 | **1** | 12 |
+| MRU2025002345 | BEICT | 3 | **1** | 18 |
+| MRU2025003775 | BED(P) | 3 | **1** | 26 |
+| MRU2025002148 | BCE | 4 | **1** | 12 |
+| MRU2025003390 | BAED | 3 | **1** | 17 |
+| MRU2025002638 | DAF | 2 | **1** | 10 |
+| MRU2023000125 | BCE | 4 | 3 | 38 |
+| MRU2023000070 | BCE | 4 | 3 | 38 |
+| MRU2024000643 | BEICT | 3 | 2 | 40 |
+| MRU2024001453 | BCE | 4 | 2 | 13 |
+| MRU2025002173 | DAF | 2 | **1** | 10 |
+| MRU2025002536 | BEICT | 3 | **1** | 17 |
+| MRU2024000792 | BCE | 4 | 2 | 13 |
+
+A student in year 1 of a three-year degree with six results has not graduated. Twelve of the
+fourteen names currently on the **2026/2027** list are of this kind, and one of them is on a
+programme literally called `TEST`.
+
+These are not engine misses. They are erroneous rows on live graduation lists, and finding them
+is the clearest possible argument for the module: the check that catches them is C-final-year,
+and it would have blocked every one at the point of clearing.
+
+**Action:** the Overview tab carries a data-integrity notice listing them. The module does not
+delete them — removing a name from a graduation list is a Registrar's decision, not a script's.
+
+### The backlog nobody is looking at
+
+Students who have reached their final year and are on **no** graduation list at all:
+
+| | students |
+|---|---|
+| finished 2025/2026 | 854 |
+| finished 2024/2025 | 87 |
+| finished before 2024/2025 | **13,460** |
+| **total** | **14,548** |
+
+This is the single largest thing the module will surface. Most of the 13,460 will have
+outstanding papers or credit shortfalls — that is what the checks are for — but they have never
+been looked at as a queue, because until now there was nowhere to look at them.
+
 ## 10. Open questions for the MIS Manager
 
 1. **Credit shortfall tolerance.** C3 blocks below 90% of required. Is 90% the right line, or
