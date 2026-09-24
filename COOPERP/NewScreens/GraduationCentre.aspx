@@ -195,6 +195,13 @@
         <label for="fYear">Graduation year</label>
         <select id="fYear"></select>
       </div>
+      <div class="gc-f" style="flex:0 0 235px;">
+        <label for="fFocus">Who to show</label>
+        <select id="fFocus">
+          <option value="cycle">This cycle &mdash; finishing now</option>
+          <option value="all">Everyone not yet graduated</option>
+        </select>
+      </div>
       <div class="gc-f" style="flex:1 1 180px;">
         <label for="fFac">Faculty</label>
         <select id="fFac"><option value="">All faculties</option></select>
@@ -225,6 +232,7 @@
 
     <!-- ══ OVERVIEW ══ -->
     <div id="tabOverview">
+      <div class="gc-note gc-note--info" id="gcFocusNote" style="display:none;"></div>
       <div id="gcIntegrity"></div>
       <div class="gc-kpis" id="gcKpis"></div>
       <div class="gc-card">
@@ -367,7 +375,7 @@ function readUrl(){
     page=parseInt(p.get('page')||'1',10)||1;
     return { year:p.get('year')||'', fac:p.get('faculty')||'', dep:p.get('dept')||'',
              prog:p.get('prog')||'', q:p.get('q')||'', ready:p.get('ready')||'',
-             intake:p.get('intake')||'', fin:p.get('fin')||'' };
+             intake:p.get('intake')||'', fin:p.get('fin')||'', focus:p.get('focus')||'' };
 }
 function pushUrl(){
     var p=new URLSearchParams();
@@ -376,6 +384,7 @@ function pushUrl(){
     if(qs('fFac').value)  p.set('faculty',qs('fFac').value);
     if(qs('fDep').value)  p.set('dept',qs('fDep').value);
     if(qs('fProg').value) p.set('prog',qs('fProg').value);
+    if(qs('fFocus').value && qs('fFocus').value!=='cycle') p.set('focus',qs('fFocus').value);
     if(qs('fIntake').value) p.set('intake',qs('fIntake').value);
     if(qs('fFin').value)   p.set('fin',qs('fFin').value);
     if(qs('fQ').value)    p.set('q',qs('fQ').value);
@@ -387,6 +396,7 @@ function pushUrl(){
 function cfg(extra){
     var c={ acadYear:qs('fYear').value, faculty:qs('fFac').value, department:qs('fDep').value,
             programme:qs('fProg').value, entryYear:qs('fIntake').value, finishedIn:qs('fFin').value,
+            focus:qs('fFocus').value,
             search:qs('fQ').value.trim(),
             readiness:qs('fReady').value, page:String(page), size:'50' };
     if(extra) for(var k in extra) if(extra.hasOwnProperty(k)) c[k]=extra[k];
@@ -449,8 +459,23 @@ function loadOverview(){
         qs('nList').textContent=o.listed;
         qs('nHeld').textContent=o.held;
 
+        var fn=qs('gcFocusNote');
+        if(o.focusLabel){
+            fn.style.display='block';
+            fn.innerHTML = (o.focusFrom
+                ? '<b>Showing the '+esc(o.focusTo)+' graduating cycle.</b> Everything on this page &mdash; '+
+                  'the counts below, the candidate queue and the programme table &mdash; covers students who '+
+                  'last sat a paper in <b>'+esc(o.focusFrom)+'</b> or <b>'+esc(o.focusTo)+'</b>. '+
+                  'Switch <i>Who to show</i> to see everyone who has ever reached a final year and never graduated.'
+                : '<b>Showing everyone not yet graduated.</b> This includes students who finished years ago '+
+                  'and were never put on a list. Switch <i>Who to show</i> back to <i>This cycle</i> to '+
+                  'narrow it to the people being graduated now.');
+        } else fn.style.display='none';
+
         qs('gcKpis').innerHTML=
-          kpi('gcKpiCand','', o.candidates,'Candidates','Reached the final year of their programme and are on no list.')+
+          kpi('gcKpiCand','', o.candidates,'Candidates',
+              o.focusFrom ? ('Finished in '+o.focusFrom+' or '+o.focusTo+', and on no list yet.')
+                          : 'Reached the final year of their programme and are on no list.')+
           kpi('gcKpiReady','ok', o.ready,'Ready','Nothing outstanding. These are the ones to work through.')+
           kpi('gcKpiBlock','bad', o.blocked,'Blocked','At least one check stops them. Open one to see which.')+
           kpi('gcKpiHeld','warn', o.held,'Held','Stopped by a reviewer, with a reason, awaiting investigation.')+
@@ -542,8 +567,11 @@ function renderCandidates(d){
     }
     qs('candBody').innerHTML=h||'<tr><td colspan="9" class="gc-empty">No candidates match these filters.</td></tr>';
     qs('ckAll').checked=false; syncBulk();
+    var scopeTxt = qs('fFocus').value==='cycle'
+        ? (' · finishing ' + (boot && boot.previousYear ? boot.previousYear+' or ' : '') + qs('fYear').value)
+        : ' · everyone not yet graduated';
     qs('candMeta').textContent='showing '+rows.length+' of '+d.total+
-        (d.pages>1?(' · page '+d.page+' of '+d.pages):'');
+        (d.pages>1?(' · page '+d.page+' of '+d.pages):'') + scopeTxt;
     qs('nCand').textContent=d.total;
 
     var pg='';
@@ -953,6 +981,7 @@ document.addEventListener('DOMContentLoaded',function(){
     qs('btnReset').addEventListener('click',function(){
         qs('fFac').value=''; qs('fDep').value=''; qs('fProg').value=''; qs('fQ').value='';
         qs('fReady').value=''; qs('fIntake').value=''; qs('fFin').value='';
+        qs('fFocus').value='cycle';
         if(boot && boot.currentYear) qs('fYear').value=boot.currentYear;
         cascade(); page=1; pushUrl(); load();
     });
@@ -965,6 +994,7 @@ document.addEventListener('DOMContentLoaded',function(){
     qs('btnExport').addEventListener('click',exportCsv);
     qs('btnPrint').addEventListener('click',doPrint);
     qs('btnBulk').addEventListener('click',doBulk);
+    qs('fFocus').addEventListener('change',function(){ page=1; pushUrl(); load(); });
     qs('fIntake').addEventListener('change',function(){ page=1; pushUrl(); load(); });
     qs('fFin').addEventListener('change',function(){ page=1; pushUrl(); load(); });
     qs('ckAll').addEventListener('change',function(){
@@ -1019,6 +1049,9 @@ document.addEventListener('DOMContentLoaded',function(){
         if(pre.ready) qs('fReady').value=pre.ready;
         if(pre.intake)qs('fIntake').value=pre.intake;
         if(pre.fin)   qs('fFin').value=pre.fin;
+        // The cycle is the default on purpose: without it the queue opens on 14,548 students,
+        // 13,460 of whom finished before last year.
+        qs('fFocus').value = pre.focus || 'cycle';
         cascade();
         showTab(tab);
     });

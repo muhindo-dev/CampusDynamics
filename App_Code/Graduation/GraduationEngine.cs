@@ -73,6 +73,23 @@ public static class GraduationEngine
     // The year pattern every academic-year column in this database is supposed to match.
     private const string YEAR_RX = "'^[0-9]{4}/[0-9]{4}$'";
 
+    /// <summary>
+    /// A well-formed year that is also a believable one. `acad_results` holds `2202/2203` — four
+    /// rows, one student, a transposed digit — and because these are CHARACTER columns it sorts
+    /// above every real year. Ranking or comparing against it silently exiles a genuine
+    /// candidate: MRU2021001253 is a BED(P) student who reached year 3 with 53 results, and that
+    /// single slip put their "last year sat" in the twenty-third century.
+    ///
+    /// So every comparison and every MIN/MAX over a year uses this, not the bare pattern.
+    /// </summary>
+    private const string YEAR_OK =
+        " REGEXP '^[0-9]{4}/[0-9]{4}$' AND CAST(LEFT({0},4) AS UNSIGNED) BETWEEN 2000 AND 2035 " +
+        " AND CAST(RIGHT({0},4) AS UNSIGNED) = CAST(LEFT({0},4) AS UNSIGNED)+1 ";
+
+    /// <summary>The "is a believable year" test for a given column.</summary>
+    private static string YearOk(string col)
+    { return col + string.Format(YEAR_OK, col); }
+
     // ── The thresholds, in one place ──────────────────────────────────
     //  Plan §10 asked whether these are the right lines. They are policy, not arithmetic, so
     //  they live here as named constants rather than scattered through the checks: changing
@@ -247,12 +264,55 @@ public static class GraduationEngine
         public string programme = "";
         public string entryYear = "";
         public string finishedIn = "";    // '' = any; else the academic year they last sat
+
+        /// <summary>
+        /// "cycle" (the default) narrows to the people actually being graduated in the selected
+        /// year — those who finished in it or the year before. "all" opens it to everyone who
+        /// has ever reached a final year and never graduated, which is the historical backlog.
+        ///
+        /// The default matters: without it the queue opens on 14,548 students, 13,460 of whom
+        /// finished before last year, and the 997 people a Registrar is compiling a list for
+        /// this week are lost in it.
+        /// </summary>
+        public string focus = "cycle";
         public string state = "pending";  // pending | held | listed | all
         public string readiness = "";     // '' | ready | warn | blocked
         public string search = "";
         public string sort = "regno";
         public int page = 1;
         public int size = 50;
+    }
+
+    /// <summary>"2026/2027" -> "2025/2026". Empty for anything that is not a plausible year.</summary>
+    public static string PreviousYear(string acad)
+    {
+        acad = (acad ?? "").Trim();
+        if (acad.Length != 9 || acad[4] != '/') return "";
+        int a, b;
+        if (!int.TryParse(acad.Substring(0, 4), out a)) return "";
+        if (!int.TryParse(acad.Substring(5, 4), out b)) return "";
+        if (a < 2000 || a > 2035 || b != a + 1) return "";
+        return (a - 1).ToString(CultureInfo.InvariantCulture) + "/" + a.ToString(CultureInfo.InvariantCulture);
+    }
+
+    /// <summary>
+    /// The SQL that narrows a candidate set to the cycle graduating in <paramref name="acadYear"/>.
+    ///
+    /// Expressed as "has a result in Y or Y-1, and none after Y" rather than a correlated MAX(),
+    /// because the two EXISTS clauses seek straight into Index_UNQ(regno, …) and stop at the
+    /// first row, while the MAX form reads every result the student has.
+    /// </summary>
+    private static string CycleClause(GradFilter f, Dictionary<string, object> p)
+    {
+        if (f.focus != "cycle" || f.acadYear == "") return "";
+        string prev = PreviousYear(f.acadYear);
+        if (prev == "") return "";
+        p["@cy1"] = f.acadYear;
+        p["@cy0"] = prev;
+        return " AND EXISTS (SELECT 1 FROM acad_results rc WHERE rc.regno=s.regno " +
+               "   AND rc.acad IN (@cy1,@cy0)) " +
+               " AND NOT EXISTS (SELECT 1 FROM acad_results rl WHERE rl.regno=s.regno " +
+               "   AND " + YearOk("rl.acad") + " AND rl.acad > @cy1) ";
     }
 
     private static string RS(MySqlDataReader r, int i)
@@ -293,10 +353,14 @@ public static class GraduationEngine
         { w.Append(" AND p.department_id=@dep "); p["@dep"] = dep; }
         if (f.programme != "") { w.Append(" AND s.progid=@prog "); p["@prog"] = f.programme; }
         if (f.entryYear != "") { w.Append(" AND s.entryyear=@ey "); p["@ey"] = f.entryYear; }
+        // The focus is only meaningful for people not yet on a list; the graduation list and
+        // the held queue are already narrow by definition.
+        if (f.state == "pending") w.Append(CycleClause(f, p));
+
         if (f.finishedIn != "")
         {
             w.Append(" AND (SELECT MAX(r3.acad) FROM acad_results r3 WHERE r3.regno=s.regno " +
-                     " AND r3.acad REGEXP " + YEAR_RX + ")=@fin ");
+                     " AND " + YearOk("r3.acad") + ")=@fin ");
             p["@fin"] = f.finishedIn;
         }
         if (f.search != "")
@@ -395,8 +459,8 @@ public static class GraduationEngine
             " SUM(CASE WHEN r.score>=50 THEN IFNULL(r.CreditUnits,0) ELSE 0 END) cu_pass, " +
             " SUM(r.score>0 AND r.score<50) failed, SUM(r.score=0) zeros, SUM(r.score IS NULL) noscore, " +
             " SUM(IFNULL(r.CreditUnits,0)*IFNULL(r.gradept,0)) gpnum, SUM(IFNULL(r.CreditUnits,0)) gpden, " +
-            " MIN(CASE WHEN r.acad REGEXP " + YEAR_RX + " THEN r.acad END) firstyr, " +
-            " MAX(CASE WHEN r.acad REGEXP " + YEAR_RX + " THEN r.acad END) lastyr " +
+            " MIN(CASE WHEN " + YearOk("r.acad") + " THEN r.acad END) firstyr, " +
+            " MAX(CASE WHEN " + YearOk("r.acad") + " THEN r.acad END) lastyr " +
             "FROM acad_results r WHERE r.regno IN (" + inList + ") GROUP BY r.regno", c))
         using (var r = cmd.ExecuteReader())
             while (r.Read())
@@ -516,6 +580,10 @@ public static class GraduationEngine
         public List<GC2> blockers = new List<GC2>();
         public List<ProgProgress> programmes = new List<ProgProgress>();
         public List<string> integrity = new List<string>();
+
+        /// <summary>What the numbers above actually cover, in words, for the page to print.</summary>
+        public string focusLabel = "";
+        public string focusFrom = "", focusTo = "";
     }
     public class GC2 { public string name = ""; public int count = 0; }
 
@@ -535,6 +603,14 @@ public static class GraduationEngine
         var o = new GradOverview();
         if (scope == null || !scope.HasAccess) return o;
 
+        string prevYr = PreviousYear(f.acadYear);
+        if (f.focus == "cycle" && prevYr != "")
+        {
+            o.focusFrom = prevYr; o.focusTo = f.acadYear;
+            o.focusLabel = "Finishing in " + prevYr + " or " + f.acadYear;
+        }
+        else o.focusLabel = "Everyone who has reached a final year and never graduated";
+
         using (var c = new MySqlConnection(Conn()))
         {
             c.Open();
@@ -553,7 +629,10 @@ public static class GraduationEngine
             if (f.programme != "") { extra.Append(" AND s.progid=@prog "); p["@prog"] = f.programme; }
             extra.Append(scope.ProgFilter("s", "progid"));
             string where = cand + extra;
-            string notListed = " AND NOT EXISTS (SELECT 1 FROM acad_graduands g WHERE g.regno=s.regno) ";
+            // The same narrowing the Candidates tab uses. A dashboard that counts a different
+            // population from the list it links into is worse than no dashboard.
+            string notListed = " AND NOT EXISTS (SELECT 1 FROM acad_graduands g WHERE g.regno=s.regno) " +
+                               CycleClause(f, p);
 
             // One pass over the outstanding candidates, bucketed by what is wrong with them.
             // The per-student figures are computed in a derived table rather than by joining
@@ -615,7 +694,7 @@ public static class GraduationEngine
                 " SUM(EXISTS(SELECT 1 FROM acad_graduands g WHERE g.regno=s.regno)) listed, " +
                 " SUM(EXISTS(SELECT 1 FROM acad_grad_review v WHERE v.regno=s.regno AND v.verdict='HELD' AND v.superseded_at IS NULL)) held, " +
                 " SUM((SELECT COUNT(*) FROM acad_results r2 WHERE r2.regno=s.regno AND r2.score>0 AND r2.score<50)>0) blocked " +
-                where + " GROUP BY pc ORDER BY cand DESC LIMIT 60", c))
+                where + CycleClause(f, p) + " GROUP BY pc ORDER BY cand DESC LIMIT 60", c))
             {
                 foreach (KeyValuePair<string, object> kv in p) cmd.Parameters.AddWithValue(kv.Key, kv.Value);
                 using (var r = cmd.ExecuteReader())
@@ -654,6 +733,21 @@ public static class GraduationEngine
                         o.integrity.Add(dup + " student" + (dup == 1 ? " appears" : "s appear") +
                             " on a graduation list more than once.");
                 }
+
+                // Results filed under a year that cannot exist. The module now ignores such a
+                // year when it ranks or compares, so nobody is hidden by one — but the mark is
+                // still filed in the wrong place and only a human can say where it belongs.
+                using (var cmd = new MySqlCommand(
+                    "SELECT COUNT(DISTINCT r.regno), COUNT(*), GROUP_CONCAT(DISTINCT r.acad ORDER BY r.acad SEPARATOR ', ') " +
+                    "FROM acad_results r WHERE NOT (" + YearOk("r.acad") + ")", c))
+                using (var rr = cmd.ExecuteReader())
+                    if (rr.Read() && !rr.IsDBNull(0) && Convert.ToInt32(rr[0]) > 0)
+                        o.integrity.Add(Convert.ToInt32(rr[1]) + " result" + (Convert.ToInt32(rr[1]) == 1 ? " is" : "s are") +
+                            " filed under an academic year that cannot exist (" + rr[2] +
+                            "), affecting " + Convert.ToInt32(rr[0]) + " student" +
+                            (Convert.ToInt32(rr[0]) == 1 ? "" : "s") +
+                            ". Those years are ignored when ranking, so nobody is hidden by them, " +
+                            "but the marks are still filed in the wrong year.");
             }
             catch { }
         }

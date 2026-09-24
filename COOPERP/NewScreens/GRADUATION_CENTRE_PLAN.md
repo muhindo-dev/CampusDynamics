@@ -700,6 +700,67 @@ touching it means re-verifying that menu — but it is the identical fault and w
 see it". Nothing in §9c's verification table proves a human can reach a thing — which is exactly
 what §11 has been saying all along, and why it matters.
 
+## 9e. Focusing on the graduating cycle — and what the second look found
+
+The module now opens on the cycle being graduated rather than on every student who has ever
+reached a final year.
+
+### The default year was wrong
+
+`currentYear` was `years[0]` — the highest-sorting academic year in the data. That is
+**`2202/2203`**, a transposed digit on four rows belonging to one student. Because these are
+CHARACTER columns it sorts above every real year, so the whole module defaulted to a graduation
+year that does not exist and showed nothing.
+
+It now comes from `AcademicYearHelper.GetCurrentAcademicYear()`, which reads
+`acad_acadyears.is_current_year` — the year the institution says it is in. That is **2026/2027**.
+The dropdown also rejects any year outside 2000–2035, so a typo cannot be selected at all.
+
+### "Who to show" — the cycle, by default
+
+| focus | 2026/2027 |
+|---|---|
+| **This cycle** (default) — last sat in 2025/2026 or 2026/2027 | **997** |
+| Everyone not yet graduated | 14,548 |
+
+Without the default, the queue opens on 14,548 people, **13,460 of whom finished before last
+year**, and the ~1,000 a Registrar is compiling a list for this week are lost in it. The control
+sits beside the graduation year, the Overview prints in words what the figures cover, and the
+Candidates tab repeats it so a deep link is self-describing.
+
+The narrowing is written as *"has a result in Y or Y−1, and none after Y"* rather than a
+correlated `MAX()`, because two `EXISTS` clauses seek into `Index_UNQ(regno, …)` and stop at the
+first row: **0.0029s**, against 0.0049s for the `MAX()` form, and both return 997.
+
+Overview and Candidates reconcile exactly — **997 = 997** — and the partition adds up:
+119 blocked + 44 needing a look + 834 ready.
+
+### A typo'd year was exiling real candidates
+
+Ranking students by "last year sat" over a CHARACTER column means `2202/2203` beats
+`2026/2027`. MRU2021001253 — BED(P), reached year 3, **53 results** — had four rows carrying it,
+so their last year read as the twenty-third century: they could never match a "finished in"
+filter, and any "did they sit after this year" test exiled them. Their real last year is
+2023/2024.
+
+Every comparison and every MIN/MAX over a year now runs through a **believability test**, not
+just the 4-digit pattern. That turned out to matter more than expected — the pattern alone had
+been hiding four further kinds of bad year:
+
+| | rows | students |
+|---|---|---|
+| `0/1`, `2022/2024`, `20222/2023`, `2023/204`, `2202/2203` | **31** | **11** |
+
+Only `2202/2203` matches `^[0-9]{4}/[0-9]{4}$`. The other four never did, so every year-scoped
+query in the module had been silently dropping them. They are now ignored for ranking — nobody is
+hidden by one — **and reported** on the Overview, because the mark is still filed in the wrong
+year and only a human can say where it belongs.
+
+### On the live 2026/2027 list
+
+**12 of the 14 names** on it have not reached the final year of their programme. The integrity
+notice now says so on the Overview, scoped to the year on screen.
+
 ## 10. The five open questions — answered
 
 They were policy, not arithmetic, so each is now a **named constant at the top of

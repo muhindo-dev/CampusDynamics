@@ -51,6 +51,7 @@ public partial class COOPERP_NewScreens_GraduationCentre : System.Web.UI.Page
             f.programme = S(d, "programme");
             f.entryYear = S(d, "entryYear");
             f.finishedIn = S(d, "finishedIn");
+            string fo = S(d, "focus"); if (fo != "") f.focus = fo;
             f.search = S(d, "search");
             string st = S(d, "state"); if (st != "") f.state = st;
             f.readiness = S(d, "readiness");
@@ -88,15 +89,27 @@ public partial class COOPERP_NewScreens_GraduationCentre : System.Web.UI.Page
                 c.Open();
                 // Graduation years already in use, plus the academic years results exist for,
                 // so a list can be started for a year nobody has graduated in yet.
+                // Years offered, and ONLY plausible ones. acad_results contains 2202/2203 -
+                // four rows for one student, a typing slip - and because the list was ordered
+                // descending it sorted to the top and became the default graduation year for
+                // the whole module. A year outside 2000-2035 is a typo, not a cohort.
                 using (var cmd = new MySqlCommand(
                     "SELECT y FROM ( " +
                     "  SELECT DISTINCT acadyear y FROM acad_graduands WHERE acadyear REGEXP '^[0-9]{4}/[0-9]{4}$' " +
                     "  UNION SELECT DISTINCT acad FROM acad_results WHERE acad REGEXP '^[0-9]{4}/[0-9]{4}$' " +
-                    ") z ORDER BY y DESC", c))
+                    "  UNION SELECT DISTINCT acadyear FROM acad_acadyears WHERE acadyear REGEXP '^[0-9]{4}/[0-9]{4}$' " +
+                    ") z WHERE CAST(LEFT(y,4) AS UNSIGNED) BETWEEN 2000 AND 2035 " +
+                    "  AND CAST(RIGHT(y,4) AS UNSIGNED) = CAST(LEFT(y,4) AS UNSIGNED)+1 " +
+                    "ORDER BY y DESC", c))
                 using (var r = cmd.ExecuteReader())
                     while (r.Read()) years.Add(r[0].ToString());
 
-                if (years.Count > 0) currentYear = years[0];
+                // The year the institution says it is in - acad_acadyears.is_current_year -
+                // not whichever string happens to sort first.
+                try { currentYear = AcademicYearHelper.GetCurrentAcademicYear(); }
+                catch { currentYear = ""; }
+                if (currentYear == "" || !years.Contains(currentYear))
+                    currentYear = years.Count > 0 ? years[0] : "";
 
                 string pf = scope.ProgFilterExpr("p.progcode");
                 using (var cmd = new MySqlCommand(
@@ -170,6 +183,7 @@ public partial class COOPERP_NewScreens_GraduationCentre : System.Web.UI.Page
                 canAct = true,
                 years = years,
                 currentYear = currentYear,
+                previousYear = GraduationEngine.PreviousYear(currentYear),
                 faculties = faculties,
                 departments = departments,
                 programmes = programmes,
