@@ -79,6 +79,8 @@ public partial class COOPERP_NewScreens_GraduationCentre : System.Web.UI.Page
             var faculties = new List<object>();
             var departments = new List<object>();
             var programmes = new List<object>();
+            var intakes = new List<string>();
+            var counts = new Dictionary<string, int>();
             string currentYear = "";
 
             using (var c = new MySqlConnection(Conn()))
@@ -111,6 +113,23 @@ public partial class COOPERP_NewScreens_GraduationCentre : System.Web.UI.Page
                 using (var r = cmd.ExecuteReader())
                     while (r.Read()) departments.Add(new { v = r[0].ToString(), t = r[1].ToString(), fac = r[2].ToString() });
 
+                // How many outstanding candidates each programme has. Shown against the
+                // programme in the dropdown, so an empty combination is visible BEFORE it is
+                // selected rather than after a round trip that returns nothing.
+                using (var cmd = new MySqlCommand(
+                    "SELECT TRIM(s.progid) pc, COUNT(*) n FROM acad_student s " +
+                    "JOIN acad_programme p ON p.progcode=s.progid " +
+                    "WHERE EXISTS (SELECT 1 FROM acad_results r WHERE r.regno=s.regno " +
+                    "   AND r.studyyear >= IFNULL(NULLIF(p.couselength,0),3)) " +
+                    " AND NOT EXISTS (SELECT 1 FROM acad_graduands g WHERE g.regno=s.regno)" +
+                    scope.ProgFilter("s", "progid") + " GROUP BY pc", c))
+                using (var r = cmd.ExecuteReader())
+                    while (r.Read())
+                    {
+                        string k = r[0].ToString();
+                        if (!counts.ContainsKey(k)) counts.Add(k, Convert.ToInt32(r[1]));
+                    }
+
                 using (var cmd = new MySqlCommand(
                     "SELECT TRIM(p.progcode) pc, COALESCE(p.progname,p.progcode) pn, " +
                     " TRIM(IFNULL(p.faculty_code,'')) fc, IFNULL(p.department_id,0) dep " +
@@ -118,7 +137,28 @@ public partial class COOPERP_NewScreens_GraduationCentre : System.Web.UI.Page
                     " ORDER BY pn", c))
                 using (var r = cmd.ExecuteReader())
                     while (r.Read())
-                        programmes.Add(new { v = r[0].ToString(), t = r[1].ToString(), fac = r[2].ToString(), dep = r[3].ToString() });
+                    {
+                        string pc = r[0].ToString();
+                        int n; counts.TryGetValue(pc, out n);
+                        programmes.Add(new
+                        {
+                            v = pc,
+                            t = r[1].ToString() + (n > 0 ? "  (" + n + ")" : "  (none)"),
+                            fac = r[2].ToString(),
+                            dep = r[3].ToString(),
+                            n = n
+                        });
+                    }
+
+                // Intakes that actually have candidates, so the filter cannot offer a dead year.
+                using (var cmd = new MySqlCommand(
+                    "SELECT DISTINCT s.entryyear FROM acad_student s " +
+                    "JOIN acad_programme p ON p.progcode=s.progid " +
+                    "WHERE IFNULL(s.entryyear,0)>0 AND EXISTS (SELECT 1 FROM acad_results r " +
+                    "  WHERE r.regno=s.regno AND r.studyyear >= IFNULL(NULLIF(p.couselength,0),3))" +
+                    scope.ProgFilter("s", "progid") + " ORDER BY s.entryyear DESC", c))
+                using (var r = cmd.ExecuteReader())
+                    while (r.Read()) intakes.Add(r[0].ToString());
             }
 
             return J.Serialize(new
@@ -132,7 +172,8 @@ public partial class COOPERP_NewScreens_GraduationCentre : System.Web.UI.Page
                 currentYear = currentYear,
                 faculties = faculties,
                 departments = departments,
-                programmes = programmes
+                programmes = programmes,
+                intakes = intakes
             });
         }
         catch (Exception ex) { return J.Serialize(new { success = false, message = ex.Message }); }
@@ -358,6 +399,59 @@ public partial class COOPERP_NewScreens_GraduationCentre : System.Web.UI.Page
         MarksScope scope = MarksScopeResolver.Resolve();
         if (!scope.HasAccess) return Denied();
         return GraduationService.Clear(scope, regno, acadYear, note, overrideBlock);
+    }
+
+    /// <summary>
+    /// Clears several candidates at once.
+    ///
+    /// Only ever offered for candidates whose worst finding is PASS, and the server enforces
+    /// that rather than trusting the browser: each student is re-assessed live, and anything
+    /// that is not READY is skipped and reported back by name. A bulk action that can quietly
+    /// clear a blocked student is worse than no bulk action.
+    /// </summary>
+    [WebMethod(EnableSession = true)]
+    public static string ClearMany(string regnos, string acadYear)
+    {
+        MarksScope scope = MarksScopeResolver.Resolve();
+        if (!scope.HasAccess) return Denied();
+        acadYear = (acadYear ?? "").Trim();
+        if (acadYear == "") return J.Serialize(new { success = false, message = "Choose the graduation year first." });
+
+        var ids = new List<string>();
+        foreach (string x in (regnos ?? "").Split(','))
+        { string t = x.Trim(); if (t != "" && !ids.Contains(t)) ids.Add(t); }
+        if (ids.Count == 0) return J.Serialize(new { success = false, message = "Nothing was selected." });
+        if (ids.Count > 300) return J.Serialize(new { success = false, message = "Clear at most 300 at a time." });
+
+        int done = 0;
+        var skipped = new List<string>();
+        foreach (string reg in ids)
+        {
+            string raw = GraduationService.Clear(scope, reg, acadYear, "", false);
+            bool ok = false;
+            try
+            {
+                var d = J.Deserialize<Dictionary<string, object>>(raw);
+                object v;
+                ok = d.TryGetValue("success", out v) && v != null && Convert.ToBoolean(v);
+                if (!ok)
+                {
+                    object m; d.TryGetValue("message", out m);
+                    skipped.Add(reg + " \u2014 " + (m == null ? "refused" : m.ToString()));
+                }
+            }
+            catch { skipped.Add(reg + " \u2014 could not be read"); }
+            if (ok) done++;
+        }
+
+        return J.Serialize(new
+        {
+            success = true,
+            cleared = done,
+            skipped = skipped,
+            message = done + (done == 1 ? " candidate" : " candidates") + " added to the " + acadYear +
+                      " graduation list" + (skipped.Count > 0 ? "; " + skipped.Count + " skipped." : ".")
+        });
     }
 
     [WebMethod(EnableSession = true)]

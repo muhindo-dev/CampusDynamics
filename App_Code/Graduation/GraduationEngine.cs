@@ -46,6 +46,17 @@ public class GradCandidate
 
     public int failedPapers = 0, zeroMarks = 0, missingScores = 0, coursesTaken = 0;
 
+    // C4 — how many courses the programme structure requires that the student has no result
+    // for at all. Only meaningful when a real specialisation resolves, hence the flag: a
+    // structure belonging to somebody else's curriculum is worse than no structure.
+    public bool coverageChecked = false;
+    public int coverageMissing = 0, coverageRequired = 0;
+
+    // C5 — marks sitting in the portal pipeline below PUBLISHED. Not a fault of the student's,
+    // but a candidate whose marks are still with a Dean is not finished being assessed.
+    public int unpubEntered = 0, unpubCaptured = 0, unpubApproved = 0;
+    public int UnpubTotal { get { return unpubEntered + unpubCaptured + unpubApproved; } }
+
     public string graduatedYear = "";          // non-empty => already on a graduation list
     public string holdReason = "", holdActor = "", holdAt = "";
     public string clearedActor = "", clearedAt = "";
@@ -61,6 +72,23 @@ public static class GraduationEngine
 
     // The year pattern every academic-year column in this database is supposed to match.
     private const string YEAR_RX = "'^[0-9]{4}/[0-9]{4}$'";
+
+    // ── The thresholds, in one place ──────────────────────────────────
+    //  Plan §10 asked whether these are the right lines. They are policy, not arithmetic, so
+    //  they live here as named constants rather than scattered through the checks: changing
+    //  Senate's mind should be a one-line edit, not an archaeology exercise.
+
+    /// <summary>Below this share of the required credits, a structure-derived shortfall blocks.</summary>
+    public const double CREDIT_BLOCK_RATIO = 0.90;
+
+    /// <summary>The pass mark. At or above it a paper counts toward earned credit.</summary>
+    public const int PASS_MARK = 50;
+
+    /// <summary>Below this CGPA no award class exists in acad_gs_award, at any level.</summary>
+    public const double CGPA_FLOOR = 2.0;
+
+    /// <summary>A structure variant with fewer courses than this is a stub, not a curriculum.</summary>
+    public const int STRUCTURE_MIN_COURSES = 20;
 
     // ── Award bands ──────────────────────────────────────────────────
     //  Read from acad_gs_award rather than hardcoded, so a Senate change to the award scale
@@ -112,7 +140,7 @@ public static class GraduationEngine
         string lvl = LevelName(levelCode);
         foreach (Band b in Bands(c))
             if (b.level == lvl && cgpa >= b.lo && cgpa <= b.hi) return b.award;
-        return cgpa >= 2.0 ? "" : "Below award";
+        return cgpa >= CGPA_FLOOR ? "" : "Below award";
     }
 
     // ── Required credits ─────────────────────────────────────────────
@@ -174,7 +202,7 @@ public static class GraduationEngine
                 "SELECT TRIM(pc.progcode) pc, IFNULL(pc.specialisation_id,0) sp, " +
                 " SUM(IFNULL(ac.CreditUnit,0)) cu, COUNT(*) n " +
                 "FROM acad_programmecourses pc LEFT JOIN acad_course ac ON ac.courseID=pc.course_code " +
-                "WHERE pc.status='Active' GROUP BY 1, 2 HAVING n >= 20 AND cu > 0", c))
+                "WHERE pc.status='Active' GROUP BY 1, 2 HAVING n >= " + STRUCTURE_MIN_COURSES + " AND cu > 0", c))
             using (var r = cmd.ExecuteReader())
                 while (r.Read())
                 {
@@ -281,7 +309,15 @@ public static class GraduationEngine
         if (countOnly) return "SELECT COUNT(*) " + w;
 
         string order;
-        switch (f.sort)
+        if (f.state == "held")
+        {
+            // Oldest hold first. A hold nobody revisits is a student who quietly never
+            // graduates, so the queue has to surface the ones that have been waiting longest
+            // rather than whoever happens to sort first by student number.
+            order = " ORDER BY (SELECT MIN(v2.created_at) FROM acad_grad_review v2 " +
+                    " WHERE v2.regno=s.regno AND v2.verdict='HELD' AND v2.superseded_at IS NULL) ASC, s.regno ";
+        }
+        else switch (f.sort)
         {
             case "name": order = " ORDER BY nm "; break;
             case "prog": order = " ORDER BY p.progname, s.regno "; break;
@@ -384,6 +420,50 @@ public static class GraduationEngine
                 GradCandidate g;
                 if (byReg.TryGetValue(RS(r, 0), out g)) g.graduatedYear = RS(r, 1);
             }
+
+        // C4 — required courses with no result, for the students on this page whose
+        // specialisation is real. Set-based: one query for the page, not one per student.
+        try
+        {
+            using (var cmd = new MySqlCommand(
+                "SELECT s.regno, COUNT(*) req, " +
+                " SUM(NOT EXISTS(SELECT 1 FROM acad_results r WHERE r.regno=s.regno AND r.courseid=pc.course_code)) missing " +
+                "FROM acad_student s " +
+                "JOIN acad_programmecourses pc ON pc.progcode=s.progid " +
+                " AND pc.specialisation_id=CAST(s.specialisation AS UNSIGNED) AND pc.status='Active' " +
+                "WHERE s.regno IN (" + inList + ") " +
+                " AND TRIM(IFNULL(s.specialisation,'')) NOT IN ('','0','13') " +
+                "GROUP BY s.regno", c))
+            using (var r = cmd.ExecuteReader())
+                while (r.Read())
+                {
+                    GradCandidate g;
+                    if (!byReg.TryGetValue(RS(r, 0), out g)) continue;
+                    g.coverageChecked = true;
+                    g.coverageRequired = RI(r, 1);
+                    g.coverageMissing = RI(r, 2);
+                }
+        }
+        catch { /* coverage is advisory; never let it take the whole list down */ }
+
+        // C5 — marks still in the portal pipeline.
+        try
+        {
+            using (var cmd = new MySqlCommand(
+                "SELECT cr.regno, SUM(cr.mark_stage='ENTERED'), SUM(cr.mark_stage='CAPTURED'), " +
+                " SUM(cr.mark_stage='APPROVED') " +
+                "FROM campus_dynamics_portal.acad_course_registration cr " +
+                "WHERE cr.regno IN (" + inList + ") AND cr.mark_stage IN ('ENTERED','CAPTURED','APPROVED') " +
+                "GROUP BY cr.regno", c))
+            using (var r = cmd.ExecuteReader())
+                while (r.Read())
+                {
+                    GradCandidate g;
+                    if (!byReg.TryGetValue(RS(r, 0), out g)) continue;
+                    g.unpubEntered = RI(r, 1); g.unpubCaptured = RI(r, 2); g.unpubApproved = RI(r, 3);
+                }
+        }
+        catch { }
 
         // The verdict in force, if any.
         using (var cmd = new MySqlCommand(
@@ -653,11 +733,45 @@ public static class GraduationEngine
         {
             double shortBy = g.cuRequired - g.cuEarned;
             // Only a real curriculum is trusted enough to stop a graduation on a credit count.
-            string lvl = (g.cuSource == "STRUCTURE" && g.cuEarned < g.cuRequired * 0.90) ? "BLOCK" : "WARN";
+            string lvl = (g.cuSource == "STRUCTURE" && g.cuEarned < g.cuRequired * CREDIT_BLOCK_RATIO) ? "BLOCK" : "WARN";
             Add(g, "C3", "Credits earned", lvl,
                 "Short by " + N(shortBy, 0) + " credits — " + N(g.cuEarned, 0) + " of " +
                 N(g.cuRequired, 0) + ", against " + req.label + ".");
         }
+
+        // C4 — coverage against the programme structure.
+        //
+        //  Never blocks. A gap here can mean a genuinely unsat course, but it can equally mean
+        //  the student took an equivalent under a different code, or that the curriculum on
+        //  file has moved on since their intake. It is a prompt to look at the structure panel,
+        //  not a verdict.
+        if (!g.coverageChecked)
+            Add(g, "C4", "Programme coverage", "NA",
+                "Cannot be checked \u2014 this student carries no real specialisation, so there is no " +
+                "curriculum to match their courses against.");
+        else if (g.coverageMissing > 0)
+            Add(g, "C4", "Programme coverage", "WARN",
+                g.coverageMissing + " of " + g.coverageRequired + " courses in their curriculum have no " +
+                "result on record. Check the structure below \u2014 an equivalent may have been taken " +
+                "under another code.");
+        else
+            Add(g, "C4", "Programme coverage", "PASS",
+                "All " + g.coverageRequired + " courses in their curriculum have a result.");
+
+        // C5 — marks still moving through the pipeline.
+        if (g.UnpubTotal > 0)
+        {
+            var bits = new List<string>();
+            if (g.unpubEntered > 0) bits.Add(g.unpubEntered + " with the lecturer");
+            if (g.unpubCaptured > 0) bits.Add(g.unpubCaptured + " with the head of department");
+            if (g.unpubApproved > 0) bits.Add(g.unpubApproved + " approved but not published");
+            Add(g, "C5", "Marks not yet published", "WARN",
+                g.UnpubTotal + " course" + (g.UnpubTotal == 1 ? " is" : "s are") +
+                " still in the marks pipeline \u2014 " + string.Join(", ", bits.ToArray()) +
+                ". Their final position may change.");
+        }
+        else
+            Add(g, "C5", "Marks not yet published", "PASS", "Nothing outstanding in the marks pipeline.");
 
         // C6 — reached the final year (the candidacy rule itself, restated as evidence)
         if (g.maxStudyYear >= g.progLength)
@@ -671,9 +785,10 @@ public static class GraduationEngine
         // C7 — CGPA floor
         if (g.cgpa <= 0)
             Add(g, "C7", "Class of award", "WARN", "CGPA could not be computed from the marks on record.");
-        else if (g.cgpa < 2.0)
+        else if (g.cgpa < CGPA_FLOOR)
             Add(g, "C7", "Class of award", "BLOCK",
-                "CGPA " + N(g.cgpa, 2) + " is below 2.0, the floor for any award.");
+                "CGPA " + N(g.cgpa, 2) + " is below " + N(CGPA_FLOOR, 1) +
+                ", the floor below which acad_gs_award maps no class at any level.");
         else
             Add(g, "C7", "Class of award", "PASS",
                 "CGPA " + N(g.cgpa, 2) + " — " + (g.degClass == "" ? "no class mapped" : g.degClass) + ".");

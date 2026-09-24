@@ -108,6 +108,49 @@ public static class GraduationService
                 }
         }
 
+        // C4 and C5 for this one student. The evidence panel must run the SAME checks the list
+        // ran, or a reviewer opens a row marked "needs a look" and finds nothing to look at.
+        try
+        {
+            using (var cmd = new MySqlCommand(
+                "SELECT COUNT(*) req, " +
+                " SUM(NOT EXISTS(SELECT 1 FROM acad_results r WHERE r.regno=s.regno AND r.courseid=pc.course_code)) missing " +
+                "FROM acad_student s " +
+                "JOIN acad_programmecourses pc ON pc.progcode=s.progid " +
+                " AND pc.specialisation_id=CAST(s.specialisation AS UNSIGNED) AND pc.status='Active' " +
+                "WHERE s.regno=@r AND TRIM(IFNULL(s.specialisation,'')) NOT IN ('','0','13')", c))
+            {
+                cmd.Parameters.AddWithValue("@r", regno);
+                using (var r = cmd.ExecuteReader())
+                    if (r.Read() && !r.IsDBNull(0) && Convert.ToInt32(r[0]) > 0)
+                    {
+                        g.coverageChecked = true;
+                        g.coverageRequired = Convert.ToInt32(r[0]);
+                        g.coverageMissing = r.IsDBNull(1) ? 0 : Convert.ToInt32(r[1]);
+                    }
+            }
+        }
+        catch { }
+
+        try
+        {
+            using (var cmd = new MySqlCommand(
+                "SELECT SUM(cr.mark_stage='ENTERED'), SUM(cr.mark_stage='CAPTURED'), SUM(cr.mark_stage='APPROVED') " +
+                "FROM campus_dynamics_portal.acad_course_registration cr " +
+                "WHERE cr.regno=@r AND cr.mark_stage IN ('ENTERED','CAPTURED','APPROVED')", c))
+            {
+                cmd.Parameters.AddWithValue("@r", regno);
+                using (var r = cmd.ExecuteReader())
+                    if (r.Read() && !r.IsDBNull(0))
+                    {
+                        g.unpubEntered = Convert.ToInt32(r[0]);
+                        g.unpubCaptured = Convert.ToInt32(r[1]);
+                        g.unpubApproved = Convert.ToInt32(r[2]);
+                    }
+            }
+        }
+        catch { }
+
         using (var cmd = new MySqlCommand("SELECT acadyear FROM acad_graduands WHERE regno=@r LIMIT 1", c))
         { cmd.Parameters.AddWithValue("@r", regno); object o = cmd.ExecuteScalar(); if (o != null && o != DBNull.Value) g.graduatedYear = o.ToString(); }
 

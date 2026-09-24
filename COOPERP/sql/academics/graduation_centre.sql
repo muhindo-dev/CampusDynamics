@@ -62,3 +62,25 @@ ALTER TABLE acad_graduands ADD INDEX idx_grad_year (acadyear, progcode);
 --  Neither removes any graduand. acad_graduands is untouched by this file
 --  apart from gaining an index.
 -- =====================================================================
+
+
+-- ---------------------------------------------------------------------
+-- 3. NOT APPLIED — waiting on a Registrar's decision.
+--
+--    acad_graduands holds one duplicated student, and the two rows are
+--    byte-identical in every field except the primary key:
+--
+--      ID 935  MRU2021000451  SHARIFAH NAMIREMBE  DSM  2022/2023  3.39
+--      ID 936  MRU2021000451  SHARIFAH NAMIREMBE  DSM  2022/2023  3.39
+--
+--    An accidental double-insert, not two competing records. Removing one
+--    loses nothing — but taking a name off a graduation list is a
+--    Registrar's action, so it is left alone here.
+--
+--    Once it is resolved, the unique key below is worth adding: it turns
+--    idempotence from something GraduationService.Clear guards into
+--    something the database guarantees, and closes the race where two
+--    simultaneous clears both pass the guard.
+-- ---------------------------------------------------------------------
+-- DELETE FROM acad_graduands WHERE ID = 936;
+-- ALTER TABLE acad_graduands ADD UNIQUE KEY uq_grad_regno (regno);

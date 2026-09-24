@@ -207,7 +207,15 @@
         <label for="fProg">Programme</label>
         <select id="fProg"><option value="">All programmes</option></select>
       </div>
-      <div class="gc-f" style="flex:1 1 160px;">
+      <div class="gc-f" style="flex:0 0 110px;">
+        <label for="fIntake">Intake</label>
+        <select id="fIntake"><option value="">All intakes</option></select>
+      </div>
+      <div class="gc-f" style="flex:0 0 130px;">
+        <label for="fFin" title="The academic year the student last sat a paper">Finished in</label>
+        <select id="fFin"><option value="">Any year</option></select>
+      </div>
+      <div class="gc-f" style="flex:1 1 150px;">
         <label for="fQ">Student number or name</label>
         <input type="text" id="fQ" placeholder="Search&hellip;" autocomplete="off" />
       </div>
@@ -241,6 +249,7 @@
           <span id="candTitle">Candidates</span>
           <small id="candMeta">&nbsp;</small>
           <span style="margin-left:auto;display:flex;gap:7px;align-items:center;">
+            <button type="button" class="gc-btn gc-btn--p" id="btnBulk" disabled="disabled">Clear selected</button>
             <select id="fReady" class="gc-btn" style="padding:5px 8px;">
               <option value="">Every readiness</option>
               <option value="ready">Ready only</option>
@@ -249,8 +258,13 @@
             </select>
           </span>
         </div>
+        <div class="gc-note gc-note--info" style="margin:0;border-radius:0;border-left:0;border-right:0;border-top:0;font-size:11px;">
+          Only candidates with nothing outstanding can be selected. Anything carrying a warning or a
+          block has to be opened and decided on its own — that is what the warning is for.
+        </div>
         <div class="gc-tblwrap">
           <table class="gc-tbl"><thead><tr>
+            <th style="width:26px;"><input type="checkbox" id="ckAll" title="Select every ready candidate on this page" /></th>
             <th>Student</th><th>Programme</th><th>Intake</th><th style="min-width:150px;">Credits</th>
             <th class="gc-num">CGPA</th><th>Class</th><th>Readiness</th><th></th>
           </tr></thead><tbody id="candBody"></tbody></table>
@@ -265,7 +279,10 @@
         <div class="gc-card__h">
           <span id="listTitle">Graduation list</span>
           <small id="listMeta">&nbsp;</small>
-          <span style="margin-left:auto;"><button type="button" class="gc-btn" id="btnExport">Export CSV</button></span>
+          <span style="margin-left:auto;display:flex;gap:7px;">
+            <button type="button" class="gc-btn" id="btnPrint">Print for Senate</button>
+            <button type="button" class="gc-btn" id="btnExport">Export CSV</button>
+          </span>
         </div>
         <div class="gc-tblwrap">
           <table class="gc-tbl"><thead><tr>
@@ -349,7 +366,8 @@ function readUrl(){
     tab=p.get('tab')||'overview';
     page=parseInt(p.get('page')||'1',10)||1;
     return { year:p.get('year')||'', fac:p.get('faculty')||'', dep:p.get('dept')||'',
-             prog:p.get('prog')||'', q:p.get('q')||'', ready:p.get('ready')||'' };
+             prog:p.get('prog')||'', q:p.get('q')||'', ready:p.get('ready')||'',
+             intake:p.get('intake')||'', fin:p.get('fin')||'' };
 }
 function pushUrl(){
     var p=new URLSearchParams();
@@ -358,6 +376,8 @@ function pushUrl(){
     if(qs('fFac').value)  p.set('faculty',qs('fFac').value);
     if(qs('fDep').value)  p.set('dept',qs('fDep').value);
     if(qs('fProg').value) p.set('prog',qs('fProg').value);
+    if(qs('fIntake').value) p.set('intake',qs('fIntake').value);
+    if(qs('fFin').value)   p.set('fin',qs('fFin').value);
     if(qs('fQ').value)    p.set('q',qs('fQ').value);
     if(qs('fReady').value)p.set('ready',qs('fReady').value);
     if(page>1) p.set('page',String(page));
@@ -366,7 +386,8 @@ function pushUrl(){
 
 function cfg(extra){
     var c={ acadYear:qs('fYear').value, faculty:qs('fFac').value, department:qs('fDep').value,
-            programme:qs('fProg').value, search:qs('fQ').value.trim(),
+            programme:qs('fProg').value, entryYear:qs('fIntake').value, finishedIn:qs('fFin').value,
+            search:qs('fQ').value.trim(),
             readiness:qs('fReady').value, page:String(page), size:'50' };
     if(extra) for(var k in extra) if(extra.hasOwnProperty(k)) c[k]=extra[k];
     return JSON.stringify(c);
@@ -462,6 +483,12 @@ function loadOverview(){
         }
         qs('gcProgBody').innerHTML=pb||'<tr><td colspan="6" class="gc-empty">No programmes in scope.</td></tr>';
 
+        wire('gcKpiCand', function(){ qs('fReady').value='';        showTab('candidates'); });
+        wire('gcKpiReady',function(){ qs('fReady').value='ready';   showTab('candidates'); });
+        wire('gcKpiBlock',function(){ qs('fReady').value='blocked'; showTab('candidates'); });
+        wire('gcKpiHeld', function(){ showTab('held'); });
+        wire('gcKpiList', function(){ showTab('list'); });
+
         var ig='';
         for(var k=0;k<(o.integrity||[]).length;k++)
             ig+='<div class="gc-note gc-note--bad"><b>Data integrity.</b> '+esc(o.integrity[k])+
@@ -469,6 +496,7 @@ function loadOverview(){
         qs('gcIntegrity').innerHTML=ig;
     });
 }
+function wire(id,fn){ var el=qs(id); if(el) el.addEventListener('click',fn); }
 function kpi(id,kind,val,label,sub){
     return '<div class="gc-kpi'+(kind?' gc-kpi--'+kind:'')+'" id="'+id+'"><b>'+val+'</b>'+
            '<span>'+esc(label)+'</span><small>'+esc(sub)+'</small></div>';
@@ -482,11 +510,11 @@ function barPct(v,total){
 
 // ── candidates ──────────────────────────────────────────────────────
 function loadCandidates(state){
-    qs('candBody').innerHTML='<tr><td colspan="8" class="gc-load">Loading&hellip;</td></tr>';
+    qs('candBody').innerHTML='<tr><td colspan="9" class="gc-load">Loading&hellip;</td></tr>';
     qs('candPager').innerHTML='';
     ajax('GetCandidates',{configJson:cfg({state:state||'pending'})},function(d){
         if(!d||!d.success){ msg((d&&d.message)||'Could not load candidates.',false);
-            qs('candBody').innerHTML='<tr><td colspan="8" class="gc-empty">Nothing to show.</td></tr>'; return; }
+            qs('candBody').innerHTML='<tr><td colspan="9" class="gc-empty">Nothing to show.</td></tr>'; return; }
         renderCandidates(d);
     });
 }
@@ -498,7 +526,11 @@ function renderCandidates(d){
         if(want==='ready'   && g.readiness!=='READY')   continue;
         if(want==='warn'    && g.readiness!=='WARN')    continue;
         if(want==='blocked' && g.readiness!=='BLOCKED') continue;
+        var selectable=(g.readiness==='READY' && !g.graduatedYear && !g.holdReason);
         h+='<tr class="is-click" data-reg="'+esc(g.regno)+'">'+
+           '<td>'+(selectable
+                    ? '<input type="checkbox" class="ck" data-reg="'+esc(g.regno)+'" />'
+                    : '<span class="gc-sub" title="Only candidates with nothing outstanding can be bulk-cleared">&ndash;</span>')+'</td>'+
            '<td><span class="gc-reg">'+esc(g.regno)+'</span><div class="gc-sub">'+esc(g.name)+'</div></td>'+
            '<td>'+esc(g.progname||g.progcode)+'<div class="gc-sub">'+esc(g.progcode)+'</div></td>'+
            '<td class="gc-sub">'+esc(g.entryyear)+'</td>'+
@@ -508,7 +540,8 @@ function renderCandidates(d){
            '<td>'+chip(g)+'</td>'+
            '<td><button type="button" class="gc-btn" data-open="'+esc(g.regno)+'">Review</button></td></tr>';
     }
-    qs('candBody').innerHTML=h||'<tr><td colspan="8" class="gc-empty">No candidates match these filters.</td></tr>';
+    qs('candBody').innerHTML=h||'<tr><td colspan="9" class="gc-empty">No candidates match these filters.</td></tr>';
+    qs('ckAll').checked=false; syncBulk();
     qs('candMeta').textContent='showing '+rows.length+' of '+d.total+
         (d.pages>1?(' · page '+d.page+' of '+d.pages):'');
     qs('nCand').textContent=d.total;
@@ -704,6 +737,7 @@ function renderPanel(d){
            (g.clearedActor?', cleared by '+esc(g.clearedActor):'')+'.</span>';
     } else if(g.holdReason){
         ft='<button type="button" class="gc-btn gc-btn--p" id="pRelease">Lift the hold</button>'+
+           '<button type="button" class="gc-btn" id="pEdit">Edit the reason</button>'+
            '<button type="button" class="gc-btn" id="pClear">Clear for graduation</button>';
     } else {
         ft='<button type="button" class="gc-btn gc-btn--p" id="pClear">Clear for graduation</button>'+
@@ -717,6 +751,7 @@ function renderPanel(d){
     if(qs('pHold'))    qs('pHold').addEventListener('click',doHold);
     if(qs('pRelease')) qs('pRelease').addEventListener('click',doRelease);
     if(qs('pRemove'))  qs('pRemove').addEventListener('click',doRemove);
+    if(qs('pEdit'))    qs('pEdit').addEventListener('click',doEditHold);
 }
 function cell(label,val){
     return '<div><span>'+esc(label)+'</span><b>'+esc(val)+'</b></div>';
@@ -761,6 +796,22 @@ function doHold(){
         else msg((d&&d.message)||'Could not hold that candidate.',false);
     });
 }
+// Re-holding with a new reason: the old hold is superseded, not overwritten, so the panel's
+// history still shows what the first reviewer originally wrote.
+function doEditHold(){
+    if(!curStudent) return;
+    var g=curStudent.student;
+    var reason=prompt('Update the reason '+g.name+' is being held.\n\n'+
+        'The original is kept in the decision history.', g.holdReason||'');
+    if(reason===null) return;
+    if(reason.trim().length<10){ msg('Say a little more \u2014 at least 10 characters.',false); return; }
+    if(reason.trim()===(g.holdReason||'').trim()){ msg('That is the reason already recorded.',false); return; }
+    ajax('HoldStudent',{regno:g.regno,acadYear:year()||g.holdAt,reason:reason},function(d){
+        if(d&&d.success){ msg('The reason has been updated.',true); openPanel(g.regno); load(); }
+        else msg((d&&d.message)||'Could not update the reason.',false);
+    });
+}
+
 function doRelease(){
     if(!curStudent) return;
     var g=curStudent.student;
@@ -782,6 +833,92 @@ function doRemove(){
         if(d&&d.success){ msg(d.message,true); closePanel(); load(); }
         else msg((d&&d.message)||'Could not remove that name.',false);
     });
+}
+
+// ── bulk clear ────────────────────────────────────────────
+function selected(){
+    var out=[], b=document.querySelectorAll('#candBody .ck:checked');
+    for(var i=0;i<b.length;i++) out.push(b[i].getAttribute('data-reg'));
+    return out;
+}
+function syncBulk(){
+    var n=selected().length;
+    var b=qs('btnBulk');
+    b.disabled=(n===0);
+    b.textContent=n?('Clear '+n+' selected'):'Clear selected';
+}
+function doBulk(){
+    var regs=selected();
+    if(!regs.length) return;
+    if(!year()){ msg('Choose the graduation year at the top first.',false); return; }
+    if(!confirm('Put '+regs.length+' candidate'+(regs.length===1?'':'s')+' on the '+year()+
+                ' graduation list?\n\nEach one is re-checked on the server before it is added.')) return;
+    qs('btnBulk').disabled=true;
+    ajax('ClearMany',{regnos:regs.join(','),acadYear:year()},function(d){
+        if(!d||!d.success){ msg((d&&d.message)||'The bulk clear did not run.',false); syncBulk(); return; }
+        msg(d.message, d.cleared>0);
+        if(d.skipped && d.skipped.length)
+            alert('Skipped '+d.skipped.length+':\n\n'+d.skipped.join('\n'));
+        load();
+    });
+}
+
+// ── Senate print ───────────────────────────────────────────
+//  Grouped by programme, numbered within each, because that is how a graduation list is read
+//  out and signed off. Built from the rows already on screen, so what prints is exactly what
+//  was reviewed.
+function doPrint(){
+    if(!listRows.length){ msg('There is nothing on this list to print.',false); return; }
+    var w=window.open('','_blank');
+    if(!w){ msg('Pop-up blocked \u2014 allow pop-ups to open the print view.',false); return; }
+
+    var groups={}, order=[];
+    for(var i=0;i<listRows.length;i++){
+        var r=listRows[i], k=r.progname||r.progcode;
+        if(!groups[k]){ groups[k]=[]; order.push(k); }
+        groups[k].push(r);
+    }
+    order.sort();
+
+    var h='<!doctype html><html><head><meta charset="utf-8"><title>Graduation list '+esc(year())+'</title><style>'+
+      'body{font-family:"Segoe UI",Arial,sans-serif;color:#111;margin:26px;font-size:11pt;}'+
+      'h1{font-size:15pt;margin:0 0 2px;color:#05275C;}'+
+      '.sub{font-size:10pt;color:#555;margin-bottom:18px;}'+
+      'h2{font-size:11.5pt;margin:20px 0 6px;color:#05275C;border-bottom:1.5px solid #05275C;padding-bottom:3px;}'+
+      'table{width:100%;border-collapse:collapse;font-size:9.5pt;}'+
+      'th{text-align:left;border-bottom:1px solid #999;padding:4px 5px;font-size:8.5pt;'+
+        'text-transform:uppercase;letter-spacing:.3px;color:#444;}'+
+      'td{padding:4px 5px;border-bottom:1px solid #eee;}'+
+      '.n{text-align:right;}'+
+      '.foot{margin-top:28px;font-size:9pt;color:#555;border-top:1px solid #999;padding-top:8px;}'+
+      '.sig{margin-top:34px;display:flex;gap:46px;font-size:9.5pt;}'+
+      '.sig div{flex:1;border-top:1px solid #333;padding-top:5px;}'+
+      '@media print{ h2{page-break-after:avoid;} tr{page-break-inside:avoid;} }'+
+      '</style></head><body>';
+    h+='<h1>Muteesa I Royal University</h1>'+
+       '<div class="sub">Graduation list for '+esc(year()||'all years')+
+       ' &middot; '+listRows.length+' candidate'+(listRows.length===1?'':'s')+
+       ' &middot; prepared '+new Date().toLocaleDateString()+'</div>';
+
+    for(var g=0;g<order.length;g++){
+        var rows=groups[order[g]];
+        h+='<h2>'+esc(order[g])+' <span style="font-weight:400;font-size:9pt;color:#666;">('+
+           rows.length+')</span></h2>'+
+           '<table><thead><tr><th style="width:26px;">#</th><th>Student number</th><th>Name</th>'+
+           '<th class="n">CGPA</th><th>Class of award</th></tr></thead><tbody>';
+        for(var r2=0;r2<rows.length;r2++)
+            h+='<tr><td class="n">'+(r2+1)+'</td><td>'+esc(rows[r2].regno)+'</td><td>'+esc(rows[r2].name)+
+               '</td><td class="n">'+n2(rows[r2].cgpa)+'</td><td>'+esc(rows[r2].degclass)+'</td></tr>';
+        h+='</tbody></table>';
+    }
+
+    h+='<div class="foot">Prepared from the Graduation Centre. Every name on this list was cleared by a '+
+       'named reviewer against the results on record at the time of clearing; the evidence for each '+
+       'decision is retained and can be produced on request.</div>'+
+       '<div class="sig"><div>Academic Registrar</div><div>Chairperson, Senate</div></div>'+
+       '</body></html>';
+    w.document.open(); w.document.write(h); w.document.close();
+    setTimeout(function(){ try{ w.focus(); w.print(); }catch(e){} }, 350);
 }
 
 // ── export ──────────────────────────────────────────────────────────
@@ -815,7 +952,7 @@ document.addEventListener('DOMContentLoaded',function(){
     qs('btnApply').addEventListener('click',function(){ page=1; pushUrl(); load(); });
     qs('btnReset').addEventListener('click',function(){
         qs('fFac').value=''; qs('fDep').value=''; qs('fProg').value=''; qs('fQ').value='';
-        qs('fReady').value='';
+        qs('fReady').value=''; qs('fIntake').value=''; qs('fFin').value='';
         if(boot && boot.currentYear) qs('fYear').value=boot.currentYear;
         cascade(); page=1; pushUrl(); load();
     });
@@ -826,6 +963,22 @@ document.addEventListener('DOMContentLoaded',function(){
     qs('fReady').addEventListener('change',function(){ pushUrl(); load(); });
     qs('fQ').addEventListener('keydown',function(e){ if(e.key==='Enter'){ page=1; pushUrl(); load(); } });
     qs('btnExport').addEventListener('click',exportCsv);
+    qs('btnPrint').addEventListener('click',doPrint);
+    qs('btnBulk').addEventListener('click',doBulk);
+    qs('fIntake').addEventListener('change',function(){ page=1; pushUrl(); load(); });
+    qs('fFin').addEventListener('change',function(){ page=1; pushUrl(); load(); });
+    qs('ckAll').addEventListener('change',function(){
+        var b=document.querySelectorAll('#candBody .ck');
+        for(var i=0;i<b.length;i++) b[i].checked=qs('ckAll').checked;
+        syncBulk();
+    });
+    qs('candBody').addEventListener('change',function(e){
+        if(e.target && e.target.className==='ck') syncBulk();
+    });
+    // A checkbox click must not also open the evidence panel behind it.
+    qs('candBody').addEventListener('click',function(e){
+        if(e.target && e.target.className==='ck') e.stopPropagation();
+    });
     qs('pClose').addEventListener('click',closePanel);
     qs('gcOv').addEventListener('click',closePanel);
     document.addEventListener('keydown',function(e){ if(e.key==='Escape' && curReg) closePanel(); });
@@ -855,12 +1008,17 @@ document.addEventListener('DOMContentLoaded',function(){
         fillSel('fFac',o.faculties,'All faculties');
         fillSel('fDep',o.departments,'All departments');
         fillSel('fProg',o.programmes,'All programmes');
+        var ints=[]; for(var k=0;k<(o.intakes||[]).length;k++) ints.push({v:o.intakes[k],t:o.intakes[k]});
+        fillSel('fIntake',ints,'All intakes');
+        fillSel('fFin',ys,'Any year');
         qs('fYear').value = pre.year || o.currentYear || '';
         if(pre.fac)  qs('fFac').value=pre.fac;
         if(pre.dep)  qs('fDep').value=pre.dep;
         if(pre.prog) qs('fProg').value=pre.prog;
         if(pre.q)    qs('fQ').value=pre.q;
-        if(pre.ready)qs('fReady').value=pre.ready;
+        if(pre.ready) qs('fReady').value=pre.ready;
+        if(pre.intake)qs('fIntake').value=pre.intake;
+        if(pre.fin)   qs('fFin').value=pre.fin;
         cascade();
         showTab(tab);
     });

@@ -611,13 +611,40 @@ What needs a human with an eadmin account:
 4. Hold one candidate, confirm the reason is required, then release them.
 5. Confirm a blocked candidate refuses to clear without a justification.
 
-## 10. Open questions for the MIS Manager
+## 10. The five open questions — answered
 
-1. **Credit shortfall tolerance.** C3 blocks below 90% of required. Is 90% the right line, or
-   should any shortfall block?
-2. **Failed papers.** Should a single failed paper block, or only block above a threshold — and
-   does a passed retake of the same course clear the original failure? (The engine counts a course
-   once and takes the best attempt; confirm that is the rule.)
-3. **CGPA floor.** Below 2.0 there is no award class. Block, or hold for Senate discretion?
-4. **Finance.** In or out? (Currently out — §7.)
-5. **The one duplicate** in `acad_graduands` — which row is correct?
+They were policy, not arithmetic, so each is now a **named constant at the top of
+`GraduationEngine`**. Changing Senate's mind is a one-line edit, not an archaeology exercise.
+Every one of these decisions is also overridable per student by a reviewer with a written
+justification, which is the real answer to "what if the rule is wrong in this case".
+
+| # | Question | Decision | Where |
+|---|---|---|---|
+| 1 | Credit shortfall tolerance | Blocks below **90%** of required, and **only** when the requirement came from a real curriculum. A shortfall against a declared minimum warns. | `CREDIT_BLOCK_RATIO = 0.90` |
+| 2 | Failed papers | **Any** mark of 1–49 blocks. A course is counted once: `acad_results` carries `UNIQUE(regno, courseid)`, so a retake *overwrites* the earlier attempt and only the current mark exists. There is no "best attempt" to choose — the row is the answer. | `PASS_MARK = 50` |
+| 3 | CGPA floor | **Blocks** below 2.0. Not a judgement about the student: `acad_gs_award` maps no class at any level below 2.0, so clearing one would produce a graduand whose degree class is literally undefined. | `CGPA_FLOOR = 2.0` |
+| 4 | Finance clearance | **Out.** Not requested, and a graduation list that silently enforced a fees rule would be a policy decision taken in code. The engine has a slot for it; nothing is wired to it. Say the word and it becomes check C9. | §7 |
+| 5 | The duplicate graduand | **Identified, not deleted.** See below. | — |
+
+### The duplicate
+
+```
+ID 935  MRU2021000451  SHARIFAH NAMIREMBE  DSM  2022/2023  3.39  Class II (Credit)  Printed/Printed  2025-01-06
+ID 936  MRU2021000451  SHARIFAH NAMIREMBE  DSM  2022/2023  3.39  Class II (Credit)  Printed/Printed  2025-01-06
+```
+
+Byte-identical in every field except the primary key — an accidental double-insert, not two
+competing records, so there is no information to lose by removing one. It is still not removed
+here: taking a row out of a graduation list is a Registrar's action, and this module's whole
+argument is that such things should be decided by a person and recorded.
+
+Once it is resolved, this becomes possible and is worth doing, because it turns idempotence from
+something the service *guards* into something the database *guarantees*:
+
+```sql
+DELETE FROM acad_graduands WHERE ID = 936;      -- the later of two identical rows
+ALTER TABLE acad_graduands ADD UNIQUE KEY uq_grad_regno (regno);
+```
+
+Until then, `GraduationService.Clear` refuses a student who already has a row, which covers every
+path through the interface.
