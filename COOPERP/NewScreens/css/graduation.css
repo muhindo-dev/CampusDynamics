@@ -162,7 +162,9 @@
     display:flex;flex-direction:column;max-height:calc(100vh - 38px);}
 .g-modal__h{padding:7px 11px;border-bottom:1px solid var(--line);display:flex;align-items:center;
     gap:9px;flex-shrink:0;background:var(--surface);}
-.g-modal__h .g-ph{width:32px;height:32px;flex-basis:32px;}
+/* The avatar earns more room than the rest of the header: it is how a reviewer confirms they
+   have the right person. 144px is requested for a 48px box so it stays sharp on a dense screen. */
+.g-modal__h .g-ph{width:48px;height:48px;flex-basis:48px;}
 .g-modal__t{min-width:0;flex:1 1 auto;}
 .g-modal__t b{display:block;font-size:13.5px;color:var(--navy);line-height:1.25;}
 .g-modal__t span{display:block;font-size:10.5px;color:var(--ink2);margin-top:1px;}
@@ -513,4 +515,37 @@
 .g-fix svg{color:var(--accent);flex:0 0 13px;margin-top:2px;}
 .g-fix span{min-width:0;font-size:10.5px;color:var(--ink2);line-height:1.4;}
 .g-fix b{display:block;font-size:11.5px;color:var(--accent);}
+
+/* ── the photograph, opened ──────────────────────────────────────────────
+   A 48px avatar identifies a person only if you already know them. Clicking it opens the
+   photograph as large as the screen allows — which costs the panel no room, because nothing
+   moves until it is asked for. The large render is not centre-cropped (see StudentThumb.ashx):
+   cropping a portrait square cuts off the head at the moment identification matters most. */
+.g-phbtn{position:relative;flex:0 0 auto;padding:0;border:0;background:none;cursor:zoom-in;
+    line-height:0;border-radius:50%;}
+.g-phbtn .g-ph{transition:box-shadow .12s;}
+.g-phbtn:hover .g-ph{box-shadow:0 0 0 2px var(--accent);}
+.g-phbtn:focus-visible{outline:2px solid var(--accent);outline-offset:2px;}
+/* A small expand mark, so the avatar reads as something you can open. */
+.g-phbtn svg{position:absolute;right:-1px;bottom:-1px;color:#fff;background:var(--accent);
+    border-radius:50%;padding:3px;box-sizing:content-box;width:9px;height:9px;
+    box-shadow:0 0 0 1.5px #fff;opacity:.9;}
+.g-phbtn:hover svg{opacity:1;}
+
+.g-lb{position:fixed;inset:0;background:rgba(5,39,92,.86);z-index:1400;display:none;
+    align-items:center;justify-content:center;padding:28px;cursor:zoom-out;}
+.g-lb.is-open{display:flex;}
+.g-lb__f{margin:0;display:flex;flex-direction:column;align-items:center;gap:10px;max-width:100%;}
+/* Sized deliberately rather than left at natural size. 99% of the photographs on this system
+   are 300x400, so "full size" would otherwise open a 300px image on a 1400px screen and feel
+   like nothing happened. 420px is about 1.4x — plainly bigger, and well inside what a 300px
+   source carries for recognising a face, which is the only thing this view is for. The rare
+   larger originals are capped at 480 by the handler and simply fill the box. */
+.g-lb__f img{width:min(420px,82vw);max-height:78vh;height:auto;display:block;
+    border-radius:3px;background:#0b2a55;box-shadow:0 24px 70px rgba(0,0,0,.45);}
+.g-lb__f figcaption{color:#fff;font-size:12.5px;font-weight:700;letter-spacing:.2px;
+    text-align:center;text-shadow:0 1px 3px rgba(0,0,0,.4);}
+.g-lb__x{position:absolute;top:14px;right:18px;background:none;border:0;color:#fff;
+    font-size:30px;line-height:1;cursor:pointer;padding:4px 8px;opacity:.8;}
+.g-lb__x:hover{opacity:1;}
 

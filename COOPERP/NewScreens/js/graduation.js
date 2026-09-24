@@ -56,9 +56,12 @@ window.G = (function () {
         toastTimer = setTimeout(function () { t.style.display = 'none'; }, good ? 4200 : 7000);
     }
 
-    /* A cached 72px square, not the 469KB original. See StudentThumb.ashx. */
-    function photo(regno) {
-        return 'StudentThumb.ashx?r=' + encodeURIComponent(regno || '');
+    /* A cached thumbnail, not the 469KB original. See StudentThumb.ashx, which renders only
+       72, 144 and 480 — 72 for a row, 144 so the modal's avatar stays sharp on a high-density
+       screen, 480 for the full view. */
+    function photo(regno, size) {
+        return 'StudentThumb.ashx?r=' + encodeURIComponent(regno || '') +
+               (size ? '&s=' + size : '');
     }
 
     function photoCell(regno, name, sub) {
@@ -151,7 +154,13 @@ window.G = (function () {
             '<div class="g-ov" id="gOv">' +
               '<div class="g-modal" role="dialog" aria-modal="true" aria-labelledby="gModalName">' +
                 '<div class="g-modal__h">' +
-                  '<img class="g-ph" id="gModalPhoto" alt="" src="" />' +
+                  '<button type="button" class="g-phbtn" id="gModalPhotoBtn" ' +
+                    'title="See the photograph full size">' +
+                    '<img class="g-ph" id="gModalPhoto" alt="" src="" />' +
+                    '<svg viewBox="0 0 24 24" width="9" height="9" fill="none" stroke="currentColor" ' +
+                    'stroke-width="3" stroke-linecap="round"><path d="M15 3h6v6M9 21H3v-6M21 3l-7 7' +
+                    'M3 21l7-7"/></svg>' +
+                  '</button>' +
                   '<div class="g-modal__t"><b id="gModalName">&nbsp;</b><span id="gModalSub">&nbsp;</span></div>' +
                   '<button type="button" class="g-modal__x" id="gModalX" aria-label="Close">&times;</button>' +
                 '</div>' +
@@ -159,7 +168,16 @@ window.G = (function () {
                 '<div class="g-modal__f" id="gModalFoot"></div>' +
               '</div>' +
             '</div>' +
-            '<div class="g-toast" id="gToast"></div>';
+            '<div class="g-toast" id="gToast"></div>' +
+            // The full-size view. Its own overlay, above the evidence modal, so opening it does
+            // not disturb what the reviewer was reading.
+            '<div class="g-lb" id="gLb">' +
+              '<figure class="g-lb__f">' +
+                '<img id="gLbImg" alt="" src="" />' +
+                '<figcaption id="gLbCap"></figcaption>' +
+              '</figure>' +
+              '<button type="button" class="g-lb__x" id="gLbX" aria-label="Close">&times;</button>' +
+            '</div>';
         while (d.firstChild) document.body.appendChild(d.firstChild);
     }
 
@@ -180,7 +198,44 @@ window.G = (function () {
         if (onClose) onClose();
     }
 
+    /* A student photograph is how a reviewer confirms they have the right person, and a 48px
+       avatar is not enough for that on its own. Opening it costs no room on the panel: the
+       photograph is already loaded small, and the large one is fetched only when asked for. */
+    function openPhoto(regno, caption) {
+        var lb = qs('gLb');
+        if (!lb) return;
+        qs('gLbImg').src = photo(regno, 480);
+        qs('gLbCap').textContent = caption || regno;
+        lb.classList.add('is-open');
+    }
+
+    function closePhoto() {
+        var lb = qs('gLb');
+        if (lb) lb.classList.remove('is-open');
+    }
+
+    function wirePhoto() {
+        var lb = qs('gLb');
+        if (!lb || lb.getAttribute('data-wired')) return;
+        lb.setAttribute('data-wired', '1');
+        lb.addEventListener('click', closePhoto);
+        document.addEventListener('keydown', function (e) {
+            // Escape closes the photograph first, and only then the modal underneath it.
+            if (e.key === 'Escape' && lb.classList.contains('is-open')) {
+                e.stopPropagation();
+                closePhoto();
+            }
+        }, true);
+        var b = qs('gModalPhotoBtn');
+        if (b) b.addEventListener('click', function () {
+            var c = currentStudent();
+            if (!c) return;
+            openPhoto(c.student.regno, c.student.name + '  \u00b7  ' + c.student.regno);
+        });
+    }
+
     function wireModal(afterClose) {
+        wirePhoto();
         onClose = afterClose || null;
         var ov = qs('gOv');
         if (!ov) return;
@@ -213,7 +268,7 @@ window.G = (function () {
         for (var qi = 0; qi < Q.ids.length; qi++) if (Q.ids[qi] === regno) { Q.idx = qi; break; }
         qs('gModalName').textContent = regno;
         qs('gModalSub').textContent = 'Reading the record…';
-        qs('gModalPhoto').src = photo(regno);
+        qs('gModalPhoto').src = photo(regno, 144);
         qs('gModalBody').innerHTML = '<div class="g-load">Loading…</div>';
         qs('gModalFoot').innerHTML = '';
         openModal();
@@ -1261,6 +1316,7 @@ window.G = (function () {
         qs: qs, esc: esc, n0: n0, n1: n1, n2: n2,
         ajax: ajax, toast: toast,
         photo: photo, photoCell: photoCell, chip: chip, credits: credits,
+        openPhoto: openPhoto,
         readUrl: readUrl, writeUrl: writeUrl,
         fill: fill, cascade: cascade,
         mount: mount, openModal: openModal, closeModal: closeModal, wireModal: wireModal,

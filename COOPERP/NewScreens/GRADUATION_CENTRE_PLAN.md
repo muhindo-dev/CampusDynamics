@@ -1481,3 +1481,79 @@ reason 152 characters carrying the actual blocker.
 Auto-open with a full reason: `gateHidden=true workspaceUp=true bannerShown=true`, and `OpenSession`
 received exactly `{regno, reason, acknowledged:true}`. Auto-open with a short reason:
 `gateHidden=false workspaceUp=false sentToServer=null` — it falls back to the gate, as it must.
+
+---
+
+## 17. The student photograph — 2026-09-24
+
+Brief: *"creatively increase on size of photo for student when viewing it."*
+
+The avatar in the review modal was 32px — it had been trimmed from 38 during the density pass, and
+at that size it identifies a person only if you already know them. But simply making it large would
+give back the vertical space that pass had just won.
+
+So it does both: **48px at rest, and the whole photograph on demand.**
+
+### 17a. What the photographs actually are
+
+Measured before choosing any number — a 600-file random sample of the 6,641 on disk:
+
+| Size | Files | Share |
+|---|---|---|
+| 300 × 400 | 593 | **99%** |
+| 965 × 1240 | 3 | <1% |
+| 1091 × 1482, 840 × 1080, 413 × 531, 292 × 332 | 1 each | <1% |
+
+Only 5 of 600 are 480px or more on the short side. That settles two decisions:
+
+* **The large view must upscale a little or it is not worth opening.** A 300px image on a 1400px
+  screen feels like nothing happened. It renders at 420px — about 1.4× — which is plainly bigger
+  and well inside what a 300px source carries for recognising a face, the only thing this view is
+  for. Claiming more than 1.4× would be pretending to detail that is not in the file.
+* **The handler must never enlarge.** A 300px original rendered up to 480 is softer than the same
+  image left alone, so the resize is capped at 1.0 and the browser does the modest scaling instead.
+
+### 17b. The handler takes sizes now
+
+`StudentThumb.ashx?r=REGNO&s=N`, where N is one of **72, 144, 480** — a whitelist, not a number,
+because an open size parameter lets anyone fill the disk with variants of every student's face.
+
+The size is already part of the cache file name (`<file>_72.jpg`), so the **140 thumbnails already
+on disk stay valid** and each new size is built once, lazily, only for students someone actually
+opens.
+
+**The crop differs by size, and that is the point.** At 72 and 144 it is a square centre-crop,
+which is right for a small round avatar where the alternative is a squashed face. Above 144 the
+whole photograph is kept and fitted inside the box: these photographs are portraits, and a square
+centre-crop of a 300×400 portrait slices 50px off the top and 50px off the bottom — the head and
+the chin — at exactly the moment a reviewer is trying to confirm they have the right person.
+
+The large render is also encoded at quality 88 rather than 82, and converts the uncompressed
+bitmaps-named-.jpg into real JPEGs on the way through.
+
+### 17c. In the modal
+
+* The header avatar is **48px**, requested at 144 so it stays sharp on a dense screen.
+* It is a button, with a small expand mark in the corner so it reads as something openable, and a
+  `zoom-in` cursor.
+* Clicking opens the photograph over its own overlay above the evidence modal, with the student's
+  name and number beneath it. Nothing on the panel moves, and the large file is fetched only when
+  asked for.
+* **Escape closes the photograph first and leaves the modal open** — the layering has to match what
+  the reviewer thinks they are dismissing.
+
+Table rows are untouched at 72px: fifty faces in a list is exactly the case that handler was
+written to keep cheap.
+
+### 17d. Verified
+
+```
+headerSrc=StudentThumb.ashx?r=MRU2022000514&s=144   headerBox=48x48
+lightboxOpen=true   bigSrc=StudentThumb.ashx?r=MRU2022000514&s=480
+caption=[ANTHONY JJUUKO  ·  MRU2022000514]
+afterEsc_lightbox=false   afterEsc_modalStillOpen=true
+```
+
+Header layout at 1500 / 1024 / 760 / 420px: `avatar=48x48`, `headerH=63`, title inside the header,
+no horizontal overflow at any width. Rendered against a real 300×400 student photograph: the whole
+head is visible, uncropped.
