@@ -52,6 +52,10 @@
   <!-- ══ Step 2: the workspace ══ -->
   <div id="rx-workspace" style="display:none">
 
+    <%-- Shown only when the sitting was opened straight from a link, so a reason recorded on
+         the user's behalf is never invisible to them. --%>
+    <div class="rx-auto" id="rx-auto" style="display:none"></div>
+
     <div class="rx-card">
       <div class="rx-card__bd">
         <div class="rx-student" id="rx-student"></div>
@@ -214,5 +218,5 @@
   </div>
 </div>
 
-<script src="js/rearrange-manage.js?v=20260921e" type="text/javascript"></script>
+<script src="js/rearrange-manage.js?v=20260924a" type="text/javascript"></script>
 </asp:Content>

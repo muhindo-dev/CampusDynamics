@@ -523,3 +523,38 @@
     /* Dragging is unreliable on touch; the Move-to control is the real path there. */
     .rx-course { cursor: default; }
 }
+
+/* ── a sitting opened straight from a link ────────────────────────────────
+   The reason was written by the screen the user came from, not typed by them, so it is shown
+   back plainly: where it came from, what was stored, and that it is under their name. A reason
+   recorded on someone's behalf must never be invisible to them. */
+.rx-auto {
+    background: #f0f6ff; border: 1px solid #cddffa; border-left: 3px solid #174DA4;
+    border-radius: 4px; padding: 9px 12px; margin-bottom: 12px;
+}
+.rx-auto__h { font-size: 11.5px; color: #1e3a6b; }
+.rx-auto__r {
+    font-size: 12px; color: #05275C; margin: 5px 0 4px; line-height: 1.5;
+    background: #fff; border: 1px solid #dbe6f7; border-radius: 3px; padding: 6px 9px;
+}
+.rx-auto__f { font-size: 10px; color: #6b7280; }
+
+/* ── mark reasons, collected once at review ───────────────────────────────
+   Editing a mark used to open a dialog per FIELD: correcting one course cost two, a locked one
+   cost two more stacked. Twenty boxes for a handful of students, and the twentieth reason was
+   never written with the care of the first — which is the real damage, because the reason is
+   the whole point of recording it. The edits are now taken freely and the reason is asked for
+   once, here, in the review that already stands between this screen and the database. */
+.rx-mr { background: #f8fafc; border: 1px solid #e0e5ed; border-radius: 4px;
+         padding: 9px 11px; margin-bottom: 8px; }
+.rx-mr .rx-ta { width: 100%; }
+
+/* One box per change, for the exception that needs its own wording. Empty means "same as above". */
+.rx-mr__one { padding: 0 0 7px 30px; margin-top: -3px; }
+.rx-mr__in { width: 100%; font-size: 11px; padding: 4px 7px; }
+.rx-mr__in::placeholder { color: #b6bfcc; font-style: italic; }
+.rx-mr__in.is-bad { border-color: #f0c9c5; background: #fffafa; }
+
+/* The pending pill says what is still missing, so Confirm being disabled is never a mystery. */
+.rx-pending--ask { background: #fff8e1; border-color: #fde68a; color: #92400e; }
+

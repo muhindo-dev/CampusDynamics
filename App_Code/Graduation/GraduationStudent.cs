@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Configuration;
 using System.Web.Script.Serialization;
@@ -31,6 +31,15 @@ public static class GraduationStudent
 
             regno = (regno ?? "").Trim();
             if (regno == "") return J.Serialize(new { success = false, message = "No student was given." });
+
+            // Whether to offer the rearrangement link at all. Drawing a link that lands the
+            // reviewer on a permission wall is worse than not drawing it.
+            bool canRearrange = false;
+            try
+            {
+                canRearrange = RoleAccessService.CanAccess(StudentRearrangeService.SlugManage);
+            }
+            catch { canRearrange = false; }
 
             var results = new List<object>();
             var structure = new List<object>();
@@ -123,6 +132,7 @@ public static class GraduationStudent
             return J.Serialize(new
             {
                 success = true,
+                canRearrange = canRearrange,
                 student = g,
                 results = results,
                 structure = structure,

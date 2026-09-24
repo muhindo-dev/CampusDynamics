@@ -1386,3 +1386,98 @@ the modal finally closes. One `GetStudent` per candidate and no redundant fetche
   ones improve on their own as the module is used.
 * The PDF is a document, not a spreadsheet: the extra summary sheets are offered for the Excel
   workbook only, and the dialog says so rather than silently dropping them.
+
+---
+
+## 16. From a blocked candidate to the fix — 2026-09-24
+
+Brief: *"in the modal, add some link that can initiate session for rearrangement of students
+performance … automatically with reason … open in new page … and not force user to first enter
+session info … in StudentRearrangeManage avoid a lot of popups when changing marks."*
+
+### 16a. The link
+
+Most of what blocks a candidate is a records fault — a mark in the wrong semester, a course
+registered twice, a paper never marked. The reviewer who finds it is the one who should be able to
+act on it, so the review modal now carries **Fix this student’s record**, under the six figures and
+above the folded detail: the point at which someone has just read what is wrong.
+
+It opens `StudentRearrangeManage.aspx` in a new tab with the sitting **already started**. The reason
+is composed from the screen the reviewer is looking at — the student, the programme, and the actual
+blocking finding — which is both better wording than most people would type and 150-odd characters
+against a 30-character minimum.
+
+The link is drawn only when the user holds `academics.rearrange.manage`. Offering a link that lands
+someone on a permission wall is worse than not offering it.
+
+### 16b. Opening a sitting from a link
+
+`StudentRearrangeManage.aspx` now takes three ways in:
+
+| URL | Behaviour |
+|---|---|
+| `?session=n` | resume a sitting already open |
+| `?auto=1&regno=X&reason=…` | open one immediately |
+| nothing | the gate, prefilled from `?regno=` if given |
+
+**The auto path skips no step.** The same `OpenSession` runs, the same reason is stored against the
+sitting, and the same acknowledgement is recorded. What it skips is the *retyping* of a student
+number and a reason the user has just read on the previous screen.
+
+Because a reason was composed on their behalf, the workspace shows a banner naming where the sitting
+came from, quoting the reason verbatim, and saying it is recorded under their name. A reason written
+for someone must never be invisible to them.
+
+A reason shorter than the 30-character minimum does **not** auto-open: the gate appears with
+everything prefilled and an explanation, so the user completes it rather than being dropped into a
+sitting on a reason that would not have been accepted if typed.
+
+### 16c. The popups when changing marks
+
+Editing a mark opened the reason dialog on **every field**. Coursework and exam are separate inputs,
+so correcting one course cost two dialogs; a locked mark cost two more, stacked. Fixing a handful of
+students meant dismissing twenty boxes — and the twentieth reason was never written with the care of
+the first, which is the real damage, because the reason is the whole point of recording it.
+
+**Nothing is written without a reason. What changed is when it is asked for.** Edits are taken
+freely and flagged; the reason is collected once, in the review step that already stands between
+this screen and the database:
+
+* The pending pill reads `3 pending changes · 3 need a reason`, so a disabled Confirm is never a
+  mystery.
+* The review modal shows one box — *"Why are these marks being changed?"* — with the existing
+  `REASONS.mark` chips.
+* Each change also gets its own box, placeholder *"Same as above"*, for the exception that needs
+  different wording. Typing in the shared box fills every row that has not been given its own.
+* **Confirm stays disabled until every mark change has a reason** of at least `minOpReason`
+  characters. The rule is unchanged; only the number of interruptions is.
+
+A **locked or finally-published** mark still stops you where you are. Overriding a published result
+is a different decision from correcting a typo and should not be swept along in a batch — but the
+second, stacked dialog is gone: the override is asked once, and the reason for the change itself
+comes with the rest at review.
+
+### 16d. Verified — 2026-09-24
+
+Driven headless against the real script, with the harness DOM taken from the page’s own markup so
+no element could be missing by accident.
+
+```
+workspaceUp=true | edit1=true
+dialogAfter1=false | dialogAfter3=false          <- three mark edits, no dialog
+pill=[3 pending changes  ·  3 need a reason]
+sharedBox=true perChange=3 | confirmBlocked=true | confirmEnabled=true
+savedMarks=3
+reasons=cw:Marks entry erro / exam:Exam script reco / cw:Marks entry erro
+allReasoned=true
+```
+
+The shared reason reached two changes and the individually-typed one reached the third; every mark
+op left with a reason at or above the minimum.
+
+The link: `href=StudentRearrangeManage.aspx auto=1 regno=MRU2022000514 target=_blank rel=noopener`,
+reason 152 characters carrying the actual blocker.
+
+Auto-open with a full reason: `gateHidden=true workspaceUp=true bannerShown=true`, and `OpenSession`
+received exactly `{regno, reason, acknowledged:true}`. Auto-open with a short reason:
+`gateHidden=false workspaceUp=false sentToServer=null` — it falls back to the gate, as it must.

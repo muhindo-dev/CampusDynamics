@@ -467,6 +467,30 @@ window.G = (function () {
             fact('Zero / unmarked', (g.zeroMarks + g.missingScores) + '', 'usually not yet marked') +
             '</div>';
 
+        // ── the way out of a problem, not just a description of it ──────────
+        //  Most of what blocks a candidate is a records fault — a mark in the wrong semester, a
+        //  course registered twice, an unmarked paper. The reviewer who finds it is the one who
+        //  should be able to act on it, so the link carries the student and a reason composed
+        //  from this very screen, and the rearrangement session opens already started.
+        if (d.canRearrange) {
+            var why = 'Opened from the Graduation Centre while reviewing ' + g.regno +
+                      (g.progcode ? ' (' + g.progcode + ')' : '') + ' for graduation. ' +
+                      (blocks.length
+                         ? 'Blocked: ' + blocks[0].detail
+                         : (warns.length ? 'Flagged: ' + warns[0].detail
+                                         : 'Checking the record before clearing.'));
+            h += '<a class="g-fix" target="_blank" rel="noopener" href="StudentRearrangeManage.aspx?auto=1' +
+                 '&regno=' + encodeURIComponent(g.regno) +
+                 '&reason=' + encodeURIComponent(why) + '">' +
+                 '<svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" ' +
+                 'stroke-width="2" stroke-linecap="round"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 ' +
+                 '1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 ' +
+                 '7.94-7.94l-3.76 3.76z"/></svg>' +
+                 '<span><b>Fix this student\u2019s record</b>' +
+                 'Opens a rearrangement session in a new tab, already started against ' + esc(g.regno) +
+                 ' with the reason filled in.</span></a>';
+        }
+
         h += '<div class="g-src">Credit requirement: ' + esc(g.cuSourceLabel || 'not established') +
              (g.specIsPlaceholder
                 ? '. This student carries no real specialisation, so their courses cannot be matched to a curriculum.'

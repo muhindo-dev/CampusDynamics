@@ -504,3 +504,13 @@
 .g-xs__h--sub{border-bottom:1px solid var(--line);}
 .g-xg__h em{font-style:normal;text-transform:none;letter-spacing:0;color:#b6bfcc;}
 
+/* The link out to a rearrangement session. Most of what blocks a candidate is a records fault,
+   and the person who finds it should be able to act on it without re-keying the student. */
+.g-fix{display:flex;align-items:flex-start;gap:8px;text-decoration:none;
+    background:#f0f6ff;border:1px solid #cddffa;border-left:3px solid var(--accent);
+    border-radius:3px;padding:7px 10px;margin-bottom:8px;}
+.g-fix:hover{background:#e4eefc;border-color:var(--accent);}
+.g-fix svg{color:var(--accent);flex:0 0 13px;margin-top:2px;}
+.g-fix span{min-width:0;font-size:10.5px;color:var(--ink2);line-height:1.4;}
+.g-fix b{display:block;font-size:11.5px;color:var(--accent);}
+

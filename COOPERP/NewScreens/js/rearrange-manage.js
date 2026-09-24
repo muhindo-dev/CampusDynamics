@@ -266,6 +266,9 @@ document.addEventListener('click', function (e) {
     closeStuList();
 });
 
+/// Set when the sitting was opened straight from a link, so the workspace can say so.
+var AUTO_FROM = '';
+
 function openSession() {
     var btn = qs('rx-open');
     btn.disabled = true; btn.textContent = 'Opening…';
@@ -313,7 +316,23 @@ function loadWorkspace() {
         qs('rx-workspace').style.display = '';
         renderStudent();
         render();
+        autoBanner();
     });
+}
+
+/// Says where an auto-opened sitting came from and what reason was stored for it. A reason
+/// recorded on someone's behalf has to be visible to them, and editable.
+function autoBanner() {
+    var host = qs('rx-auto');
+    if (!host) return;
+    if (!AUTO_FROM) { host.style.display = 'none'; return; }
+    host.style.display = '';
+    host.innerHTML =
+        '<div class="rx-auto__h">This sitting was opened from ' + esc(AUTO_FROM) +
+        ', against <b>' + esc(DATA.student.regno) + '</b>.</div>' +
+        '<div class="rx-auto__r">' + esc(DATA.session.reason) + '</div>' +
+        '<div class="rx-auto__f">Recorded under your name. Every change you make in this sitting ' +
+        'carries it.</div>';
 }
 
 function renderStudent() {
@@ -463,8 +482,12 @@ function render() {
 
     var n = pendingCount();
     var pill = qs('rx-pending');
-    pill.textContent = n === 0 ? 'No pending changes' : n + ' pending change' + (n === 1 ? '' : 's');
-    pill.className = 'rx-pending' + (n === 0 ? ' rx-pending--zero' : '');
+    var need = marksNeedingReason().length;
+    pill.textContent = n === 0
+        ? 'No pending changes'
+        : n + ' pending change' + (n === 1 ? '' : 's') +
+          (need ? '  \u00b7  ' + need + ' need' + (need === 1 ? 's' : '') + ' a reason' : '');
+    pill.className = 'rx-pending' + (n === 0 ? ' rx-pending--zero' : (need ? ' rx-pending--ask' : ''));
     qs('rx-save').disabled = n === 0 || SAVING;
     qs('rx-discard').disabled = n === 0 || SAVING;
 
@@ -1040,6 +1063,22 @@ function settle(regId) {
     setTimeout(function () { el.classList.remove('is-settling'); }, 300);
 }
 
+/*
+   Editing a mark.
+
+   This used to open the reason dialog on EVERY field. Coursework and exam are separate inputs,
+   so correcting one course cost two dialogs; a locked mark cost two more, stacked. Fixing a
+   handful of students meant dismissing twenty boxes, and the twentieth reason was never written
+   with the care of the first — which is the real damage, because the reason is the point of
+   recording it at all.
+
+   Nothing is written without a reason. What changed is WHEN it is asked for: the edits are taken
+   freely, flagged as needing a reason, and asked for once in the review step that already stands
+   between this screen and the database. One considered sentence beats twenty hurried ones.
+
+   A locked mark still stops you where you are, because overriding a published result is a
+   different decision from correcting a typo and it should not be swept along in a batch.
+*/
 function onMarkEdit(regId, field, raw) {
     var c = findCourse(regId);
     if (!c || c._isNew) return;
@@ -1054,9 +1093,10 @@ function onMarkEdit(regId, field, raw) {
         render(); return;
     }
 
-    function commit(reason, overrideReason) {
+    function commit(overrideReason) {
         PEND.marks[regId] = PEND.marks[regId] || {};
-        PEND.marks[regId][field] = { from: was, to: val, reason: reason, overrideReason: overrideReason || '' };
+        // reason is filled in at review time; '' here means "still to be given".
+        PEND.marks[regId][field] = { from: was, to: val, reason: '', overrideReason: overrideReason || '' };
         render(); settle(regId);
     }
 
@@ -1075,28 +1115,15 @@ function onMarkEdit(regId, field, raw) {
                           'published result, the semester GPA and possibly the classification.'
                         : '') + '</div>' +
                      '<div class="rx-warn">' + esc(field === 'cw' ? 'Coursework' : 'Exam') + ': <b>' +
-                     fmt(was) + '</b> → <b>' + fmt(val) + '</b></div>',
+                     fmt(was) + '</b> \u2192 <b>' + fmt(val) + '</b></div>',
             min: DATA.minOverrideReason,
-            hint: 'At least ' + DATA.minOverrideReason + ' characters. Recorded as an override.'
-        }, function (ov) {
-            askReason({
-                title: 'Reason for this mark change', kind: 'mark',
-                context: '<div class="rx-warn">' + esc(c.course) + ' — ' + esc(field === 'cw' ? 'coursework' : 'exam') +
-                         ' <b>' + fmt(was) + '</b> → <b>' + fmt(val) + '</b></div>',
-                min: DATA.minOpReason,
-                hint: 'Every mark change carries its own reason.'
-            }, function (rsn) { commit(rsn, ov); });
-        });
+            hint: 'At least ' + DATA.minOverrideReason + ' characters. Recorded as an override and reportable. ' +
+                  'You will give the reason for the change itself when you save.'
+        }, function (ov) { commit(ov); }, function () { render(); });
         return;
     }
 
-    askReason({
-        title: 'Reason for this mark change', kind: 'mark',
-        context: '<div class="rx-warn">' + esc(c.course) + ' — ' + esc(field === 'cw' ? 'coursework' : 'exam') +
-                 ' <b>' + fmt(was) + '</b> → <b>' + fmt(val) + '</b></div>',
-        min: DATA.minOpReason,
-        hint: 'Every mark change carries its own reason. At least ' + DATA.minOpReason + ' characters.'
-    }, function (rsn) { commit(rsn, ''); }, function () { render(); });
+    commit('');
 }
 
 function requestDelete(regId) {
@@ -1389,6 +1416,17 @@ function buildOps() {
     return ops;
 }
 
+/// Every pending mark change that has no reason yet, as {regId, field} pairs.
+function marksNeedingReason() {
+    var out = [];
+    for (var k in PEND.marks) if (PEND.marks.hasOwnProperty(k)) {
+        var m = PEND.marks[k];
+        if (m.cw && !String(m.cw.reason || '').trim()) out.push({ regId: +k, field: 'cw' });
+        if (m.exam && !String(m.exam.reason || '').trim()) out.push({ regId: +k, field: 'exam' });
+    }
+    return out;
+}
+
 function plain(op) {
     var c;
     switch (op.op) {
@@ -1411,8 +1449,11 @@ function plain(op) {
         case 'MARK':
             c = findCourse(op.regId);
             var mk = PEND.marks[op.regId][op.field];
+            // The reason is no longer appended here: in the review it sits in its own box under
+            // this line, and trailing "reason:" with nothing after it read like a missing value.
             return (c ? c.course : 'Course ' + op.regId) + ' ' + (op.field === 'cw' ? 'coursework' : 'exam') +
-                   ' mark changed from ' + fmt(mk.from) + ' to ' + fmt(mk.to) + ', reason: ' + op.reason;
+                   ' mark changed from ' + fmt(mk.from) + ' to ' + fmt(mk.to) +
+                   (op.reason ? ' — ' + op.reason : '');
         case 'DELETE':
             c = findCourse(op.regId);
             return (c ? c.course : 'Course ' + op.regId) + ' registration removed (archived and reversible), reason: ' + op.reason;
@@ -1447,10 +1488,26 @@ qs('rx-save').addEventListener('click', function () {
         var items = ops.filter(function (o) { return o.op === kind; });
         if (!items.length) continue;
         h += '<div class="rx-review__group"><div class="rx-review__gh">' + GROUP[kind] + ' (' + items.length + ')</div>';
+
+        // Mark changes carry their reason here rather than in a dialog per field. One box fills
+        // them all; any single change can still be given wording of its own.
+        if (kind === 'MARK') {
+            h += '<div class="rx-mr">' +
+                 '<label class="rx-lbl" for="rx-mr-all">Why are these marks being changed?</label>' +
+                 '<textarea id="rx-mr-all" class="rx-ta" style="min-height:56px" ' +
+                 'placeholder="One reason covering the changes below. It is recorded against every one of them."></textarea>' +
+                 '<div class="rx-hint" id="rx-mr-hint">At least ' + DATA.minOpReason + ' characters.</div>' +
+                 '<div class="rx-chips" id="rx-mr-chips"></div></div>';
+        }
+
         for (var m = 0; m < items.length; m++) {
             n++;
             h += '<div class="rx-review__item ' + CLS[kind] + '"><span class="rx-review__n">' + n + '</span>' +
                  '<span>' + esc(plain(items[m])) + '</span></div>';
+            if (kind === 'MARK')
+                h += '<div class="rx-mr__one"><input type="text" class="rx-in rx-mr__in" ' +
+                     'data-reg="' + items[m].regId + '" data-field="' + items[m].field + '" ' +
+                     'placeholder="Same as above" /></div>';
         }
         h += '</div>';
     }
@@ -1460,11 +1517,71 @@ qs('rx-save').addEventListener('click', function () {
          'and the old and new values are recorded in the log.</div>';
 
     qs('rx-review-body').innerHTML = h;
-    qs('rx-confirm').disabled = false;
     qs('rx-confirm').textContent = 'Confirm and save ' + ops.length + ' change(s)';
     OP_ID = uuid();      // one id per review; a retry of THIS save cannot double-apply
+    wireMarkReasons();
     openModal('rx-review-modal');
+    var all = qs('rx-mr-all');
+    if (all) setTimeout(function () { try { all.focus(); } catch (e) { } }, 40);
 });
+
+/*
+   The mark reasons, collected once.
+
+   Typing in the shared box fills every per-change box that has not been given wording of its own,
+   so the common case is one sentence and the exception is still available. Confirm stays disabled
+   until every mark change has a reason of at least the required length: the rule that nothing is
+   written without a reason is unchanged — only the number of interruptions is.
+*/
+function wireMarkReasons() {
+    var all = qs('rx-mr-all');
+    var rows = qs('rx-review-body').querySelectorAll('.rx-mr__in');
+    var min = DATA.minOpReason;
+
+    function reasonFor(el) {
+        var own = el.value.trim();
+        return own !== '' ? own : (all ? all.value.trim() : '');
+    }
+
+    function grade() {
+        if (!rows.length) { qs('rx-confirm').disabled = false; return; }
+        var short = 0;
+        for (var i = 0; i < rows.length; i++) {
+            var v = reasonFor(rows[i]);
+            var ok = v.length >= min;
+            rows[i].classList.toggle('is-bad', !ok);
+            if (!ok) short++;
+        }
+        var hint = qs('rx-mr-hint');
+        if (hint) {
+            hint.textContent = short === 0
+                ? 'Every mark change has a reason.'
+                : short + ' of ' + rows.length + ' still need at least ' + min + ' characters.';
+            hint.className = 'rx-hint' + (short === 0 ? '' : ' rx-hint--bad');
+        }
+        qs('rx-confirm').disabled = short > 0;
+    }
+
+    if (all) {
+        all.addEventListener('input', grade);
+        fillChips('rx-mr-chips', 'mark', 'rx-mr-all', grade);
+    }
+    for (var i = 0; i < rows.length; i++) {
+        rows[i].addEventListener('input', grade);
+        // Read back into PEND as it is typed, so buildOps() always reflects what is on screen.
+        rows[i].addEventListener('input', function () {
+            var reg = +this.getAttribute('data-reg'), f = this.getAttribute('data-field');
+            if (PEND.marks[reg] && PEND.marks[reg][f]) PEND.marks[reg][f].reason = reasonFor(this);
+        });
+    }
+    if (all) all.addEventListener('input', function () {
+        for (var j = 0; j < rows.length; j++) {
+            var reg = +rows[j].getAttribute('data-reg'), f = rows[j].getAttribute('data-field');
+            if (PEND.marks[reg] && PEND.marks[reg][f]) PEND.marks[reg][f].reason = reasonFor(rows[j]);
+        }
+    });
+    grade();
+}
 
 qs('rx-confirm').addEventListener('click', function () {
     if (SAVING) return;
@@ -1521,7 +1638,20 @@ window.addEventListener('beforeunload', function (e) {
 });
 
 /* ── boot ─────────────────────────────────────────────────────────────── */
-/* Resume the sitting named in the URL; otherwise offer the gate, prefilled if asked. */
+/*
+   Three ways in:
+
+     ?session=n                    resume a sitting already open
+     ?auto=1&regno=X&reason=...    open one immediately — the Graduation Centre sends people
+                                   here from a candidate they are reviewing, and making them
+                                   retype a student number and a reason they have just read on
+                                   the previous screen is work the computer should do
+     (nothing)                     the gate, prefilled from ?regno= if given
+
+   The auto path does not skip anything: the same OpenSession runs, the same reason is stored
+   against the sitting, and the workspace shows a banner naming where it came from and what was
+   recorded, with the reason editable. Nothing is hidden — it is simply not retyped.
+*/
 (function () {
     var sid = parseInt(urlParam('session') || '0', 10);
     if (sid > 0) {
@@ -1529,10 +1659,30 @@ window.addEventListener('beforeunload', function (e) {
         qs('rx-gate').style.display = 'none';
         qs('rx-boot').style.display = '';
         loadWorkspace();
-    } else {
-        var rg = urlParam('regno');
-        if (rg) qs('rx-regno').value = rg;
+        return;
     }
+
+    var rg = (urlParam('regno') || '').trim();
+    var rsn = (urlParam('reason') || '').trim();
+    if (rg) qs('rx-regno').value = rg;
+    if (rsn) qs('rx-reason').value = rsn.slice(0, 900);
+
+    if (urlParam('auto') === '1' && rg && rsn.length >= MIN_REASON) {
+        AUTO_FROM = urlParam('from') || 'the Graduation Centre';
+        qs('rx-ack').checked = true;
+        gateCheck();
+        // Straight into the sitting. If it is refused, the gate is already filled in and the
+        // reason is on screen, so the user can correct whatever was wrong.
+        openSession();
+        return;
+    }
+
+    if (urlParam('auto') === '1' && rg && rsn.length > 0 && rsn.length < MIN_REASON) {
+        qs('rx-gate-msg').innerHTML = '<span class="rx-hint rx-hint--bad">The reason that came ' +
+            'with this link is shorter than the ' + MIN_REASON + ' characters required. ' +
+            'Add to it and open the session.</span>';
+    }
+    gateCheck();
 })();
 
 window.addEventListener('popstate', function () {
