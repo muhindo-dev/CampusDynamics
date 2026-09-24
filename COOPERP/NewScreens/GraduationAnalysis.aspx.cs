@@ -1,661 +1,267 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Data;
-using System.Web.UI;
-using System.Web.UI.WebControls;
-using MySql.Data.MySqlClient;
-using System.Configuration;
-using System.IO;
-using System.Text;
+using System.Globalization;
+using System.Web.Script.Serialization;
+using System.Web.Services;
 
+// =====================================================================
+//  Graduation Analysis.
+//
+//  Rebuilt. What stood here was a DevExpress/GridView page in its own
+//  "ga-" idiom with a navy banner, bootstrap colours, a chart that was
+//  never built and a PDF button that called window.print(). It had no
+//  scope resolution at all - a Dean saw the whole university - and its
+//  Excel exports produced empty files, because they called gv.DataBind()
+//  on a postback where nothing had rebound the data.
+//
+//  It now works the way the rest of the Graduation module works: the
+//  g- design system, SidebarMaster, MarksScopeResolver, a first paint
+//  rendered into the page rather than fetched, GET-driven state, and the
+//  same branded export writers.
+//
+//  All the arithmetic lives in GraduationAnalytics. This file is the
+//  screen: it resolves scope once, hands it down, and streams files.
+// =====================================================================
 public partial class COOPERP_NewScreens_GraduationAnalysis : System.Web.UI.Page
 {
-    private string connectionString = ConfigurationManager.ConnectionStrings["vacConnectionString"].ConnectionString;
+    private static readonly JavaScriptSerializer J = new JavaScriptSerializer();
 
-    /// <summary>
-    /// The signed-in user's faculties and programmes.
-    ///
-    /// This page had none. Every query read acad_graduands with no restriction at all, and the
-    /// faculty dropdown was "SELECT DISTINCT faculty_code, faculty_name FROM acad_faculty" — so a
-    /// Dean or a HOD opening Graduation Analysis saw the whole university's graduands, while the
-    /// four pages beside it in the same menu correctly showed them only their own. That is not a
-    /// difference in presentation; it is the same menu answering the same question two different
-    /// ways depending on which item you click.
-    /// </summary>
-    private MarksScope Scope
-    {
-        get
-        {
-            if (_scope == null) _scope = MarksScopeResolver.Resolve();
-            return _scope;
-        }
-    }
-    private MarksScope _scope;
+    /// <summary>The first paint, rendered into the page. See the other four screens.</summary>
+    public string BootJson = "null";
+    public string DataJson = "null";
+    public string DefaultYear = "";
 
     protected void Page_Load(object sender, EventArgs e)
     {
-        if (!Scope.HasAccess)
+        string fmt = Request.Form["gradExport"];
+        if (!string.IsNullOrEmpty(fmt)) { Export(fmt); return; }
+        Prime();
+    }
+
+    /// <summary>
+    /// Everything the opening view needs, in the page itself.
+    ///
+    /// The current academic year is selected on arrival, resolved the same way the rest of the
+    /// module resolves it - through AcademicYearHelper, with the result checked against the
+    /// years that actually have graduands, because acad_graduands holds years that helper has
+    /// never heard of and a default nobody can see data for is worse than no default.
+    /// </summary>
+    private void Prime()
+    {
+        try
         {
-            pnlNoAccess.Visible = true;
-            pnlAnalysis.Visible = false;
+            MarksScope sc = MarksScopeResolver.Resolve();
+            if (!sc.HasAccess)
+            {
+                BootJson = GraduationBootstrap.Denied();
+                return;
+            }
+
+            object lists = GraduationAnalytics.Lists(sc);
+            var years = new List<string>();
+            try
+            {
+                var t = lists.GetType().GetProperty("years").GetValue(lists, null) as List<string>;
+                if (t != null) years = t;
+            }
+            catch { }
+
+            string want = "";
+            try { want = AcademicYearHelper.GetCurrentAcademicYear(); }
+            catch { want = ""; }
+            // The current year only if somebody has actually graduated in it; otherwise the most
+            // recent year that has anybody, which is what a reader expects to land on.
+            DefaultYear = (want != "" && years.Contains(want)) ? want
+                        : (years.Count > 0 ? years[0] : "");
+
+            BootJson = GraduationBootstrap.ForScriptBlock(J.Serialize(new
+            {
+                success = true,
+                hasAccess = true,
+                scopeLabel = sc.Label,
+                roleNote = sc.RoleNote,
+                currentYear = DefaultYear,
+                lists = lists
+            }));
+
+            // And the opening figures, so the page paints with data rather than a spinner.
+            string cfg = J.Serialize(new { lens = "year", acadYear = DefaultYear });
+            DataJson = GraduationBootstrap.ForScriptBlock(GraduationAnalytics.Analyse(sc, cfg));
+        }
+        catch (Exception ex)
+        {
+            BootJson = J.Serialize(new { success = false, message = ex.Message });
+        }
+    }
+
+    [WebMethod(EnableSession = true)]
+    public static string Analyse(string configJson)
+    { return GraduationAnalytics.Analyse(configJson); }
+
+    [WebMethod(EnableSession = true)]
+    public static string Summarise(string configJson)
+    { return GraduationAnalytics.Summarise(configJson); }
+
+    // ─────────────────────────────────────────────────────────────────
+    //  Exports, through the module's own writers so a file from this
+    //  page is branded exactly like one from the graduation list.
+    // ─────────────────────────────────────────────────────────────────
+    private void Export(string fmt)
+    {
+        MarksScope scope = MarksScopeResolver.Resolve();
+        if (!scope.HasAccess) return;
+
+        string cfgJson = Request.Form["gradConfig"] ?? "";
+        string raw = GraduationAnalytics.Analyse(scope, cfgJson);
+        var d = J.Deserialize<Dictionary<string, object>>(raw);
+        object ok;
+        if (!d.TryGetValue("success", out ok) || !Convert.ToBoolean(ok)) return;
+
+        GraduationAnalytics.Filter f = GraduationAnalytics.Parse(cfgJson);
+        string lens = Convert.ToString(d["lensLabel"]);
+        var H = (Dictionary<string, object>)d["headline"];
+
+        var cover = new List<KeyValuePair<string, string>>();
+        cover.Add(new KeyValuePair<string, string>("Population", lens));
+        cover.Add(new KeyValuePair<string, string>("Graduands", Convert.ToString(H["graduands"])));
+        cover.Add(new KeyValuePair<string, string>("Programmes", Convert.ToString(H["programmes"])));
+        cover.Add(new KeyValuePair<string, string>("Faculties", Convert.ToString(H["faculties"])));
+        cover.Add(new KeyValuePair<string, string>("Mean CGPA", Convert.ToString(H["avgCgpa"])));
+        cover.Add(new KeyValuePair<string, string>("Women",
+            Convert.ToString(H["women"]) + "  (" + Convert.ToString(H["womenPct"]) + "%)"));
+
+        string file = GraduationExport.FileName("graduation-analysis",
+            f.lens == "ceremony" ? ("ceremony-" + f.ceremony) : f.acadYear);
+
+        if (fmt == "summary")
+        {
+            SendSummary(scope, cfgJson, lens, cover, file);
             return;
         }
-        if (!IsPostBack)
-        {
-            lblScope.Text = Scope.RoleNote + (Scope.Label == "" ? "" : "  \u00b7  " + Scope.Label);
-            LoadFilters();
-            LoadAnalysisData();
-        }
+
+        GraduationExport.Sheet prog = SheetOf(d, "programmes",
+            new[] { "Code", "Programme", "Faculty", "Award level", "Graduands",
+                    "Women", "Men", "Mean CGPA", "Top class" },
+            new[] { "code", "name", "faculty", "level", "n", "women", "men", "avgCgpa", "top" },
+            new[] { 4, 5, 6, 7, 8 });
+
+        var sheets = new List<GraduationExport.Sheet>();
+        sheets.Add(prog);
+        sheets.Add(SheetOf(d, "faculties",
+            new[] { "Faculty", "Graduands", "Programmes", "Women", "Men", "Mean CGPA", "Top class" },
+            new[] { "name", "n", "progs", "women", "men", "avgCgpa", "top" },
+            new[] { 1, 2, 3, 4, 5, 6 }));
+        sheets.Add(LevelSheet(d));
+        sheets.Add(SheetOf(d, "trend",
+            new[] { "Academic year", "Graduands", "Women", "Men", "Mean CGPA", "Top class" },
+            new[] { "year", "n", "women", "men", "avgCgpa", "top" },
+            new[] { 1, 2, 3, 4, 5 }));
+
+        var notes = new GraduationExport.Sheet();
+        notes.Name = "Data notes";
+        notes.Columns = new[] { "What to be careful of" };
+        foreach (object n in (System.Collections.ArrayList)d["notes"])
+            notes.Rows.Add(new[] { Convert.ToString(n) });
+        if (notes.Rows.Count == 0)
+            notes.Rows.Add(new[] { "Nothing in this selection is missing a year, a class, a gender or a CGPA." });
+        sheets.Add(notes);
+
+        if (fmt == "csv")
+            GraduationExport.Csv(Response, file, "Graduation Analysis", scope.Label, cover,
+                                 prog.Columns, prog.Rows);
+        else if (fmt == "xls")
+            GraduationExport.Workbook(Response, file, "Graduation Analysis", scope.Label, cover, sheets);
+        else
+            GraduationPdf.Send(Response, file, "Graduation Analysis",
+                               f.lens == "ceremony" ? "" : f.acadYear, scope.Label, cover,
+                               GraduationExport.PdfCols(prog),
+                               GraduationExport.ToTable(prog, null), "", false, null);
     }
 
-    protected void LoadFilters()
-    {
-        using (MySqlConnection conn = new MySqlConnection(connectionString))
-        {
-            conn.Open();
-
-            // Faculties
-            // Only faculties this user actually has programmes in. Offering a filter that
-            // returns nothing is worse than not offering it.
-            string sqlFaculty =
-                "SELECT DISTINCT f.faculty_code, f.faculty_name FROM acad_faculty f " +
-                "WHERE EXISTS (SELECT 1 FROM acad_programme p " +
-                "              WHERE TRIM(p.faculty_code)=TRIM(f.faculty_code)" +
-                Scope.ProgFilter("p", "progcode") + ") " +
-                "ORDER BY f.faculty_name";
-            using (MySqlCommand cmd = new MySqlCommand(sqlFaculty, conn))
-            {
-                using (MySqlDataReader dr = cmd.ExecuteReader())
-                {
-                    ddlFaculty.Items.Clear();
-                    ddlFaculty.Items.Add(new ListItem("-- All Faculties --", ""));
-                    while (dr.Read())
-                    {
-                        ddlFaculty.Items.Add(new ListItem(dr["faculty_name"].ToString(), dr["faculty_code"].ToString()));
-                    }
-                }
-            }
-
-            // Convocations (from graduands table)
-            string sqlConv = "SELECT DISTINCT convocation FROM acad_graduands WHERE convocation IS NOT NULL ORDER BY convocation DESC";
-            using (MySqlCommand cmd = new MySqlCommand(sqlConv, conn))
-            {
-                using (MySqlDataReader dr = cmd.ExecuteReader())
-                {
-                    ddlConvocation.Items.Clear();
-                    ddlConvocation.Items.Add(new ListItem("-- All --", ""));
-                    while (dr.Read())
-                    {
-                        string conv = dr["convocation"].ToString();
-                        ddlConvocation.Items.Add(new ListItem(conv, conv));
-                    }
-                }
-            }
-
-            // Set default convocation if available
-            if (ddlConvocation.Items.Count > 1)
-            {
-                ddlConvocation.SelectedIndex = 1;
-                litConvocationDisplay.Text = ddlConvocation.SelectedValue;
-            }
-            else
-            {
-                litConvocationDisplay.Text = "All";
-            }
-        }
-    }
-
-    protected void ddlFaculty_SelectedIndexChanged(object sender, EventArgs e)
-    {
-        LoadProgrammes();
-        LoadAnalysisData();
-    }
-
-    protected void LoadProgrammes()
-    {
-        using (MySqlConnection conn = new MySqlConnection(connectionString))
-        {
-            conn.Open();
-            string sql = "SELECT progcode, progname FROM acad_programme p WHERE 1=1";
-            if (!string.IsNullOrEmpty(ddlFaculty.SelectedValue))
-            {
-                sql += " AND p.faculty_code = @fac";
-            }
-            sql += Scope.ProgFilter("p", "progcode");
-            sql += " ORDER BY progname";
-
-            using (MySqlCommand cmd = new MySqlCommand(sql, conn))
-            {
-                if (!string.IsNullOrEmpty(ddlFaculty.SelectedValue))
-                {
-                    cmd.Parameters.AddWithValue("@fac", ddlFaculty.SelectedValue);
-                }
-
-                using (MySqlDataReader dr = cmd.ExecuteReader())
-                {
-                    ddlProgramme.Items.Clear();
-                    ddlProgramme.Items.Add(new ListItem("-- All Programmes --", ""));
-                    while (dr.Read())
-                    {
-                        ddlProgramme.Items.Add(new ListItem(dr["progname"].ToString(), dr["progcode"].ToString()));
-                    }
-                }
-            }
-        }
-    }
-
-    protected void ddlProgramme_SelectedIndexChanged(object sender, EventArgs e)
-    {
-        LoadAnalysisData();
-    }
-
-    protected void ddlConvocation_SelectedIndexChanged(object sender, EventArgs e)
-    {
-        litConvocationDisplay.Text = string.IsNullOrEmpty(ddlConvocation.SelectedValue) ? "All" : ddlConvocation.SelectedValue;
-        LoadAnalysisData();
-    }
-
-    protected void btnRefresh_Click(object sender, EventArgs e)
-    {
-        LoadAnalysisData();
-    }
-
-    protected void LoadAnalysisData()
-    {
-        LoadFacultySummary();
-        LoadProgrammeSummary();
-        LoadClassSummary();
-        LoadDetailedList();
-        UpdateOverallStats();
-    }
-
-    private string GetWhereClause(string tableAlias = "g")
-    {
-        StringBuilder where = new StringBuilder("WHERE 1=1");
-        
-        if (!string.IsNullOrEmpty(ddlConvocation.SelectedValue))
-        {
-            where.AppendFormat(" AND {0}.convocation = @conv", tableAlias);
-        }
-        if (!string.IsNullOrEmpty(ddlProgramme.SelectedValue))
-        {
-            where.AppendFormat(" AND {0}.progcode = @prog", tableAlias);
-        }
-
-        // Every query on this page runs through here, which is why the scope belongs here: one
-        // place, and no way to add a sixth query that quietly forgets it.
-        where.Append(Scope.ProgFilter(tableAlias, "progcode"));
-
-        return where.ToString();
-    }
-
-    private void AddWhereParameters(MySqlCommand cmd)
-    {
-        if (!string.IsNullOrEmpty(ddlConvocation.SelectedValue))
-        {
-            cmd.Parameters.AddWithValue("@conv", ddlConvocation.SelectedValue);
-        }
-        if (!string.IsNullOrEmpty(ddlProgramme.SelectedValue))
-        {
-            cmd.Parameters.AddWithValue("@prog", ddlProgramme.SelectedValue);
-        }
-    }
-
-    protected void LoadFacultySummary()
-    {
-        using (MySqlConnection conn = new MySqlConnection(connectionString))
-        {
-            conn.Open();
-            
-            string whereClause = GetWhereClause();
-            string facultyFilter = "";
-            if (!string.IsNullOrEmpty(ddlFaculty.SelectedValue))
-            {
-                facultyFilter = " AND p.faculty_code = @fac";
-            }
-
-            string sql = string.Format(@"
-                SELECT 
-                    IFNULL(f.faculty_name, 'Unknown') AS faculty,
-                    SUM(CASE WHEN s.gender IN ('M', 'Male') THEN 1 ELSE 0 END) AS male_count,
-                    SUM(CASE WHEN s.gender IN ('F', 'Female') THEN 1 ELSE 0 END) AS female_count,
-                    COUNT(*) AS total
-                FROM acad_graduands g
-                LEFT JOIN acad_student s ON g.regno = s.regno
-                LEFT JOIN acad_programme p ON g.progcode = p.progcode
-                LEFT JOIN acad_faculty f ON p.faculty_code = f.faculty_code
-                {0} {1}
-                GROUP BY f.faculty_name
-                ORDER BY f.faculty_name", whereClause, facultyFilter);
-
-            using (MySqlCommand cmd = new MySqlCommand(sql, conn))
-            {
-                AddWhereParameters(cmd);
-                if (!string.IsNullOrEmpty(ddlFaculty.SelectedValue))
-                {
-                    cmd.Parameters.AddWithValue("@fac", ddlFaculty.SelectedValue);
-                }
-
-                using (MySqlDataAdapter da = new MySqlDataAdapter(cmd))
-                {
-                    DataTable dt = new DataTable();
-                    da.Fill(dt);
-
-                    // Add totals row
-                    if (dt.Rows.Count > 0)
-                    {
-                        int totalMale = 0, totalFemale = 0, grandTotal = 0;
-                        foreach (DataRow row in dt.Rows)
-                        {
-                            totalMale += Convert.ToInt32(row["male_count"]);
-                            totalFemale += Convert.ToInt32(row["female_count"]);
-                            grandTotal += Convert.ToInt32(row["total"]);
-                        }
-
-                        DataRow totalRow = dt.NewRow();
-                        totalRow["faculty"] = "TOTAL";
-                        totalRow["male_count"] = totalMale;
-                        totalRow["female_count"] = totalFemale;
-                        totalRow["total"] = grandTotal;
-                        dt.Rows.Add(totalRow);
-                    }
-
-                    _dtFaculty = dt;
-                    gvFacultySummary.DataSource = dt;
-                    gvFacultySummary.DataBind();
-                }
-            }
-        }
-    }
-
-    protected void LoadProgrammeSummary()
-    {
-        using (MySqlConnection conn = new MySqlConnection(connectionString))
-        {
-            conn.Open();
-
-            string whereClause = GetWhereClause();
-            string facultyFilter = "";
-            if (!string.IsNullOrEmpty(ddlFaculty.SelectedValue))
-            {
-                facultyFilter = " AND p.faculty_code = @fac";
-            }
-
-            string sql = string.Format(@"
-                SELECT 
-                    IFNULL(p.progname, g.progcode) AS prog_name,
-                    SUM(CASE WHEN s.gender IN ('M', 'Male') THEN 1 ELSE 0 END) AS male_count,
-                    SUM(CASE WHEN s.gender IN ('F', 'Female') THEN 1 ELSE 0 END) AS female_count,
-                    COUNT(*) AS total
-                FROM acad_graduands g
-                LEFT JOIN acad_student s ON g.regno = s.regno
-                LEFT JOIN acad_programme p ON g.progcode = p.progcode
-                {0} {1}
-                GROUP BY p.progname, g.progcode
-                ORDER BY p.progname", whereClause, facultyFilter);
-
-            using (MySqlCommand cmd = new MySqlCommand(sql, conn))
-            {
-                AddWhereParameters(cmd);
-                if (!string.IsNullOrEmpty(ddlFaculty.SelectedValue))
-                {
-                    cmd.Parameters.AddWithValue("@fac", ddlFaculty.SelectedValue);
-                }
-
-                using (MySqlDataAdapter da = new MySqlDataAdapter(cmd))
-                {
-                    DataTable dt = new DataTable();
-                    da.Fill(dt);
-
-                    // Add totals row
-                    if (dt.Rows.Count > 0)
-                    {
-                        int totalMale = 0, totalFemale = 0, grandTotal = 0;
-                        foreach (DataRow row in dt.Rows)
-                        {
-                            totalMale += Convert.ToInt32(row["male_count"]);
-                            totalFemale += Convert.ToInt32(row["female_count"]);
-                            grandTotal += Convert.ToInt32(row["total"]);
-                        }
-
-                        DataRow totalRow = dt.NewRow();
-                        totalRow["prog_name"] = "TOTAL";
-                        totalRow["male_count"] = totalMale;
-                        totalRow["female_count"] = totalFemale;
-                        totalRow["total"] = grandTotal;
-                        dt.Rows.Add(totalRow);
-                    }
-
-                    _dtProgramme = dt;
-                    gvProgrammeSummary.DataSource = dt;
-                    gvProgrammeSummary.DataBind();
-                }
-            }
-        }
-    }
-
-    protected void LoadClassSummary()
-    {
-        using (MySqlConnection conn = new MySqlConnection(connectionString))
-        {
-            conn.Open();
-
-            string whereClause = GetWhereClause();
-            string facultyFilter = "";
-            if (!string.IsNullOrEmpty(ddlFaculty.SelectedValue))
-            {
-                facultyFilter = " AND p.faculty_code = @fac";
-            }
-
-            // First get total count
-            string countSql = string.Format(@"
-                SELECT COUNT(*) FROM acad_graduands g
-                LEFT JOIN acad_programme p ON g.progcode = p.progcode
-                {0} {1}", whereClause, facultyFilter);
-
-            int totalGraduands = 0;
-            using (MySqlCommand countCmd = new MySqlCommand(countSql, conn))
-            {
-                AddWhereParameters(countCmd);
-                if (!string.IsNullOrEmpty(ddlFaculty.SelectedValue))
-                {
-                    countCmd.Parameters.AddWithValue("@fac", ddlFaculty.SelectedValue);
-                }
-                totalGraduands = Convert.ToInt32(countCmd.ExecuteScalar());
-            }
-
-            string sql = string.Format(@"
-                SELECT 
-                    IFNULL(g.degclass, 'Unclassified') AS degclass,
-                    SUM(CASE WHEN s.gender IN ('M', 'Male') THEN 1 ELSE 0 END) AS male_count,
-                    SUM(CASE WHEN s.gender IN ('F', 'Female') THEN 1 ELSE 0 END) AS female_count,
-                    COUNT(*) AS total
-                FROM acad_graduands g
-                LEFT JOIN acad_student s ON g.regno = s.regno
-                LEFT JOIN acad_programme p ON g.progcode = p.progcode
-                {0} {1}
-                GROUP BY g.degclass
-                ORDER BY 
-                    CASE g.degclass 
-                        WHEN 'First Class' THEN 1
-                        WHEN 'Second Class Upper' THEN 2
-                        WHEN 'Second Class Lower' THEN 3
-                        WHEN 'Pass' THEN 4
-                        ELSE 5
-                    END", whereClause, facultyFilter);
-
-            using (MySqlCommand cmd = new MySqlCommand(sql, conn))
-            {
-                AddWhereParameters(cmd);
-                if (!string.IsNullOrEmpty(ddlFaculty.SelectedValue))
-                {
-                    cmd.Parameters.AddWithValue("@fac", ddlFaculty.SelectedValue);
-                }
-
-                using (MySqlDataAdapter da = new MySqlDataAdapter(cmd))
-                {
-                    DataTable dt = new DataTable();
-                    da.Fill(dt);
-
-                    // Add percentage column
-                    dt.Columns.Add("percentage", typeof(decimal));
-                    foreach (DataRow row in dt.Rows)
-                    {
-                        int classTotal = Convert.ToInt32(row["total"]);
-                        row["percentage"] = totalGraduands > 0 ? (decimal)classTotal * 100 / totalGraduands : 0;
-                    }
-
-                    // Add totals row
-                    if (dt.Rows.Count > 0)
-                    {
-                        int totalMale = 0, totalFemale = 0, grandTotal = 0;
-                        foreach (DataRow row in dt.Rows)
-                        {
-                            totalMale += Convert.ToInt32(row["male_count"]);
-                            totalFemale += Convert.ToInt32(row["female_count"]);
-                            grandTotal += Convert.ToInt32(row["total"]);
-                        }
-
-                        DataRow totalRow = dt.NewRow();
-                        totalRow["degclass"] = "TOTAL";
-                        totalRow["male_count"] = totalMale;
-                        totalRow["female_count"] = totalFemale;
-                        totalRow["total"] = grandTotal;
-                        totalRow["percentage"] = 100m;
-                        dt.Rows.Add(totalRow);
-                    }
-
-                    _dtClass = dt;
-                    gvClassSummary.DataSource = dt;
-                    gvClassSummary.DataBind();
-                }
-            }
-        }
-    }
-
-    protected void LoadDetailedList()
-    {
-        using (MySqlConnection conn = new MySqlConnection(connectionString))
-        {
-            conn.Open();
-
-            string whereClause = GetWhereClause();
-            string facultyFilter = "";
-            if (!string.IsNullOrEmpty(ddlFaculty.SelectedValue))
-            {
-                facultyFilter = " AND p.faculty_code = @fac";
-            }
-
-            string sql = string.Format(@"
-                SELECT 
-                    g.regno,
-                    g.stud_name,
-                    IFNULL(p.progname, g.progcode) AS prog_name,
-                    g.cgpa,
-                    g.degclass,
-                    IFNULL(s.gender, '') AS gen,
-                    g.grad_date,
-                    g.convocation
-                FROM acad_graduands g
-                LEFT JOIN acad_student s ON g.regno = s.regno
-                LEFT JOIN acad_programme p ON g.progcode = p.progcode
-                {0} {1}
-                ORDER BY g.stud_name", whereClause, facultyFilter);
-
-            using (MySqlCommand cmd = new MySqlCommand(sql, conn))
-            {
-                AddWhereParameters(cmd);
-                if (!string.IsNullOrEmpty(ddlFaculty.SelectedValue))
-                {
-                    cmd.Parameters.AddWithValue("@fac", ddlFaculty.SelectedValue);
-                }
-
-                using (MySqlDataAdapter da = new MySqlDataAdapter(cmd))
-                {
-                    DataTable dt = new DataTable();
-                    da.Fill(dt);
-
-                    _dtDetail = dt;
-                    gvGraduandsDetail.DataSource = dt;
-                    gvGraduandsDetail.DataBind();
-                }
-            }
-        }
-    }
-
-    protected void UpdateOverallStats()
-    {
-        using (MySqlConnection conn = new MySqlConnection(connectionString))
-        {
-            conn.Open();
-
-            string whereClause = GetWhereClause();
-            string facultyFilter = "";
-            if (!string.IsNullOrEmpty(ddlFaculty.SelectedValue))
-            {
-                facultyFilter = " AND p.faculty_code = @fac";
-            }
-
-            string sql = string.Format(@"
-                SELECT 
-                    COUNT(*) AS total,
-                    SUM(CASE WHEN s.gender IN ('M', 'Male') THEN 1 ELSE 0 END) AS male_count,
-                    SUM(CASE WHEN s.gender IN ('F', 'Female') THEN 1 ELSE 0 END) AS female_count
-                FROM acad_graduands g
-                LEFT JOIN acad_student s ON g.regno = s.regno
-                LEFT JOIN acad_programme p ON g.progcode = p.progcode
-                {0} {1}", whereClause, facultyFilter);
-
-            using (MySqlCommand cmd = new MySqlCommand(sql, conn))
-            {
-                AddWhereParameters(cmd);
-                if (!string.IsNullOrEmpty(ddlFaculty.SelectedValue))
-                {
-                    cmd.Parameters.AddWithValue("@fac", ddlFaculty.SelectedValue);
-                }
-
-                using (MySqlDataReader dr = cmd.ExecuteReader())
-                {
-                    if (dr.Read())
-                    {
-                        litTotalGraduands.Text = dr["total"].ToString();
-                        litMaleCount.Text = dr["male_count"].ToString();
-                        litFemaleCount.Text = dr["female_count"].ToString();
-                    }
-                }
-            }
-        }
-    }
-
-    private DataTable _dtFaculty, _dtProgramme, _dtClass, _dtDetail;
-
-    // =================================================================
-    //  Exports.
-    //
-    //  These used to call ExportToExcel(gv), which did three things
-    //  wrong. It wrote an HTML table with a .xls extension, which makes
-    //  Excel open a "the file format does not match" warning every time.
-    //  It set gv.AllowPaging = false and called gv.DataBind() — but
-    //  LoadAnalysisData only runs when !IsPostBack, so on an export
-    //  postback the grid had no DataSource and DataBind() emptied it:
-    //  the file that came out had headings and no rows. And nothing
-    //  recorded what filters produced it.
-    //
-    //  They now rebuild the data for the filters currently on screen and
-    //  go through GraduationExport, the same writer the rest of the
-    //  Graduation module uses — so a file from this page is branded and
-    //  carries the same cover sheet as one from the graduation list.
-    // =================================================================
-
-    private List<KeyValuePair<string, string>> Cover()
-    {
-        var c = new List<KeyValuePair<string, string>>();
-        c.Add(new KeyValuePair<string, string>("Convocation",
-            ddlConvocation.SelectedValue == "" ? "All convocations" : ddlConvocation.SelectedItem.Text));
-        c.Add(new KeyValuePair<string, string>("Faculty",
-            ddlFaculty.SelectedValue == "" ? "All faculties" : ddlFaculty.SelectedItem.Text));
-        c.Add(new KeyValuePair<string, string>("Programme",
-            ddlProgramme.SelectedValue == "" ? "All programmes" : ddlProgramme.SelectedItem.Text));
-        return c;
-    }
-
-    /// <summary>A DataTable as a branded sheet, headings taken from the columns themselves.</summary>
-    private static GraduationExport.Sheet SheetOf(DataTable dt, string name)
+    /// <summary>A list of objects in the payload, as a branded sheet.</summary>
+    private static GraduationExport.Sheet SheetOf(Dictionary<string, object> d, string key,
+                                                  string[] heads, string[] fields, int[] numeric)
     {
         var sh = new GraduationExport.Sheet();
-        sh.Name = name;
-        if (dt == null) { sh.Columns = new[] { "No data" }; return sh; }
-
-        var heads = new string[dt.Columns.Count];
-        for (int i = 0; i < dt.Columns.Count; i++)
-        {
-            heads[i] = Title(dt.Columns[i].ColumnName);
-            Type t = dt.Columns[i].DataType;
-            if (t == typeof(int) || t == typeof(long) || t == typeof(decimal) ||
-                t == typeof(double) || t == typeof(float) || t == typeof(short))
-                sh.NumericColumns.Add(i);
-        }
+        sh.Name = char.ToUpperInvariant(key[0]) + key.Substring(1);
         sh.Columns = heads;
-
-        foreach (DataRow r in dt.Rows)
+        foreach (int i in numeric) sh.NumericColumns.Add(i);
+        foreach (Dictionary<string, object> row in (System.Collections.ArrayList)d[key])
         {
-            var cells = new string[dt.Columns.Count];
-            for (int i = 0; i < dt.Columns.Count; i++)
-                cells[i] = r[i] == null || r[i] == DBNull.Value ? "" : r[i].ToString();
+            var cells = new string[fields.Length];
+            for (int i = 0; i < fields.Length; i++)
+            {
+                object v;
+                cells[i] = row.TryGetValue(fields[i], out v) && v != null ? Convert.ToString(v) : "";
+            }
             sh.Rows.Add(cells);
         }
         return sh;
     }
 
-    /// <summary>"male_count" reads as a column name; "Male Count" reads as a heading.</summary>
-    private static string Title(string col)
-    {
-        if (string.IsNullOrEmpty(col)) return "";
-        string[] parts = col.Replace('_', ' ').Split(' ');
-        var sb = new StringBuilder();
-        foreach (string w in parts)
-        {
-            if (w.Length == 0) continue;
-            if (sb.Length > 0) sb.Append(' ');
-            sb.Append(char.ToUpperInvariant(w[0])).Append(w.Substring(1));
-        }
-        return sb.ToString();
-    }
-
-    private void Send(DataTable dt, string sheetName, string title, string fileWhat)
-    {
-        GraduationExport.Workbook(Response,
-            GraduationExport.FileName(fileWhat, ddlConvocation.SelectedValue),
-            title, Scope.Label, Cover(),
-            new List<GraduationExport.Sheet> { SheetOf(dt, sheetName) });
-    }
-
-    protected void btnExportFacultyExcel_Click(object sender, EventArgs e)
-    {
-        if (!Scope.HasAccess) return;
-        LoadFacultySummary();
-        Send(_dtFaculty, "By faculty", "Graduation Analysis - By Faculty", "graduation-analysis-faculty");
-    }
-
-    protected void btnExportProgExcel_Click(object sender, EventArgs e)
-    {
-        if (!Scope.HasAccess) return;
-        LoadProgrammeSummary();
-        Send(_dtProgramme, "By programme", "Graduation Analysis - By Programme", "graduation-analysis-programme");
-    }
-
-    protected void btnExportClassExcel_Click(object sender, EventArgs e)
-    {
-        if (!Scope.HasAccess) return;
-        LoadClassSummary();
-        Send(_dtClass, "By class", "Graduation Analysis - By Class of Award", "graduation-analysis-class");
-    }
-
     /// <summary>
-    /// The detailed list, as one workbook carrying all four tables. A reader asking for the
-    /// detail almost always wants the summaries that explain it in the same file.
+    /// The class distribution, one row per level and class.
+    ///
+    /// Kept as a single flat sheet with the level on every row rather than one sheet per level,
+    /// because the whole point is that the two vocabularies do not mix - and a reader has to be
+    /// able to see that in one place.
     /// </summary>
-    protected void btnExportDetailExcel_Click(object sender, EventArgs e)
+    private static GraduationExport.Sheet LevelSheet(Dictionary<string, object> d)
     {
-        if (!Scope.HasAccess) return;
-        LoadAnalysisData();
-        var sheets = new List<GraduationExport.Sheet>();
-        sheets.Add(SheetOf(_dtDetail, "Graduands"));
-        sheets.Add(SheetOf(_dtFaculty, "By faculty"));
-        sheets.Add(SheetOf(_dtProgramme, "By programme"));
-        sheets.Add(SheetOf(_dtClass, "By class"));
-        GraduationExport.Workbook(Response,
-            GraduationExport.FileName("graduation-analysis", ddlConvocation.SelectedValue),
-            "Graduation Analysis", Scope.Label, Cover(), sheets);
+        var sh = new GraduationExport.Sheet();
+        sh.Name = "Class of award";
+        sh.Columns = new[] { "Award level", "Class of award", "Graduands",
+                             "Share of the level", "Mean CGPA" };
+        sh.NumericColumns.Add(2);
+        sh.NumericColumns.Add(4);
+        foreach (Dictionary<string, object> L in (System.Collections.ArrayList)d["levels"])
+        {
+            int ln = Convert.ToInt32(L["n"]);
+            foreach (Dictionary<string, object> c in (System.Collections.ArrayList)L["classes"])
+            {
+                int cn = Convert.ToInt32(c["n"]);
+                sh.Rows.Add(new[]
+                {
+                    Convert.ToString(L["name"]), Convert.ToString(c["name"]),
+                    cn.ToString(CultureInfo.InvariantCulture),
+                    ln > 0 ? Math.Round(cn * 100.0 / ln).ToString(CultureInfo.InvariantCulture) + "%" : "-",
+                    Convert.ToString(c["avgCgpa"])
+                });
+            }
+        }
+        return sh;
     }
 
-    protected void btnExportFullPDF_Click(object sender, EventArgs e)
+    /// <summary>The written brief, as a document rather than a table.</summary>
+    private void SendSummary(MarksScope scope, string cfgJson, string lens,
+                             List<KeyValuePair<string, string>> cover, string file)
     {
-        ScriptManager.RegisterStartupScript(this, GetType(), "print", "window.print();", true);
-    }
+        string raw = GraduationAnalytics.Summarise(scope, cfgJson);
+        var d = J.Deserialize<Dictionary<string, object>>(raw);
+        object ok;
+        if (!d.TryGetValue("success", out ok) || !Convert.ToBoolean(ok)) return;
 
-    public override void VerifyRenderingInServerForm(Control control)
-    {
-        // Required for exporting GridView
+        var sh = new GraduationExport.Sheet();
+        sh.Name = "Summary";
+        sh.Columns = new[] { "Section", "Finding" };
+        foreach (Dictionary<string, object> para in (System.Collections.ArrayList)d["paragraphs"])
+        {
+            string head = Convert.ToString(para["head"]);
+            bool first = true;
+            foreach (object line in (System.Collections.ArrayList)para["lines"])
+            {
+                sh.Rows.Add(new[] { first ? head : "", Convert.ToString(line) });
+                first = false;
+            }
+        }
+
+        var cols = new List<GraduationPdf.PCol>();
+        cols.Add(new GraduationPdf.PCol("C0", "Section", 120));
+        cols.Add(new GraduationPdf.PCol("C1", "Finding", 430));
+
+        GraduationPdf.Send(Response, file + "-summary", "Graduation Summary", lens,
+                           scope.Label, cover, cols,
+                           GraduationExport.ToTable(sh, null), "", false, null);
     }
 }

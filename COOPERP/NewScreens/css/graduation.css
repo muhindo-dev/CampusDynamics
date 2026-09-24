@@ -628,3 +628,64 @@
 .g-tbl tbody tr.is-listed:hover{background:#eef5ff;}
 .g-tbl tbody tr.is-listed .g-who__t b{color:var(--accent);}
 
+/* ════════════════════════════════════════════════════════════════════
+   Graduation Analysis.
+
+   The class of award means a different thing at each award level -
+   certificates and diplomas are classed I to III, degrees First to
+   Third - and measured across all 1,624 rows not one crosses over. So
+   the levels are separate blocks, each with its own distribution, and
+   nothing on this page ever puts the two vocabularies in one chart.
+   ════════════════════════════════════════════════════════════════════ */
+.g-2col{display:grid;grid-template-columns:repeat(auto-fit,minmax(360px,1fr));gap:10px;
+    align-items:start;}
+
+.g-lvl{border:1px solid var(--line);border-radius:3px;padding:8px 10px;margin-bottom:8px;}
+.g-lvl:last-child{margin-bottom:0;}
+.g-lvl__h{display:flex;align-items:baseline;gap:9px;flex-wrap:wrap;margin-bottom:6px;
+    padding-bottom:5px;border-bottom:1px solid #eef2f7;}
+.g-lvl__h b{font-size:12px;color:var(--navy);}
+.g-lvl__h span{font-size:10.5px;color:var(--mute);}
+
+/* One class of award within its level. The bar is a share of that level, never of the page. */
+.g-dist{display:flex;align-items:center;gap:8px;padding:2px 0;}
+.g-dist__n{flex:0 0 190px;font-size:11px;color:var(--ink2);
+    overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.g-dist__n.is-top{color:var(--ok);font-weight:700;}
+.g-dist__b{flex:1 1 auto;height:9px;background:#eef2f7;border-radius:2px;overflow:hidden;min-width:50px;}
+.g-dist__b i{display:block;height:100%;background:var(--accent);}
+.g-dist__b i.is-top{background:var(--ok);}
+.g-dist__v{flex:0 0 78px;text-align:right;font-size:10.5px;color:var(--mute);
+    font-variant-numeric:tabular-nums;}
+.g-dist__v b{color:var(--ink);font-size:11.5px;}
+
+/* The year series, which deliberately ignores the year filter: a trend of one bar is not one. */
+.g-trend{display:flex;align-items:center;gap:8px;padding:2px 0;}
+.g-trend__y{flex:0 0 74px;font-size:10.5px;color:var(--ink2);font-variant-numeric:tabular-nums;}
+.g-trend__b{flex:1 1 auto;height:11px;background:#eef2f7;border-radius:2px;overflow:hidden;min-width:50px;}
+.g-trend__b i{display:block;height:100%;background:#9fb6d9;}
+.g-trend.is-here .g-trend__b i{background:var(--navy);}
+.g-trend.is-here .g-trend__y{color:var(--navy);font-weight:700;}
+.g-trend__v{flex:0 0 82px;text-align:right;font-size:10.5px;color:var(--mute);
+    font-variant-numeric:tabular-nums;}
+.g-trend__v b{color:var(--ink);font-size:11.5px;}
+.g-trend__v em{font-style:normal;margin-left:5px;}
+
+/* Transcripts and certificates: printed, collected, and the part nobody has touched. */
+.g-doc{display:flex;align-items:center;gap:9px;padding:4px 0;}
+.g-doc__n{flex:0 0 92px;font-size:11.5px;font-weight:700;color:var(--navy);}
+.g-doc__b{flex:0 0 190px;height:11px;background:#eef2f7;border-radius:2px;overflow:hidden;
+    display:flex;flex-direction:row-reverse;}
+.g-doc__b i{display:block;height:100%;}
+.g-doc__b i.is-printed{background:var(--accent);}
+.g-doc__b i.is-picked{background:var(--ok);}
+.g-doc__v{font-size:11px;color:var(--ink2);}
+.g-doc__v b{color:var(--navy);font-variant-numeric:tabular-nums;}
+
+/* The written brief. Prose, because it is meant to be read and pasted into a paper. */
+.g-sum{margin-bottom:12px;}
+.g-sum__h{font-size:9.5px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;
+    color:var(--accent);padding-bottom:3px;margin-bottom:5px;border-bottom:1px solid var(--line);}
+.g-sum p{margin:0 0 5px;font-size:12px;line-height:1.55;color:var(--ink);max-width:78ch;}
+.g-sum p:last-child{margin-bottom:0;}
+

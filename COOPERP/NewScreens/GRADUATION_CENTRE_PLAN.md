@@ -1724,3 +1724,127 @@ url=true                                     onlist=listed is in the address
 both    state=all     rows=4 marked=2
 afterReset state=pending toggle=pending focusEnabled=true
 ```
+
+---
+
+## 20. Graduation Analysis, rebuilt — 2026-09-24
+
+Brief: *"think very deeply and creatively, rebuild this whole thing … make sure it follows our
+principles and real data. make it very informative, and have our current year selected by default.
+give button to generate summaries very perfectly and well detailed."*
+
+### 20a. What the data actually says
+
+Everything below came out of the database before a line of the page was designed.
+
+**1,624 graduands on record.** 1,578 carry an academic year, 1,587 a convocation, all 1,624 a class
+and a CGPA.
+
+**The class of award uses two different vocabularies, and the split is exactly by award level:**
+
+| Award level | "First / Second / Third Class" | "Class I / II / III" | N/A | Total |
+|---|---|---|---|---|
+| Certificate | 0 | 65 | 0 | 65 |
+| Diploma | 0 | 526 | 9 | 535 |
+| Bachelors | 1,005 | 0 | 3 | 1,008 |
+| Masters | 7 | 0 | 0 | 7 |
+| Postgraduate | 9 | 0 | 0 | 9 |
+
+Not one row crosses. *Second Class Upper* and *Class II (Credit)* are different scales for
+different awards, and the page it replaces put them in the same table — so the rebuilt page
+**splits by award level first** and shows each level in its own vocabulary.
+
+**A convocation is not an academic year.** The old page filtered by `convocation` as though it
+were one. It is not: the 13th graduation ceremony carries **592 graduands drawn from 10 different
+academic years**; the 12th carries 704 from 7.
+
+| Ceremony | Graduands | Academic years covered |
+|---|---|---|
+| 13th | 592 | 10 |
+| 12th | 704 | 7 |
+| 11th | 16 | 5 |
+| 8th | 25 | 6 |
+| … | | |
+| (none recorded) | 206 | 16 |
+
+Both lenses are legitimate — *who completed in this academic year* and *who was capped at this
+ceremony* — so the page offers both, and says which one is in force.
+
+**The convocation field is free text and needs normalising to be usable at all:**
+`12th graduation ceremony`, `MRU 12TH GRADUATION` and `12TH GRADUATION CEREMONY` are the same
+ceremony; there are double spaces, a bare `h graduation ceremony`, and case variants throughout.
+The old dropdown listed roughly twenty entries for thirteen ceremonies. The rebuild reduces each to
+its ordinal for grouping **and never writes the normalised value back** — the data is left exactly
+as found.
+
+**The intake is 60% women** — 976 of 1,624 — and that holds across every year on record. It is
+the most striking thing in the data and nothing on the old page showed it.
+
+**Documents:** 545 transcripts printed and 8 collected of 1,624; 469 certificates printed and 8
+collected. Operationally that is the backlog, and it was nowhere on the old page.
+
+**Data notes carried on the page, not hidden:** 46 rows with no academic year, 205 with no
+convocation, 12 with a class of `N/A`, 1 duplicate student number, 5 spelt `First Class(Honours)`
+without the space and 1 `Second Class Honours - Upper Division`. Zero rows point at a programme or
+a student that does not exist — worth stating because it is the good news.
+
+### 20b. What the page does
+
+Rebuilt on the module’s own idiom: the `g-` design system, `SidebarMaster`, the compact identity
+line, `MarksScopeResolver`, a server-rendered first paint, and GET-driven state — the same as the
+other four Graduation screens, so moving between them requires learning nothing.
+
+* **Lens**: by academic year (default) or by convocation, with the current academic year selected
+  on arrival.
+* **Headline**: graduands, programmes, faculties, average CGPA, the gender split, and the share in
+  the top class — each computed for the selection in force.
+* **By award level**, each with its own class vocabulary and its own distribution.
+* **By faculty** and **by programme**: graduands, women and men, average CGPA, top-class share.
+* **Trend** across every academic year on record.
+* **Where a ceremony’s graduands came from**, when the convocation lens is in force.
+* **Documents**: transcripts and certificates, ready against printed against collected.
+* **Data notes**: stated on the page rather than left to be discovered.
+
+### 20c. Generate summary
+
+A button that composes a **written brief** from exactly the figures on screen — every sentence
+carrying a number that came from a query, none of it rounded for convenience, and the awkward parts
+stated rather than smoothed over. It is meant to be pasted into a Senate or Council paper, so it
+also goes out as the module’s branded PDF.
+
+Nothing in it is generated from a template that could survive the data changing: if a figure is not
+available the sentence says so instead of guessing.
+
+### 20d. Verified — 2026-09-24
+
+A temporary harness (`ZZAnalyseVerify.aspx`, since removed) ran the real service against the live
+database through the public scope-taking overloads — no back door was added to production code to
+make it testable; `Analyse` and `Summarise` simply take the scope they were already resolving, which
+the page needed anyway so it does not resolve it twice.
+
+**Performance**, once the assembly was warm:
+
+| Selection | Graduands | Time |
+|---|---|---|
+| Academic year 2024/2025 | 522 | 0.07 s |
+| Every year | 1,624 | 0.12 s |
+| 13th ceremony | 592 | 0.09 s |
+
+**The page**, rendered from its own markup against the real 2024/2025 payload: 5 headline figures,
+4 award levels carrying 11 class rows between them, 4 faculties, an 18-year trend, 38 programmes,
+2 document bars and 2 data notes — with 2024/2025 selected and the lens reading *Academic year
+2024/2025*.
+
+Every total reconciles: the four levels sum 43 + 178 + 294 + 7 = 522, and the four faculties sum
+282 + 107 + 88 + 45 = 522.
+
+**The brief** composed for the 13th ceremony correctly reported that it draws from **10 academic
+years**, and flagged `First Class(Honours)` as a second spelling of the same class — the sort of
+thing that silently splits a distribution and that nobody would notice in a chart.
+
+### 20e. One thing fixed on the way
+
+The avatar in the shared modal became a button when the photograph was made openable, so a caller
+opening that modal for something other than a student — which the summary does — hid the image and
+left the button and its expand badge behind. `G.showPhoto(false)` now hides the control, and
+`openStudent` restores it.

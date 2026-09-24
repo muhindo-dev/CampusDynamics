@@ -394,6 +394,7 @@ window.G = (function () {
         for (var qi = 0; qi < Q.ids.length; qi++) if (Q.ids[qi] === regno) { Q.idx = qi; break; }
         qs('gModalName').textContent = regno;
         qs('gModalSub').textContent = 'Reading the record…';
+        showPhoto(true);
         qs('gModalPhoto').src = photo(regno, 144);
         qs('gModalBody').innerHTML = '<div class="g-load">Loading…</div>';
         qs('gModalFoot').innerHTML = '';
@@ -414,6 +415,13 @@ window.G = (function () {
     }
 
     function currentStudent() { return current; }
+
+    /// The avatar is a button wrapping an image, so a caller that opens the shared modal for
+    /// something other than a student has to hide the whole control, not just the picture.
+    function showPhoto(on) {
+        var b = qs('gModalPhotoBtn');
+        if (b) b.style.display = on ? '' : 'none';
+    }
 
     /// Position in the queue, and arrows to walk it without deciding anything.
     function drawWalker() {
@@ -1672,6 +1680,7 @@ window.G = (function () {
         fill: fill, cascade: cascade, combo: combo,
         mount: mount, openModal: openModal, closeModal: closeModal, wireModal: wireModal,
         openStudent: openStudent, currentStudent: currentStudent, onWalk: onWalk,
+        showPhoto: showPhoto,
         csv: csv, serverExport: serverExport, exportDialog: exportDialog,
         debounce: debounce, freshness: freshness, chips: chips, pager: pager,
         reasonDialog: reasonDialog, findStudent: findStudent,
