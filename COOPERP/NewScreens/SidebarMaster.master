@@ -307,30 +307,6 @@
                                         <span>Publish Results (Senate)</span>
                                     </asp:HyperLink>
                                 </li>
-                                <%-- Graduation Centre sits here, not in "More Features", because it is the
-                                     next step after Publish Results and because the people who use it are
-                                     Deans and Heads of Department. It was previously inside a container
-                                     carrying data-superadmin="1", which the sidebar JS hides for EVERY
-                                     non-admin regardless of any slug grant - so nobody but a superadmin
-                                     could ever see it. --%>
-                                <%-- data-roles="all" deliberately. The role filter skips "all" and leaves
-                                     the decision entirely to the slug grant, which is what the sidebar's own
-                                     comment calls the single source of truth: show a menu item IFF the user
-                                     can open its page. sys_role_permissions already grants
-                                     system.more.graduation_centre to dean, hod, registrar, exam_officer,
-                                     faculty_staff, admissions and student_services, and a super admin
-                                     (role_code "admin") carries the "*" wildcard, which makes
-                                     applyMenuAccessFilter return before it hides anything.
-
-                                     A hand-written data-roles list here would be a second gate that has to
-                                     be kept in step with those grants by hand - and the last time these two
-                                     disagreed, every Dean and HOD lost the page. One gate. --%>
-                                <li class="cd-sidebar__subitem" data-roles="all">
-                                    <asp:HyperLink ID="lnkGraduationCentre" runat="server" NavigateUrl="~/COOPERP/NewScreens/GraduationCentre.aspx" CssClass="cd-sidebar__sublink">
-                                        <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 10v6M2 10l10-5 10 5-10 5z"></path><path d="M6 12v5c3 3 9 3 12 0v-5"></path></svg>
-                                        <span>Graduation Centre</span>
-                                    </asp:HyperLink>
-                                </li>
                                 <li class="cd-sidebar__subitem" data-roles="admin">
                                     <asp:HyperLink ID="lnkCourseDeletionReq" runat="server" NavigateUrl="~/COOPERP/NewScreens/CourseDeletionRequests.aspx" CssClass="cd-sidebar__sublink">
                                         <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18M8 6V4h8v2M19 6l-1 14H6L5 6"></path><path d="M10 11v6M14 11v6"></path></svg>
@@ -439,6 +415,60 @@
                                     <asp:HyperLink ID="lnkExamConfiguration" runat="server" NavigateUrl="~/COOPERP/NewScreens/ExamConfiguration.aspx" CssClass="cd-sidebar__sublink">
                                         <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.6h.09A1.65 1.65 0 0 0 10.6 3.09V3a2 2 0 0 1 4 0v.09A1.65 1.65 0 0 0 15 4.6a1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9v.09a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"></path></svg>
                                         <span>Exam Configuration</span>
+                                    </asp:HyperLink>
+                                </li>
+                            </ul>
+                        </li>
+                        <%-- Graduation is its own thing, not a footnote to Exam. The module is
+                             GET-driven (?tab=…), so each section below is a real destination
+                             rather than a link to the same landing page four times.
+
+                             Everything here carries data-roles="all", which makes the role filter
+                             stand aside and leaves the decision to the slug grant — the sidebar's
+                             own single source of truth. A second hand-written gate is what hid this
+                             module from every Dean and HOD in the first place. If a user has no
+                             graduation grant at all, collapseEmptyGroups() removes the group. --%>
+                        <li class="cd-sidebar__item cd-sidebar__item--has-submenu" data-roles="all">
+                            <a href="javascript:void(0)" class="cd-sidebar__link cd-sidebar__link--toggle">
+                                <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 10v6M2 10l10-5 10 5-10 5z"></path><path d="M6 12v5c3 3 9 3 12 0v-5"></path></svg>
+                                <span>Graduation</span>
+                                <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="cd-sidebar__arrow"><polyline points="9 18 15 12 9 6"></polyline></svg>
+                            </a>
+                            <ul class="cd-sidebar__submenu">
+                                <li class="cd-sidebar__subitem" data-roles="all">
+                                    <asp:HyperLink ID="lnkGraduationCentre" runat="server" NavigateUrl="~/COOPERP/NewScreens/GraduationCentre.aspx" CssClass="cd-sidebar__sublink">
+                                        <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 10v6M2 10l10-5 10 5-10 5z"></path><path d="M6 12v5c3 3 9 3 12 0v-5"></path></svg>
+                                        <span>Graduation Centre</span>
+                                    </asp:HyperLink>
+                                </li>
+                                <li class="cd-sidebar__subitem" data-roles="all">
+                                    <asp:HyperLink ID="lnkGradCandidates" runat="server" NavigateUrl="~/COOPERP/NewScreens/GraduationCentre.aspx?tab=candidates" CssClass="cd-sidebar__sublink">
+                                        <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"></path><circle cx="9" cy="7" r="4"></circle><path d="M23 21v-2a4 4 0 0 0-3-3.87"></path></svg>
+                                        <span>Candidates</span>
+                                    </asp:HyperLink>
+                                </li>
+                                <li class="cd-sidebar__subitem" data-roles="all">
+                                    <asp:HyperLink ID="lnkGradList" runat="server" NavigateUrl="~/COOPERP/NewScreens/GraduationCentre.aspx?tab=list" CssClass="cd-sidebar__sublink">
+                                        <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 11l3 3L22 4"></path><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"></path></svg>
+                                        <span>Graduation List</span>
+                                    </asp:HyperLink>
+                                </li>
+                                <li class="cd-sidebar__subitem" data-roles="all">
+                                    <asp:HyperLink ID="lnkGradHeld" runat="server" NavigateUrl="~/COOPERP/NewScreens/GraduationCentre.aspx?tab=held" CssClass="cd-sidebar__sublink">
+                                        <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><line x1="10" y1="15" x2="10" y2="9"></line><line x1="14" y1="15" x2="14" y2="9"></line></svg>
+                                        <span>Held Candidates</span>
+                                    </asp:HyperLink>
+                                </li>
+                                <li class="cd-sidebar__subitem" data-roles="all">
+                                    <asp:HyperLink ID="lnkGraduatingStudents" runat="server" NavigateUrl="~/COOPERP/NewScreens/GraduateStudents.aspx" CssClass="cd-sidebar__sublink">
+                                        <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="8" y1="6" x2="21" y2="6"></line><line x1="8" y1="12" x2="21" y2="12"></line><line x1="8" y1="18" x2="21" y2="18"></line><line x1="3" y1="6" x2="3.01" y2="6"></line><line x1="3" y1="12" x2="3.01" y2="12"></line><line x1="3" y1="18" x2="3.01" y2="18"></line></svg>
+                                        <span>Graduating Students</span>
+                                    </asp:HyperLink>
+                                </li>
+                                <li class="cd-sidebar__subitem" data-roles="all">
+                                    <asp:HyperLink ID="lnkGraduationAnalysis" runat="server" NavigateUrl="~/COOPERP/NewScreens/GraduationAnalysis.aspx" CssClass="cd-sidebar__sublink">
+                                        <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="20" x2="18" y2="10"></line><line x1="12" y1="20" x2="12" y2="4"></line><line x1="6" y1="20" x2="6" y2="14"></line></svg>
+                                        <span>Graduation Analysis</span>
                                     </asp:HyperLink>
                                 </li>
                             </ul>
@@ -1206,12 +1236,6 @@
                                     </asp:HyperLink>
                                 </li>
                                 <li class="cd-sidebar__subitem">
-                                    <asp:HyperLink ID="lnkGraduatingStudents" runat="server" NavigateUrl="~/COOPERP/NewScreens/GraduateStudents.aspx" CssClass="cd-sidebar__sublink">
-                                        <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 10v6M2 10l10-5 10 5-10 5z"></path><path d="M6 12v5c3 3 9 3 12 0v-5"></path><line x1="12" y1="22" x2="12" y2="15"></line></svg>
-                                        <span>Graduating Students</span>
-                                    </asp:HyperLink>
-                                </li>
-                                <li class="cd-sidebar__subitem">
                                     <asp:HyperLink ID="lnkStudentSpecialisations" runat="server" NavigateUrl="~/COOPERP/NewScreens/StudentsSpecialisation.aspx" CssClass="cd-sidebar__sublink">
                                         <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="6" y1="3" x2="6" y2="15"></line><circle cx="18" cy="6" r="3"></circle><circle cx="6" cy="18" r="3"></circle><path d="M18 9a9 9 0 0 1-9 9"></path></svg>
                                         <span>Specialisations</span>
@@ -1293,12 +1317,6 @@
                                     <asp:HyperLink ID="lnkStudentResultsView" runat="server" NavigateUrl="~/COOPERP/NewScreens/StudentResultsView.aspx" CssClass="cd-sidebar__sublink">
                                         <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"></path><circle cx="12" cy="7" r="4"></circle></svg>
                                         <span>Student Results View</span>
-                                    </asp:HyperLink>
-                                </li>
-                                <li class="cd-sidebar__subitem">
-                                    <asp:HyperLink ID="lnkGraduationAnalysis" runat="server" NavigateUrl="~/COOPERP/NewScreens/GraduationAnalysis.aspx" CssClass="cd-sidebar__sublink">
-                                        <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 10v6M2 10l10-5 10 5-10 5z"></path><path d="M6 12v5c3 3 9 3 12 0v-5"></path></svg>
-                                        <span>Graduation Analysis</span>
                                     </asp:HyperLink>
                                 </li>
                                 <li class="cd-sidebar__subitem">

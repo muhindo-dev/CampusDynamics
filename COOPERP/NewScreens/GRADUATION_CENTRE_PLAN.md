@@ -637,9 +637,33 @@ reach the page — **30 Heads of Department and 16 Deans**, the module's primary
 the people §1 says it is for. An administrator could, but only by opening a cog-labelled
 catch-all at the bottom of the menu that nobody would think to look in.
 
-**Fix:** the entry moved out of More Features into the **Exam** group, directly after *Publish
-Results (Senate)* — which is where it belongs in the academic sequence, marks published then
-graduation list.
+**Fix:** Graduation is now its **own group under Academics**, sitting between *Exam* and
+*Student Course Rearrangement*:
+
+```
+Academics
+  ├─ Students
+  ├─ Programmes & Courses
+  ├─ Exam
+  ├─ Graduation                ← new
+  │    ├─ Graduation Centre        GraduationCentre.aspx
+  │    ├─ Candidates               ?tab=candidates
+  │    ├─ Graduation List          ?tab=list
+  │    ├─ Held Candidates          ?tab=held
+  │    ├─ Graduating Students      GraduateStudents.aspx
+  │    └─ Graduation Analysis      GraduationAnalysis.aspx
+  ├─ Student Course Rearrangement
+  └─ …
+```
+
+It is a group rather than one entry because the module is GET-driven: each tab is a real
+destination, so the submenu lands a Registrar straight in the queue they came for instead of on
+a dashboard they then have to navigate out of. `fileFromHref` strips the query string before the
+slug lookup, so all four tab links resolve to the same grant.
+
+*Graduating Students* and *Graduation Analysis* moved in from More Features too. They are
+graduation pages, their grants already name dean/hod/registrar, and they were invisible to every
+one of those roles for exactly the same reason this module was.
 
 The item carries `data-roles="all"`, not a hand-written role list. The role filter skips `"all"`
 and leaves the decision entirely to the slug grant, which is what the sidebar's own comment calls
