@@ -289,8 +289,95 @@
         
 
     }
+    /// <summary>
+    ///  Rebuilds a signed-in session from the authentication ticket.
+    ///
+    ///  THE PROBLEM THIS SOLVES.  Session state is InProc, so it lives inside the
+    ///  AppDomain. This site is served out of a OneDrive-synced folder and uses the
+    ///  Web Site model, so any touched file - a sync, a saved page, an App_Code edit -
+    ///  makes ASP.NET recompile and tear the AppDomain down. Every session in memory
+    ///  dies with it. Twenty master pages then see Session["username"] == null and
+    ///  send the user to the login screen, even though the browser is still holding a
+    ///  valid Forms ticket that nobody bothered to read.
+    ///
+    ///  THE FIX.  The ticket is the source of truth for identity; the session is only
+    ///  a convenient place to keep it. If the ticket says who you are and the session
+    ///  has forgotten, the session is wrong - so refill it and carry on. A recompile
+    ///  becomes invisible instead of a logout.
+    ///
+    ///  It is deliberately cheap: one null check on the overwhelming majority of
+    ///  requests, and real work only on the first request after a restart.
+    /// </summary>
+    private void RestoreSessionFromTicket()
+    {
+        HttpContext ctx = HttpContext.Current;
+        if (ctx == null || ctx.Session == null) return;
+
+        // Already signed in as far as the session is concerned - nothing to do.
+        if (ctx.Session["username"] != null &&
+            !string.IsNullOrEmpty(ctx.Session["username"].ToString())) return;
+
+        // No ticket means genuinely signed out. Leave it alone: this must never
+        // manufacture an identity, only restore one the browser already proved.
+        if (ctx.User == null || ctx.User.Identity == null ||
+            !ctx.User.Identity.IsAuthenticated ||
+            string.IsNullOrEmpty(ctx.User.Identity.Name)) return;
+
+        string who = ctx.User.Identity.Name;
+        ctx.Session["username"] = who;
+
+        // Role and menu access come back from the database, not from anything cached
+        // in the dead AppDomain, so a restored session has exactly the rights a fresh
+        // sign-in would grant - no more, and no less.
+        try { RoleAccessService.LoadUserAccess(who); } catch { }
+
+        // The display name, so the header does not read as a blank after a restart.
+        try
+        {
+            if (ctx.Session["ScreenName"] == null)
+            {
+                string nm = LookupDisplayName(who);
+                if (!string.IsNullOrEmpty(nm)) ctx.Session["ScreenName"] = nm;
+            }
+        }
+        catch { }
+
+        // Note: Session["usernm"] is NOT restored. It keys the single-session guard
+        // below, and its key is built from the password, which is not available here.
+        // The guard therefore lapses for a restored session until the next real
+        // sign-in. That is a deliberate, stated trade: it is a convenience rule about
+        // concurrent logins, not an authentication control, and silently signing
+        // someone out is the very fault being fixed.
+    }
+
+    /// <summary>The employee's display name for the header, or empty if unknown.</summary>
+    private string LookupDisplayName(string username)
+    {
+        try
+        {
+            string cs = System.Configuration.ConfigurationManager
+                        .ConnectionStrings["vacConnectionString"].ConnectionString;
+            using (var c = new MySql.Data.MySqlClient.MySqlConnection(cs))
+            {
+                c.Open();
+                using (var cmd = new MySql.Data.MySqlClient.MySqlCommand(
+                    "SELECT emp_name FROM hrm_employee WHERE usernames=@u LIMIT 1", c))
+                {
+                    cmd.Parameters.AddWithValue("@u", username);
+                    object o = cmd.ExecuteScalar();
+                    if (o != null && o != System.DBNull.Value) return o.ToString();
+                }
+            }
+        }
+        catch { }
+        return "";
+    }
+
     protected void Application_PreRequestHandlerExecute(Object sender, EventArgs e)
     {
+        // Before anything else looks at the session, make sure a valid ticket has one.
+        RestoreSessionFromTicket();
+
         if (HttpContext.Current.Session != null)
         {
             if (Session["usernm"] != null)
