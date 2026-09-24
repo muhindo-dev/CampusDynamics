@@ -566,7 +566,7 @@ stop, and it is already on a list.
 | Page compiles, script parses | yes |
 | Endpoints deny an unauthenticated caller | all six, including the write endpoints |
 | Nothing written by those probes | 0 review rows, 1,621 graduands |
-| Sidebar entry | already present from the previous version — no change needed |
+| Sidebar entry | **this was wrong — see §9d** |
 
 ### Speed
 
@@ -610,6 +610,44 @@ What needs a human with an eadmin account:
    appear, and that a transcript still prints for that student.
 4. Hold one candidate, confirm the reason is required, then release them.
 5. Confirm a blocked candidate refuses to clear without a justification.
+
+## 9d. The menu — a verification failure worth recording
+
+§9c originally said *"Sidebar entry — already present from the previous version, no change
+needed."* That was checked by grepping the markup for the link and finding it. The link existed.
+It could not be seen by anybody it was built for.
+
+`GraduationCentre.aspx` sat inside the **More Features** group:
+
+```html
+<li class="cd-sidebar__item cd-sidebar__item--has-submenu" data-roles="admin" data-superadmin="1">
+```
+
+The sidebar's filter runs `data-superadmin` **before** it consults any slug grant, and hides
+those items for every non-admin unconditionally:
+
+```js
+var sa = document.querySelectorAll('[data-superadmin]');
+for (var z = 0; z < sa.length; z++) sa[z].style.display = 'none';
+```
+
+So although `sys_role_permissions` grants `system.more.graduation_centre` to **dean, hod,
+registrar, exam_officer, faculty_staff, admissions and student_services**, not one of them could
+reach the page — **30 Heads of Department and 16 Deans**, the module's primary users, and exactly
+the people §1 says it is for. An administrator could, but only by opening a cog-labelled
+catch-all at the bottom of the menu that nobody would think to look in.
+
+**Fix:** the entry moved out of More Features into the **Exam** group, directly after *Publish
+Results (Senate)* — which is where it belongs in the academic sequence, marks published then
+graduation list — carrying `data-roles="admin registrar dean hod"` inside a group already
+admitting `exam_officer registrar faculty_staff dean hod admin`.
+
+The slug and its grants are deliberately **unchanged**. They already permitted the right roles;
+rewriting them would have been gratuitous risk for a cosmetic tidy.
+
+**The lesson for the rest of this plan:** "the markup contains it" is not the same as "a user can
+see it". Nothing in §9c's verification table proves a human can reach a thing — which is exactly
+what §11 has been saying all along, and why it matters.
 
 ## 10. The five open questions — answered
 
