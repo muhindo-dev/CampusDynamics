@@ -620,3 +620,11 @@
     letter-spacing:.45px;color:var(--mute);margin-bottom:2px;}
 .g-xalso .g-xkv{padding:0;gap:4px 14px;}
 
+/* A candidate already on a graduation list. The chip in the last column is not enough when the
+   eye is running down the names: being on a list decides what may still be done to that
+   student, so the row itself says so. */
+.g-tbl tbody tr.is-listed td:first-child{box-shadow:inset 3px 0 0 var(--accent);}
+.g-tbl tbody tr.is-listed{background:#f7faff;}
+.g-tbl tbody tr.is-listed:hover{background:#eef5ff;}
+.g-tbl tbody tr.is-listed .g-who__t b{color:var(--accent);}
+

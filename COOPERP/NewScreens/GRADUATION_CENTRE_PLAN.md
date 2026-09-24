@@ -1658,3 +1658,69 @@ picked=MRU2021000101                       the NON-candidate is selectable - the
 closed=true
 noHits=[Nobody in your scope matches “zzzz”.]
 ```
+
+---
+
+## 19. Who is already on the list — 2026-09-24
+
+Brief: *"in list of candidates add a marker for those already on graduation list … as well as
+toggle filter of those on list and those not on list yet … the wizard of reviewing next should
+include those on grad list only."*
+
+### 19a. The page was refusing to show them at all
+
+`GraduationCandidates` hard-coded `f.state = "pending"` in all three places it built a filter —
+the grid, the export count and the export itself — which means `a.on_list = 0`. A student already
+on a graduation list could not be looked at on this page under any circumstances.
+
+That is the right *default*, because the queue is work still to be done. It is wrong as the only
+option: a Registrar checking what is already on the 2026/2027 list, or hunting for somebody who
+should not be on it, had nowhere to do it.
+
+The engine already understood `pending | listed | held | all`. Only this page was insisting. It now
+honours what the filter asks for, through a whitelist so nothing unexpected reaches the engine.
+
+### 19b. The toggle
+
+**Graduation list**: *Not yet on a list* (the default, unchanged), *Already on the list*, *Both*.
+It carries into the URL as `onlist=`, so a view is linkable, and appears in the filter strip like
+every other narrowing.
+
+**"Who to show" is disabled while the toggle is not on the pending queue.** That control narrows by
+when a student last sat a paper, and the engine applies it only to the pending queue — a graduation
+list is already narrow by year. Leaving it live would be a control that silently does nothing.
+
+### 19c. The marker
+
+A chip in the last column is not enough when the eye is running down the names, and being on a list
+decides what may still be done to that student. So the row itself carries it: a blue rail down the
+left edge, a tinted background, the student number in the accent colour, and the sub-line reading
+*"on the 2026/2027 list, cleared by muhindo"* — who put them there, not merely that somebody did.
+
+The bulk-selection checkbox is withheld from a listed row, as it already was, so nobody can sweep
+somebody already graduated back into a clearing batch.
+
+### 19d. The review walker follows the filter
+
+The queue the modal walks is built from the rows the filter produced, so setting the toggle to
+*Already on the list* gives a walker containing only those students — verified as
+`queueWalksOnlyListed=MRU900,MRU901`. Stepping through them is a read-only review: the footer for a
+listed student offers no decision, because taking a name off a list belongs on the Graduation List
+page where the whole list is in view.
+
+### 19e. Verified
+
+Driven headless against the page’s own markup:
+
+```
+default state=pending rows=2 marked=0        unchanged
+focusEnabledWhenPending=true
+listed  state=listed  rows=2 marked=2        both rows carry the marker
+focusDisabledWhenListed=true
+queueWalksOnlyListed=MRU900,MRU901
+noBulkPickForListed=0                        no checkbox on a listed row
+chip=List: Already on the list
+url=true                                     onlist=listed is in the address
+both    state=all     rows=4 marked=2
+afterReset state=pending toggle=pending focusEnabled=true
+```

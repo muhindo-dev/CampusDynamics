@@ -17,6 +17,10 @@
     <div class="g-f" style="flex:1 1 130px;"><label for="fDep">Department</label><select id="fDep"></select></div>
     <div class="g-f" style="flex:1 1 150px;"><label for="fProg">Programme</label><select id="fProg"></select></div>
     <div class="g-f" style="flex:0 0 88px;"><label for="fIntake">Intake</label><select id="fIntake"></select></div>
+    <div class="g-f" style="flex:0 0 150px;"><label for="fOnList">Graduation list</label>
+      <select id="fOnList"><option value="pending">Not yet on a list</option>
+        <option value="listed">Already on the list</option>
+        <option value="all">Both</option></select></div>
     <div class="g-f" style="flex:0 0 116px;"><label for="fReady">Readiness</label>
       <select id="fReady"><option value="">Any</option><option value="ready">Ready</option><option value="warn">Needs a look</option><option value="blocked">Blocked</option></select></div>
     <div class="g-f" style="flex:0 0 108px;"><label for="fSort">Order</label>
@@ -75,13 +79,15 @@ function state() {
     return { year: G.qs('fYear').value, focus: G.qs('fFocus').value, faculty: G.qs('fFac').value,
              dept: G.qs('fDep').value, prog: G.qs('fProg').value, intake: G.qs('fIntake').value,
              ready: G.qs('fReady').value, sort: G.qs('fSort').value === 'regno' ? '' : G.qs('fSort').value,
+             onlist: G.qs('fOnList').value === 'pending' ? '' : G.qs('fOnList').value,
              q: G.qs('fQ').value.trim(), page: page > 1 ? page : '' };
 }
 function cfg(extra) {
     var s = state();
     var c = { acadYear: s.year, focus: s.focus, faculty: s.faculty, department: s.dept,
               programme: s.prog, entryYear: s.intake, readiness: s.ready, search: s.q,
-              sort: G.qs('fSort').value, state: 'pending', page: String(page), size: '50' };
+              sort: G.qs('fSort').value, state: G.qs('fOnList').value,
+              page: String(page), size: '50' };
     if (extra) for (var k in extra) if (extra.hasOwnProperty(k)) c[k] = extra[k];
     return JSON.stringify(c);
 }
@@ -100,16 +106,29 @@ function chips() {
         { k: 'fProg',   label: 'Programme',  value: G.qs('fProg').value ? txt('fProg') : '' },
         { k: 'fIntake', label: 'Intake',     value: G.qs('fIntake').value },
         { k: 'fReady',  label: 'Readiness',  value: G.qs('fReady').value ? txt('fReady') : '' },
+        { k: 'fOnList', label: 'List',       value: G.qs('fOnList').value === 'pending' ? '' : txt('fOnList') },
         { k: 'fQ',      label: 'Search',     value: G.qs('fQ').value.trim() }
     ], function (k) {
-        if (k === '*') { resetFilters(); } else { G.qs(k).value = ''; }
+        if (k === '*') { resetFilters(); }
+        else if (k === 'fOnList') { G.qs(k).value = 'pending'; }
+        else { G.qs(k).value = ''; }
         G.cascade('fFac', 'fDep', 'fProg');
+        syncFocusEnabled();
         page = 1; sync();
     });
 }
 
+function syncFocusEnabled() {
+    var pending = G.qs('fOnList').value === 'pending';
+    G.qs('fFocus').disabled = !pending;
+    G.qs('fFocus').title = pending ? ''
+        : 'Applies to the pending queue only \u2014 a graduation list is already narrow by year.';
+}
+
 function resetFilters() {
     ['fFac', 'fDep', 'fProg', 'fIntake', 'fReady'].forEach(function (id) { G.qs(id).value = ''; });
+    // Not '' — the default for this one is the pending queue, which is the page's whole point.
+    G.qs('fOnList').value = 'pending';
     G.qs('fQ').value = '';
 }
 
@@ -132,10 +151,16 @@ function render(d) {
     for (i = 0; i < rows.length; i++) {
         var g = rows[i];
         var pick = (g.readiness === 'READY' && !g.graduatedYear && !g.holdReason);
-        h += '<tr class="is-click" data-reg="' + G.esc(g.regno) + '">' +
+        // Already on a list is the most consequential thing about a row here: it decides what
+        // may still be done to that student. A chip in the last column is not enough when the
+        // eye is running down the names, so the row itself carries it.
+        h += '<tr class="is-click' + (g.graduatedYear ? ' is-listed' : '') +
+             '" data-reg="' + G.esc(g.regno) + '">' +
             '<td>' + (pick ? '<input type="checkbox" class="ck" data-reg="' + G.esc(g.regno) + '" />'
                            : '<span class="g-sub" title="Only candidates with nothing outstanding can be bulk-cleared">&ndash;</span>') + '</td>' +
-            '<td>' + G.photoCell(g.regno, g.name) + '</td>' +
+            '<td>' + G.photoCell(g.regno, g.name,
+                 g.graduatedYear ? ('on the ' + g.graduatedYear + ' list' +
+                     (g.clearedActor ? ', cleared by ' + g.clearedActor : '')) : '') + '</td>' +
             '<td>' + G.esc(g.progname || g.progcode) + '<div class="g-sub">' + G.esc(g.progcode) + '</div></td>' +
             '<td class="g-num g-sub">' + G.esc(g.entryyear) + '</td>' +
             '<td>' + G.credits(g) + '</td>' +
@@ -456,12 +481,16 @@ document.addEventListener('DOMContentLoaded', function () {
         syncBulk();
     });
 
-    ['fYear', 'fFocus', 'fProg', 'fIntake', 'fReady'].forEach(function (id) {
+    ['fYear', 'fFocus', 'fProg', 'fIntake', 'fReady', 'fOnList'].forEach(function (id) {
         G.qs(id).addEventListener('change', function () { page = 1; sync(); });
     });
     G.qs('fFac').addEventListener('change', function () { G.cascade('fFac', 'fDep', 'fProg'); page = 1; sync(); });
     G.qs('fDep').addEventListener('change', function () { G.cascade('fFac', 'fDep', 'fProg'); page = 1; sync(); });
     G.qs('fSort').addEventListener('change', function () { page = 1; sync(); });
+    // "This cycle" narrows by when somebody last sat a paper, which the engine applies only to
+    // the pending queue — a graduation list is already narrow by year. Disabling it says so
+    // rather than leaving a control that silently does nothing.
+    G.qs('fOnList').addEventListener('change', syncFocusEnabled);
     // Typing is enough. Requiring Enter meant a filter that looked applied and was not.
     var typed = G.debounce(function () { page = 1; sync(); }, 350);
     G.qs('fQ').addEventListener('input', typed);
@@ -472,6 +501,7 @@ document.addEventListener('DOMContentLoaded', function () {
         resetFilters();
         G.qs('fFocus').value = 'cycle';
         G.qs('fSort').value = 'regno';
+        syncFocusEnabled();
         if (BOOT && BOOT.currentYear) G.qs('fYear').value = BOOT.currentYear;
         G.cascade('fFac', 'fDep', 'fProg'); page = 1; sync();
     });
@@ -498,12 +528,14 @@ document.addEventListener('DOMContentLoaded', function () {
         if (pre.prog) G.qs('fProg').value = pre.prog;
         if (pre.intake) G.qs('fIntake').value = pre.intake;
         if (pre.ready) G.qs('fReady').value = pre.ready;
+        if (pre.onlist) G.qs('fOnList').value = pre.onlist;
         if (pre.sort) G.qs('fSort').value = pre.sort;
         if (pre.q) G.qs('fQ').value = pre.q;
         page = parseInt(pre.page || '1', 10) || 1;
         G.cascade('fFac', 'fDep', 'fProg');
         // 130 programmes is not a list anyone should scroll through.
         G.combo('fProg', 'Type a code or part of the name\u2026');
+        syncFocusEnabled();
         chips();
         load();
     }

@@ -182,7 +182,7 @@ public partial class COOPERP_NewScreens_GraduationCandidates : System.Web.UI.Pag
         if (!scope.HasAccess) return;
 
         GraduationEngine.GradFilter f = GraduationBootstrap.Parse(Request.Form["gradConfig"] ?? "");
-        f.state = "pending";
+        f.state = ListState(f);
 
         // "Only what is on screen" means exactly the page the user was looking at; anything
         // else means the whole result set. The previous build asked Page() for 5,000 rows and
@@ -237,7 +237,9 @@ public partial class COOPERP_NewScreens_GraduationCandidates : System.Web.UI.Pag
         if (GraduationExport.Wants(want, "blockers")) sheets.Add(ByBlocker(rows));
 
         var cover = GraduationBootstrap.CoverOf(f,
-            f.focus == "cycle" ? "The graduating cycle" : "Everyone not yet graduated");
+            f.state == "listed" ? "Already on the graduation list"
+            : f.state == "all" ? "On the list and not yet on it"
+            : (f.focus == "cycle" ? "The graduating cycle" : "Everyone not yet graduated"));
         cover.Add(new KeyValuePair<string, string>("Candidates in this file",
             rows.Count.ToString(CultureInfo.InvariantCulture)));
         cover.Add(new KeyValuePair<string, string>("Ordered by", OrderLabel(f.orderBy)));
@@ -261,6 +263,24 @@ public partial class COOPERP_NewScreens_GraduationCandidates : System.Web.UI.Pag
             }
         }
         finally { GraduationExport.Truncation = null; }
+    }
+
+    /// <summary>
+    /// Which population the list is showing.
+    ///
+    /// This page used to force "pending" everywhere - on_list = 0 - so a student already on a
+    /// graduation list could not be looked at here at all. That is right as a default, because
+    /// the queue is work still to be done, but it is wrong as the only option: a Registrar
+    /// checking what is already on the 2026/2027 list, or looking for somebody who should not
+    /// be on it, had nowhere to do that.
+    ///
+    /// A whitelist rather than a pass-through, so nothing unexpected reaches the engine. The
+    /// engine already understood all three; only this page was insisting.
+    /// </summary>
+    private static string ListState(GraduationEngine.GradFilter f)
+    {
+        string v = (f.state ?? "").Trim().ToLowerInvariant();
+        return (v == "listed" || v == "all") ? v : "pending";
     }
 
     // ─────────────────────────────────────────────────────────────────
@@ -553,7 +573,7 @@ public partial class COOPERP_NewScreens_GraduationCandidates : System.Web.UI.Pag
             MarksScope scope = MarksScopeResolver.Resolve();
             if (!scope.HasAccess) return GraduationBootstrap.Denied();
             GraduationEngine.GradFilter f = GraduationBootstrap.Parse(configJson);
-            f.state = "pending";
+            f.state = ListState(f);
             f.page = 1;
             f.size = 1;
             int total;
@@ -606,7 +626,7 @@ public partial class COOPERP_NewScreens_GraduationCandidates : System.Web.UI.Pag
             MarksScope scope = MarksScopeResolver.Resolve();
             if (!scope.HasAccess) return GraduationBootstrap.Denied();
             GraduationEngine.GradFilter f = GraduationBootstrap.Parse(configJson);
-            f.state = "pending";
+            f.state = ListState(f);
             int total;
             List<GradCandidate> rows = GraduationEngine.Page(scope, f, out total);
             return J.Serialize(new
