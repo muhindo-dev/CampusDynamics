@@ -1164,3 +1164,47 @@ On a year straddling two academic years the heading reads `2023/2024 + 2024/2025
 semesters involved name their own. The warnings fold starts collapsed, opens on click, persists that
 choice, and holds all three warnings; the structure fold stays closed, decision history stays open,
 and the Clear button is on screen with a live handler throughout.
+
+### 14f. Density, and pagination that counts — 2026-09-24
+
+Brief: *"in paginations, show totals as well, not pages only. in modals of student preview, show
+course code - course name, not to put them on two different lines. optimise space as best as you
+can, make use of small paddings and margins and small fonts. make the modal more bigger."*
+
+**Pagination leads with the totals.** "Page 2 of 20" tells a reviewer nothing they can act on.
+Which records am I looking at, and how many are there altogether — that is the question a queue
+raises, so the range and the total come first and the page number follows as a secondary fact:
+
+```
+1–50 of 996                       «  Previous  page 1 of 20  Next  »
+951–996 of 996                     «  Previous  page 20 of 20  Next  »
+7 records
+```
+
+The last page computes its real range rather than assuming a full page. A result set that fits on
+one page still reports its total and simply has nothing to navigate; an empty one removes the bar
+rather than leaving a stray strip of border under an empty table. **First and Last** are there
+because these queues are long — 996 candidates is 20 pages, and reaching the end by pressing Next
+is not something anyone should have to do.
+
+It is one shared `G.pager`, so Candidates and Held cannot drift apart, and the card headings stop
+repeating the counts the pager now owns.
+
+**Course code and name on one line.** `BIT1101 – Introduction to Programming`, not a code with the
+title stacked beneath it. Two lines per course doubled the height of every table for a title most
+readers skim past on their way to the code. The cell truncates at its own width with the full text
+in the title attribute.
+
+**Density.** Paddings, margins and fonts pulled in throughout the panel — table rows 3px→1px,
+semester headers 6px→4px, the modal body 12px→9px, the overlay gutter 24px→14px, facts and
+verdict likewise. Combined with the one-line course rows, a full three-year record — six semester
+tables, 31 courses, the verdict, the six figures and the decision history — now fits in a single
+view where it previously needed scrolling.
+
+**Bigger.** 1400px, up from 1180. It is a cap, not a width: measured at five window sizes it
+resolves to 1400 / 1322 / 1236 / 980 / 776 as the window narrows, keeping two tables per row down to
+1024px and falling to one at 820px. The decision bar stays on screen at every one of them.
+
+Verified by computed style rather than by eye: every course name resolves to the same mute grey
+regardless of row state — 28 normal, 1 red for the failed paper, 2 amber for the unmarked ones, and
+the colour never leaks from the score cell into the name.

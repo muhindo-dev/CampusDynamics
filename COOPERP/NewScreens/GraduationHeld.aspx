@@ -123,17 +123,10 @@ function load() {
         }
         G.qs('gBody').innerHTML = h || '<tr><td colspan="6" class="g-empty">Nobody is held in this scope.</td></tr>';
 
-        var pages = Math.max(1, Math.ceil((d.total || 0) / 100));
-        G.qs('gMeta').textContent = rows.length + ' shown of ' + (d.total || 0) + ' held' +
-            (pages > 1 ? (' · page ' + page + ' of ' + pages) : '');
-        G.qs('gPager').innerHTML = pages > 1
-            ? '<button type="button" class="g-btn g-btn--sm" id="pgPrev"' + (page <= 1 ? ' disabled' : '') +
-              '>Previous</button><span>page ' + page + ' of ' + pages + '</span>' +
-              '<button type="button" class="g-btn g-btn--sm" id="pgNext"' + (page >= pages ? ' disabled' : '') +
-              '>Next</button>'
-            : '';
-        if (G.qs('pgPrev')) G.qs('pgPrev').addEventListener('click', function () { if (page > 1) { page--; sync(); } });
-        if (G.qs('pgNext')) G.qs('pgNext').addEventListener('click', function () { page++; sync(); });
+        G.qs('gMeta').textContent = G.qs('fStale').value === 'stale'
+            ? 'holds nothing is blocking any more' : 'oldest first';
+        G.pager('gPager', { page: page, size: 100, total: d.total || 0, shown: rows.length },
+                function (n) { page = n; sync(); });
     });
 }
 

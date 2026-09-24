@@ -266,8 +266,10 @@ window.G = (function () {
             var bad = (x.score !== null && x.score > 0 && x.score < 50);
             var zero = (x.score === 0 || x.score === null);
             var cls = bad ? ' is-fail' : (zero ? ' is-zero' : '');
-            h += '<tr><td class="g-sem__course"><b>' + esc(x.code) + '</b>' +
-                 '<span>' + esc(x.name) + '</span></td>' +
+            // Code and name on ONE line. Two lines per course doubled the height of every
+            // table for a title most readers skim; the code is what they look for.
+            h += '<tr><td class="g-sem__course" title="' + esc(x.code + ' - ' + x.name) + '">' +
+                 '<b>' + esc(x.code) + '</b><i>&ndash;</i>' + esc(x.name) + '</td>' +
                  '<td class="g-num g-sub">' + n0(x.cu) + '</td>' +
                  '<td class="g-num g-sem__s' + cls + '">' + (x.score === null ? '&ndash;' : esc(x.score)) + '</td>' +
                  '<td class="g-sem__g' + cls + '">' + esc(x.grade || '') + '</td></tr>';
@@ -443,7 +445,8 @@ window.G = (function () {
                 var c = d.structure[i];
                 var cls2 = c.score === null ? 'miss' : (c.score > 0 && c.score < 50 ? 'fail' : '');
                 st += '<tr><td>' + esc(c.sy) + '</td><td>' + esc(c.sem) + '</td>' +
-                      '<td>' + esc(c.code) + '<div class="g-sub">' + esc(c.name) + '</div></td>' +
+                      '<td class="g-sem__course" title="' + esc(c.code + ' - ' + c.name) + '">' +
+                      '<b>' + esc(c.code) + '</b><i>&ndash;</i>' + esc(c.name) + '</td>' +
                       '<td class="g-num">' + n0(c.cu) + '</td><td class="' + cls2 + '">' +
                       (c.score === null ? 'no result' : c.score + '%') + '</td></tr>';
             }
@@ -576,6 +579,68 @@ window.G = (function () {
         var b = el.querySelectorAll('.g-fchip');
         for (i = 0; i < b.length; i++)
             b[i].addEventListener('click', function () { onRemove(this.getAttribute('data-k')); });
+    }
+
+    /* ── Pagination ───────────────────────────────────────────────────
+       "Page 2 of 20" tells a reviewer nothing they can act on. Which records am I looking at,
+       and how many are there altogether — that is the question a queue raises, so the range and
+       the total lead, and the page number follows as a secondary fact.
+
+       First and Last matter here because the queues are long: 996 candidates is 20 pages, and
+       getting to the end by pressing Next is not a thing anyone should have to do. */
+    function pager(id, o, onGo) {
+        var el = qs(id);
+        if (!el) return;
+
+        var total = +o.total || 0,
+            size  = +o.size || 50,
+            page  = +o.page || 1,
+            shown = o.shown === undefined ? size : +o.shown,
+            pages = Math.max(1, Math.ceil(total / size));
+
+        if (page > pages) page = pages;
+        if (page < 1) page = 1;
+
+        // Nothing to page and nothing to count: the bar itself goes, rather than sitting
+        // under an empty table as a stray strip of border.
+        if (total === 0) { el.innerHTML = ''; el.className = 'g-pager g-pager--none'; return; }
+
+        var from = (page - 1) * size + 1;
+        var to = from + shown - 1;
+        if (to > total) to = total;
+        if (shown === 0) { from = 0; to = 0; }
+
+        var count = '<span class="g-pager__n">' +
+            (total === shown && pages === 1
+                ? ('<b>' + total + '</b> ' + (total === 1 ? 'record' : 'records'))
+                : ('<b>' + from + '&ndash;' + to + '</b> of <b>' + total + '</b>')) +
+            '</span>';
+
+        var nav = '';
+        if (pages > 1) {
+            nav = '<span class="g-pager__b">' +
+                  btn('pgFirst', '&laquo;', page <= 1, 'First page') +
+                  btn('pgPrev', 'Previous', page <= 1, '') +
+                  '<span class="g-pager__p">page <b>' + page + '</b> of <b>' + pages + '</b></span>' +
+                  btn('pgNext', 'Next', page >= pages, '') +
+                  btn('pgLast', '&raquo;', page >= pages, 'Last page') +
+                  '</span>';
+        }
+
+        el.className = 'g-pager' + (pages > 1 ? '' : ' g-pager--one');
+        el.innerHTML = count + nav;
+
+        function go(n) { if (n >= 1 && n <= pages && n !== page && onGo) onGo(n); }
+        if (qs('pgFirst')) qs('pgFirst').addEventListener('click', function () { go(1); });
+        if (qs('pgPrev')) qs('pgPrev').addEventListener('click', function () { go(page - 1); });
+        if (qs('pgNext')) qs('pgNext').addEventListener('click', function () { go(page + 1); });
+        if (qs('pgLast')) qs('pgLast').addEventListener('click', function () { go(pages); });
+    }
+
+    function btn(id, label, off, title) {
+        return '<button type="button" class="g-btn g-btn--sm" id="' + id + '"' +
+               (off ? ' disabled' : '') + (title ? ' title="' + esc(title) + '"' : '') +
+               '>' + label + '</button>';
     }
 
     /* ── The export dialog ────────────────────────────────────────────
@@ -883,6 +948,6 @@ window.G = (function () {
         mount: mount, openModal: openModal, closeModal: closeModal, wireModal: wireModal,
         openStudent: openStudent, currentStudent: currentStudent,
         csv: csv, serverExport: serverExport, exportDialog: exportDialog,
-        debounce: debounce, freshness: freshness, chips: chips
+        debounce: debounce, freshness: freshness, chips: chips, pager: pager
     };
 })();

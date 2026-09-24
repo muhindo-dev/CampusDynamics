@@ -148,18 +148,12 @@ function render(d) {
     var scope = G.qs('fFocus').value === 'cycle'
         ? (' · finishing ' + (BOOT && BOOT.previousYear ? BOOT.previousYear + ' or ' : '') + G.qs('fYear').value)
         : ' · everyone not yet graduated';
-    G.qs('gMeta').textContent = 'showing ' + rows.length + ' of ' + d.total +
-        (d.pages > 1 ? (' · page ' + d.page + ' of ' + d.pages) : '') + scope;
+    G.qs('gMeta').textContent = scope.replace(/^ · /, '');
 
-    var pg = '';
-    if (d.pages > 1) {
-        pg = '<button type="button" class="g-btn g-btn--sm" id="pgPrev"' + (d.page <= 1 ? ' disabled' : '') + '>Previous</button>' +
-             '<span>page ' + d.page + ' of ' + d.pages + '</span>' +
-             '<button type="button" class="g-btn g-btn--sm" id="pgNext"' + (d.page >= d.pages ? ' disabled' : '') + '>Next</button>';
-    }
-    G.qs('gPager').innerHTML = pg;
-    if (G.qs('pgPrev')) G.qs('pgPrev').addEventListener('click', function () { if (page > 1) { page--; sync(); } });
-    if (G.qs('pgNext')) G.qs('pgNext').addEventListener('click', function () { page++; sync(); });
+    // The pager carries the numbers now — which records these are, and how many there are
+    // altogether — so the card heading no longer repeats them.
+    G.pager('gPager', { page: d.page, size: 50, total: d.total, shown: rows.length },
+            function (n) { page = n; sync(); });
 
     G.qs('ckAll').checked = false;
     syncBulk();
