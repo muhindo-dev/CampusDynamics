@@ -121,6 +121,129 @@ window.G = (function () {
         }
         el.innerHTML = h;
         if (cur) el.value = cur;
+        // A combo sitting over this select shows the option TEXT, which has just been replaced.
+        if (el.getAttribute('data-combo')) el.dispatchEvent(new Event('g-refill'));
+    }
+
+    /* ── A list you can type into ──────────────────────────────────────
+       There are 130 programmes. A native <select> makes you hunt through all of them with the
+       keyboard's first-letter jump, which is why the programme filter has always been the
+       slowest control on these screens.
+
+       This is a text box over a filtered list. It matches on ANY word boundary, not just the
+       start of the string, because people type "information" for "Bachelor of Information
+       Technology" and "BIT" for the same thing; both have to work. Matching is
+       accent-and-case-insensitive and ignores punctuation, so "b.ed" finds "BED".
+
+       It renders over a real <select>, which stays in the DOM and keeps its value. Everything
+       that reads the filter keeps reading the select, so nothing else on the page has to know
+       this exists. */
+    function norm(t) {
+        return String(t == null ? '' : t).toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+    }
+
+    /// True when every word typed appears at the start of some word in the option.
+    function matches(hay, words) {
+        for (var i = 0; i < words.length; i++) {
+            var w = words[i], ok = false;
+            var parts = hay.split(' ');
+            for (var j = 0; j < parts.length; j++)
+                if (parts[j].indexOf(w) === 0) { ok = true; break; }
+            // A long token still matches inside a word, so "formation" finds "Information".
+            if (!ok && w.length >= 4 && hay.indexOf(w) >= 0) ok = true;
+            if (!ok) return false;
+        }
+        return true;
+    }
+
+    function combo(selectId, placeholder) {
+        var sel = qs(selectId);
+        if (!sel || sel.getAttribute('data-combo')) return;
+        sel.setAttribute('data-combo', '1');
+
+        var box = document.createElement('div');
+        box.className = 'g-cb';
+        var input = document.createElement('input');
+        input.type = 'text';
+        input.className = 'g-cb__in';
+        input.autocomplete = 'off';
+        input.placeholder = placeholder || 'Type to search…';
+        var list = document.createElement('div');
+        list.className = 'g-cb__l';
+        box.appendChild(input);
+        box.appendChild(list);
+        sel.parentNode.insertBefore(box, sel);
+        sel.classList.add('g-cb__hidden');
+
+        var open = false, active = -1, shown = [];
+
+        function label() {
+            var o = sel.options[sel.selectedIndex];
+            return o ? o.text.replace(/\s+/g, ' ').trim() : '';
+        }
+        function sync() { input.value = label(); input.classList.toggle('is-set', !!sel.value); }
+
+        function draw(q) {
+            var words = norm(q).split(' ').filter(function (w) { return w !== ''; });
+            shown = [];
+            var h = '', i;
+            for (i = 0; i < sel.options.length; i++) {
+                var o = sel.options[i];
+                if (o.hidden) continue;                       // respects the cascade
+                if (words.length && !matches(norm(o.text + ' ' + o.value), words)) continue;
+                shown.push(i);
+            }
+            if (!shown.length) {
+                list.innerHTML = '<div class="g-cb__none">Nothing matches “' + esc(q) + '”.</div>';
+                return;
+            }
+            for (i = 0; i < shown.length; i++) {
+                var op = sel.options[shown[i]];
+                h += '<button type="button" class="g-cb__o' +
+                     (i === active ? ' is-active' : '') +
+                     (op.index === sel.selectedIndex ? ' is-sel' : '') +
+                     '" data-i="' + shown[i] + '">' + esc(op.text) + '</button>';
+            }
+            list.innerHTML = h;
+            var b = list.querySelectorAll('.g-cb__o');
+            for (i = 0; i < b.length; i++)
+                b[i].addEventListener('mousedown', function (e) {
+                    e.preventDefault();
+                    pick(+this.getAttribute('data-i'));
+                });
+        }
+
+        function show() { open = true; box.classList.add('is-open'); active = -1; draw(''); input.select(); }
+        function hide() { open = false; box.classList.remove('is-open'); sync(); }
+
+        function pick(i) {
+            sel.selectedIndex = i;
+            hide();
+            // A real change event, so every cascade and reload already listening still fires.
+            sel.dispatchEvent(new Event('change', { bubbles: true }));
+        }
+
+        input.addEventListener('focus', show);
+        input.addEventListener('input', function () { active = -1; draw(input.value); });
+        input.addEventListener('blur', function () { setTimeout(hide, 120); });
+        input.addEventListener('keydown', function (e) {
+            if (!open && (e.key === 'ArrowDown' || e.key === 'Enter')) { show(); return; }
+            if (e.key === 'ArrowDown') { active = Math.min(active + 1, shown.length - 1); draw(input.value); scroll(); e.preventDefault(); }
+            else if (e.key === 'ArrowUp') { active = Math.max(active - 1, 0); draw(input.value); scroll(); e.preventDefault(); }
+            else if (e.key === 'Enter') { if (shown.length) pick(shown[active < 0 ? 0 : active]); e.preventDefault(); }
+            else if (e.key === 'Escape') { hide(); input.blur(); }
+        });
+
+        function scroll() {
+            var el = list.querySelector('.is-active');
+            if (el && el.scrollIntoView) el.scrollIntoView({ block: 'nearest' });
+        }
+
+        // The cascade rewrites the option list; the box has to follow it.
+        sel.addEventListener('change', sync);
+        sel.addEventListener('g-refill', sync);
+        sync();
+        return { sync: sync };
     }
 
     function cascade(facId, depId, progId) {
@@ -143,6 +266,9 @@ window.G = (function () {
             }
             if (prog.selectedIndex > -1 && prog.options[prog.selectedIndex].hidden) prog.value = '';
         }
+        // The cascade can clear a selection; anything drawn over these selects must follow.
+        if (dep && dep.getAttribute('data-combo')) dep.dispatchEvent(new Event('g-refill'));
+        if (prog && prog.getAttribute('data-combo')) prog.dispatchEvent(new Event('g-refill'));
     }
 
     /* Injects the one modal and the one toast every page shares, so no page carries a copy
@@ -827,14 +953,39 @@ window.G = (function () {
         var chosen = saved.cols && saved.cols.length ? saved.cols : null;
         var i, c;
 
-        // ── what's included ──
-        var h = '<div class="g-xs"><div class="g-xs__h">What\u2019s included</div>' +
-                '<div class="g-xkv">';
+        // ── what's included ────────────────────────────────────────────────
+        //  These were a read-out of the screen's filter. They are now the filter: a reviewer
+        //  who wants one programme's list should not have to close this, change the page, and
+        //  open it again. They start where the screen is, and they cascade - narrowing the
+        //  faculty narrows the departments and the programmes under it - so the combinations
+        //  offered are always ones that can return rows.
+        var h = '<div class="g-xs"><div class="g-xs__h">What\u2019s included' +
+                '<button type="button" class="g-xlink" id="gXmatch" ' +
+                'title="Put these back to what the screen is showing">match the screen</button></div>' +
+                '<div class="g-xf">';
+
+        if (XOPT.filters) {
+            h += xField('gXyear', 'Graduation year') +
+                 (XOPT.filters.focus ? xField('gXfocus', 'Population') : '') +
+                 xField('gXfac', 'Faculty') +
+                 xField('gXdep', 'Department') +
+                 xField('gXprog', 'Programme');
+        }
+        h += '</div>';
+
+        // Anything the dialog does not control still has to be visible, or the count is a
+        // mystery: a search term or a readiness filter can be doing most of the narrowing.
         var fs = XOPT.filterSummary || [];
-        if (!fs.length) h += '<div><span>Scope</span><b>Everything you can see</b></div>';
-        for (i = 0; i < fs.length; i++)
-            h += '<div><span>' + esc(fs[i].label) + '</span><b>' + esc(fs[i].value) + '</b></div>';
-        h += '</div><div class="g-xcount" id="gXcount">Counting rows\u2026</div></div>';
+        if (fs.length) {
+            // Labelled and separated, so it is obvious these narrow the file too but are not
+            // editable here - sitting unlabelled among the dropdowns, they read as broken ones.
+            h += '<div class="g-xalso"><span class="g-xalso__h">Also narrowing this export, ' +
+                 'from the screen</span><div class="g-xkv">';
+            for (i = 0; i < fs.length; i++)
+                h += '<div><span>' + esc(fs[i].label) + '</span><b>' + esc(fs[i].value) + '</b></div>';
+            h += '</div></div>';
+        }
+        h += '<div class="g-xcount" id="gXcount">Counting rows\u2026</div></div>';
 
         // ── rows ──
         var rowMode = saved.rows || 'all';
@@ -923,6 +1074,7 @@ window.G = (function () {
         qs('gXbody').innerHTML = h;
 
         xWireFolds();
+        xWireFilters();
 
         // Only the workbook has tabs. Saying so, and disabling them, beats producing a file that
         // quietly lost half of what was asked for.
@@ -953,21 +1105,12 @@ window.G = (function () {
         qs('gXov').classList.add('is-open');
         document.body.style.overflow = 'hidden';
 
-        // The honest row count, from the server, before the dialog can be used in anger.
-        var cnt = qs('gXcount');
-        if (XOPT.countMethod) {
-            ajax(XOPT.page, XOPT.countMethod, { configJson: XOPT.cfg }, function (d) {
-                if (!d || !d.success) { cnt.textContent = 'Could not count the rows; the export will still run.'; echo(); return; }
-                XOPT.total = d.total;
-                cnt.innerHTML = '<b>' + d.total + '</b> row' + (d.total === 1 ? '' : 's') + ' match' +
-                    (d.total === 1 ? 'es' : '') + ' these filters.' +
-                    (d.note ? ' <span class="g-xwarn">' + esc(d.note) + '</span>' : '') +
-                    (d.capped ? ' <span class="g-xwarn">The file stops at ' + d.capped + '.</span>' : '');
-                echo();
-            });
-        } else {
+        // The honest row count, from the server, before the dialog can be used in anger. The
+        // same path runs again whenever a filter above changes.
+        if (XOPT.countMethod) xRecount();
+        else {
             XOPT.total = XOPT.pageRows || 0;
-            cnt.textContent = '';
+            qs('gXcount').textContent = '';
             echo();
         }
 
@@ -1003,6 +1146,104 @@ window.G = (function () {
                 try { sessionStorage.setItem('gxf_' + k, now ? '1' : '0'); } catch (e) { }
             });
     }
+
+    function xField(id, label) {
+        return '<div class="g-f"><label for="' + id + '">' + esc(label) + '</label>' +
+               '<select id="' + id + '"></select></div>';
+    }
+
+    /*
+       The dialog's own copy of the page filter.
+
+       It is seeded from XOPT.filters, which the page fills from its bootstrap - the same years,
+       faculties, departments and programmes, resolved through the same scope, so nothing here
+       can offer a combination the server would refuse. Changing one re-counts against the
+       server, because a row count nobody can trust is worse than no row count.
+    */
+    function xWireFilters() {
+        var f = XOPT.filters;
+        if (!f || !qs('gXyear')) return;
+
+        fill('gXyear', (f.years || []).map(function (y) { return { v: y, t: y }; }),
+             f.allowAllYears === false ? null : 'All years');
+        if (qs('gXfocus'))
+            fill('gXfocus', [{ v: 'cycle', t: 'This cycle \u2014 finishing now' },
+                             { v: 'all', t: 'Everyone not yet graduated' }], null);
+        fill('gXfac', f.faculties || [], 'All faculties');
+        fill('gXdep', f.departments || [], 'All departments');
+        fill('gXprog', f.programmes || [], 'All programmes');
+
+        qs('gXyear').value = f.current.acadYear || '';
+        if (qs('gXfocus')) qs('gXfocus').value = f.current.focus || 'cycle';
+        qs('gXfac').value = f.current.faculty || '';
+        qs('gXdep').value = f.current.department || '';
+        qs('gXprog').value = f.current.programme || '';
+        cascade('gXfac', 'gXdep', 'gXprog');
+
+        // 130 programmes is not a list anyone should scroll.
+        combo('gXprog', 'Type a code or part of the name\u2026');
+        combo('gXdep', 'Type a department\u2026');
+        combo('gXfac', 'Type a faculty\u2026');
+
+        var recount = debounce(xRecount, 220);
+        ['gXyear', 'gXfocus', 'gXprog'].forEach(function (id) {
+            if (qs(id)) qs(id).addEventListener('change', recount);
+        });
+        ['gXfac', 'gXdep'].forEach(function (id) {
+            qs(id).addEventListener('change', function () {
+                cascade('gXfac', 'gXdep', 'gXprog');
+                recount();
+            });
+        });
+
+        qs('gXmatch').addEventListener('click', function () {
+            qs('gXyear').value = f.current.acadYear || '';
+            if (qs('gXfocus')) qs('gXfocus').value = f.current.focus || 'cycle';
+            qs('gXfac').value = f.current.faculty || '';
+            qs('gXdep').value = f.current.department || '';
+            qs('gXprog').value = f.current.programme || '';
+            cascade('gXfac', 'gXdep', 'gXprog');
+            xRecount();
+        });
+    }
+
+    /// The filter the file will actually use: the page's, with the dialog's fields on top.
+    function xConfig() {
+        var cfg = XOPT.cfg;
+        if (!qs('gXyear')) return cfg;
+        try {
+            var o = JSON.parse(cfg);
+            o.acadYear = qs('gXyear').value;
+            if (qs('gXfocus')) o.focus = qs('gXfocus').value;
+            o.faculty = qs('gXfac').value;
+            o.department = qs('gXdep').value;
+            o.programme = qs('gXprog').value;
+            return JSON.stringify(o);
+        } catch (e) { return cfg; }
+    }
+
+    function xRecount() {
+        var cnt = qs('gXcount');
+        if (!cnt || !XOPT.countMethod) { echo(); return; }
+        XOPT.total = undefined;
+        cnt.textContent = 'Counting rows\u2026';
+        echo();
+        var mine = ++XCOUNT;
+        ajax(XOPT.page, XOPT.countMethod, { configJson: xConfig() }, function (d) {
+            if (mine !== XCOUNT) return;      // a later change has already asked again
+            if (!d || !d.success) {
+                cnt.textContent = 'Could not count the rows; the export will still run.';
+                XOPT.total = undefined; echo(); return;
+            }
+            XOPT.total = d.total;
+            cnt.innerHTML = '<b>' + d.total + '</b> row' + (d.total === 1 ? '' : 's') + ' match' +
+                (d.total === 1 ? 'es' : '') + ' this selection.' +
+                (d.note ? ' <span class="g-xwarn">' + esc(d.note) + '</span>' : '') +
+                (d.capped ? ' <span class="g-xwarn">The file stops at ' + d.capped + '.</span>' : '');
+            echo();
+        });
+    }
+    var XCOUNT = 0;
 
     function xRadio(name, val, label, on) {
         return '<label class="g-ck"><input type="radio" name="' + name + '" value="' + val + '"' +
@@ -1064,7 +1305,7 @@ window.G = (function () {
         // Order and grouping travel inside the filter, so the server applies them to the rows
         // themselves — "sort by performance" means CGPA descending in the PDF, the workbook and
         // the CSV alike, not a label on one of them.
-        var cfg = XOPT.cfg;
+        var cfg = xConfig();
         try {
             var o = JSON.parse(cfg);
             if (ord) o.orderBy = ord;
@@ -1249,6 +1490,116 @@ window.G = (function () {
         });
     }
 
+    /* ── Bringing somebody in by hand ─────────────────────────────────
+       The candidacy rule is deliberately narrow and it is right about 1,254 of 1,254 graduands
+       on record. But a rule that is right almost always still has to be overrulable by a person
+       with the evidence in front of them, because the cases it misses are exactly the ones with
+       a broken record: a study year never written, a semester registered under the wrong
+       programme, results sitting on an entry number.
+
+       Nothing here bends the engine. It finds a student and opens the SAME review panel, which
+       re-assesses them from live marks and demands a written justification before anyone blocked
+       can be cleared. The override is a decision by a named person, on the record. */
+    var FD = null;
+
+    function findMount() {
+        if (qs('gFov')) return;
+        var d = document.createElement('div');
+        d.innerHTML =
+            '<div class="g-ov" id="gFov">' +
+              '<div class="g-modal g-modal--f" role="dialog" aria-modal="true" aria-labelledby="gFtitle">' +
+                '<div class="g-modal__h">' +
+                  '<div class="g-modal__t"><b id="gFtitle">Add a student to the queue</b>' +
+                    '<span>Anyone in your scope, whether or not the engine sees them as a candidate.</span></div>' +
+                  '<button type="button" class="g-modal__x" id="gFx" aria-label="Close">&times;</button>' +
+                '</div>' +
+                '<div class="g-modal__b">' +
+                  '<input type="text" class="g-fq" id="gFq" autocomplete="off" ' +
+                    'placeholder="Student number, entry number, or name\u2026" />' +
+                  '<div class="g-fr" id="gFr"><div class="g-empty">Type at least two characters.</div></div>' +
+                '</div>' +
+              '</div>' +
+            '</div>';
+        while (d.firstChild) document.body.appendChild(d.firstChild);
+
+        var ov = qs('gFov');
+        ov.addEventListener('mousedown', function (e) { if (e.target === ov) findClose(); });
+        qs('gFx').addEventListener('click', findClose);
+        document.addEventListener('keydown', function (e) {
+            if (e.key === 'Escape' && ov.classList.contains('is-open')) findClose();
+        });
+    }
+
+    function findClose() {
+        var ov = qs('gFov');
+        if (!ov) return;
+        ov.classList.remove('is-open');
+        if (!qs('gOv') || !qs('gOv').classList.contains('is-open')) document.body.style.overflow = '';
+    }
+
+    /// The page says what to do with the student that gets picked.
+    function findStudent(o) {
+        findMount();
+        FD = o || {};
+        qs('gFq').value = '';
+        qs('gFr').innerHTML = '<div class="g-empty">Type at least two characters.</div>';
+        qs('gFov').classList.add('is-open');
+        document.body.style.overflow = 'hidden';
+        setTimeout(function () { try { qs('gFq').focus(); } catch (e) { } }, 30);
+
+        var seq = 0;
+        var run = debounce(function () {
+            var q = qs('gFq').value.trim();
+            if (q.length < 2) {
+                qs('gFr').innerHTML = '<div class="g-empty">Type at least two characters.</div>';
+                return;
+            }
+            qs('gFr').innerHTML = '<div class="g-load">Searching\u2026</div>';
+            var mine = ++seq;
+            ajax(FD.page, 'FindStudent', { q: q, acadYear: FD.acadYear || '' }, function (d) {
+                if (mine !== seq) return;           // a later keystroke has already asked
+                if (!d || !d.success) {
+                    qs('gFr').innerHTML = '<div class="g-note g-note--bad">' +
+                        esc((d && d.message) || 'The search failed.') + '</div>';
+                    return;
+                }
+                var rows = d.rows || [];
+                if (!rows.length) {
+                    qs('gFr').innerHTML = '<div class="g-empty">Nobody in your scope matches \u201c' +
+                        esc(q) + '\u201d.</div>';
+                    return;
+                }
+                var h = '';
+                for (var i = 0; i < rows.length; i++) {
+                    var r = rows[i];
+                    h += '<button type="button" class="g-fo" data-reg="' + esc(r.regno) + '">' +
+                         '<img class="g-ph" loading="lazy" alt="" src="' + photo(r.regno) + '" />' +
+                         '<span class="g-fo__t"><b>' + esc(r.name) + '</b>' +
+                         '<span>' + esc(r.regno) + '  \u00b7  ' + esc(r.progname || r.progcode) +
+                         (r.entryyear ? '  \u00b7  intake ' + esc(r.entryyear) : '') + '</span></span>' +
+                         '<span class="g-fo__n' +
+                           (r.onList ? ' is-listed' : (r.isCandidate ? ' is-cand' : ' is-new')) + '">' +
+                           esc(r.note) + '</span></button>';
+                }
+                qs('gFr').innerHTML = h;
+                var b = qs('gFr').querySelectorAll('.g-fo');
+                for (i = 0; i < b.length; i++)
+                    b[i].addEventListener('click', function () {
+                        var reg = this.getAttribute('data-reg');
+                        findClose();
+                        if (FD.onPick) FD.onPick(reg);
+                    });
+            });
+        }, 250);
+
+        qs('gFq').addEventListener('input', run);
+        qs('gFq').addEventListener('keydown', function (e) {
+            if (e.key !== 'Enter') return;
+            var first = qs('gFr').querySelector('.g-fo');
+            if (first) first.click();
+        });
+    }
+
     /* ── The queue ────────────────────────────────────────────────────
        A reviewer with 996 candidates should decide and be handed the next one, not be returned
        to a table to find their place again.
@@ -1318,12 +1669,13 @@ window.G = (function () {
         photo: photo, photoCell: photoCell, chip: chip, credits: credits,
         openPhoto: openPhoto,
         readUrl: readUrl, writeUrl: writeUrl,
-        fill: fill, cascade: cascade,
+        fill: fill, cascade: cascade, combo: combo,
         mount: mount, openModal: openModal, closeModal: closeModal, wireModal: wireModal,
         openStudent: openStudent, currentStudent: currentStudent, onWalk: onWalk,
         csv: csv, serverExport: serverExport, exportDialog: exportDialog,
         debounce: debounce, freshness: freshness, chips: chips, pager: pager,
-        reasonDialog: reasonDialog, queue: queue, markDecided: markDecided,
+        reasonDialog: reasonDialog, findStudent: findStudent,
+        queue: queue, markDecided: markDecided,
         autoAdvance: autoAdvance, setAutoAdvance: setAutoAdvance,
         queueNext: function () { return nextIn(Q.idx); },
         queuePrev: function () { return prevIn(Q.idx); },

@@ -537,6 +537,14 @@ public partial class COOPERP_NewScreens_GraduationCandidates : System.Web.UI.Pag
     [WebMethod(EnableSession = true)]
     public static string HoldReasons(string regno) { return GraduationReasons.For(regno); }
 
+    /// <summary>
+    /// Finds any student in scope, candidate or not, so a reviewer can bring somebody into the
+    /// queue the engine did not. See GraduationStudent.Search for why that is allowed.
+    /// </summary>
+    [WebMethod(EnableSession = true)]
+    public static string FindStudent(string q, string acadYear)
+    { return GraduationStudent.Search(q, acadYear); }
+
     [WebMethod(EnableSession = true)]
     public static string CountExport(string configJson)
     {

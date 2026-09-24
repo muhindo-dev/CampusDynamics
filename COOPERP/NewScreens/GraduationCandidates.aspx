@@ -25,6 +25,7 @@
     <div class="g-f" style="flex:1 1 130px;"><label for="fQ">Search</label>
       <input type="text" id="fQ" placeholder="Number or name&hellip;" autocomplete="off" /></div>
     <div class="g-bar__sp">
+      <button type="button" class="g-btn" id="btnAdd" title="Bring a student into the queue who the engine did not">Add a student&hellip;</button>
       <button type="button" class="g-btn" id="btnXls">Export&hellip;</button>
       <button type="button" class="g-btn" id="btnReset">Reset</button>
     </div>
@@ -240,6 +241,23 @@ function report(skipped, verb) {
     alert(skipped.length + ' of the selection could not be ' + verb + ':\n\n' + skipped.join('\n'));
 }
 
+/* ── bringing somebody in by hand ─────────────────────────────
+   The chosen student goes to the SAME review panel as everyone else: re-assessed from live
+   marks, and a written justification demanded before anyone blocked can be cleared. The queue
+   is not rewritten - they are appended to it, so the walker still works and the reviewer can
+   carry on where they were afterwards. */
+function addStudent() {
+    G.findStudent({
+        page: PAGE,
+        acadYear: G.qs('fYear').value,
+        onPick: function (reg) {
+            var ids = G.queueIds();
+            if (ids.indexOf(reg) < 0) ids.push(reg);
+            open(reg);
+        }
+    });
+}
+
 /* ── export ──────────────────────────────────────────────────────────
    The button no longer guesses. It opens a dialog that states what is included, counts the
    rows on the server before anything is committed to, and lets the columns and extra sheets be
@@ -251,15 +269,9 @@ function openExport() {
         return el.selectedIndex >= 0 ? el.options[el.selectedIndex].text.replace(/\s*\(\d+\)\s*$/, '')
                                               .replace(/\s*\(none\)\s*$/, '').trim() : '';
     }
-    var sum = [
-        { label: 'Graduation year', value: G.qs('fYear').value || 'All years' },
-        { label: 'Population', value: G.qs('fFocus').value === 'cycle'
-            ? ('Finishing ' + (BOOT && BOOT.previousYear ? BOOT.previousYear + ' or ' : '') + G.qs('fYear').value)
-            : 'Everyone not yet graduated' },
-        { label: 'Faculty', value: G.qs('fFac').value ? txt('fFac') : 'All faculties' },
-        { label: 'Department', value: G.qs('fDep').value ? txt('fDep') : 'All departments' },
-        { label: 'Programme', value: G.qs('fProg').value ? txt('fProg') : 'All programmes' }
-    ];
+    // Only what the dialog does NOT control: a search term or a readiness filter can be doing
+    // most of the narrowing, and a row count with no visible cause is a mystery.
+    var sum = [];
     if (G.qs('fIntake').value) sum.push({ label: 'Intake', value: G.qs('fIntake').value });
     if (G.qs('fReady').value) sum.push({ label: 'Readiness', value: txt('fReady') });
     if (G.qs('fQ').value.trim()) sum.push({ label: 'Search', value: G.qs('fQ').value.trim() });
@@ -273,6 +285,18 @@ function openExport() {
         pageRows: rows.length,
         countMethod: 'CountExport',
         filterSummary: sum,
+        filters: {
+            focus: true,
+            years: (BOOT && BOOT.years) || [],
+            faculties: (BOOT && BOOT.faculties) || [],
+            departments: (BOOT && BOOT.departments) || [],
+            programmes: (BOOT && BOOT.programmes) || [],
+            current: {
+                acadYear: G.qs('fYear').value, focus: G.qs('fFocus').value,
+                faculty: G.qs('fFac').value, department: G.qs('fDep').value,
+                programme: G.qs('fProg').value
+            }
+        },
         sorts: [
             { k: 'name', t: 'Name' },
             { k: 'regno', t: 'Student number' },
@@ -443,6 +467,7 @@ document.addEventListener('DOMContentLoaded', function () {
     G.qs('fQ').addEventListener('input', typed);
     G.qs('fQ').addEventListener('keydown', function (e) { if (e.key === 'Enter') { page = 1; sync(); } });
     G.qs('btnXls').addEventListener('click', openExport);
+    G.qs('btnAdd').addEventListener('click', addStudent);
     G.qs('btnReset').addEventListener('click', function () {
         resetFilters();
         G.qs('fFocus').value = 'cycle';
@@ -477,6 +502,8 @@ document.addEventListener('DOMContentLoaded', function () {
         if (pre.q) G.qs('fQ').value = pre.q;
         page = parseInt(pre.page || '1', 10) || 1;
         G.cascade('fFac', 'fDep', 'fProg');
+        // 130 programmes is not a list anyone should scroll through.
+        G.combo('fProg', 'Type a code or part of the name\u2026');
         chips();
         load();
     }

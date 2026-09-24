@@ -1557,3 +1557,104 @@ afterEsc_lightbox=false   afterEsc_modalStillOpen=true
 Header layout at 1500 / 1024 / 760 / 420px: `avatar=48x48`, `headerH=63`, title inside the header,
 no horizontal overflow at any width. Rendered against a real 300×400 student photograph: the whole
 head is visible, uncropped.
+
+---
+
+## 18. Filters in the export, lists you can type into, and a way in by hand — 2026-09-24
+
+Brief: *"when exporting, on top add filter of what to export.. the year, the faculty, the program
+… cascade things… with ability to select all … ensure the modal remains very perfect … add
+perfect logic search in lists … add force add to candidates … where user can click on add to
+candidates list, modal shows, search user and add to candidates."*
+
+### 18a. The export dialog filters what it exports
+
+"What’s included" was a read-out of the screen’s filter. It is now **the filter**: graduation
+year, population, faculty, department and programme, live and editable, seeded from wherever the
+page happens to be. A reviewer who wants one programme’s list no longer has to close the dialog,
+change the page, and open it again.
+
+They **cascade**: narrowing the faculty narrows the departments and programmes beneath it, so the
+combinations on offer are always ones that can return rows. Every one carries an **All …** option,
+and a **match the screen** link puts the whole set back to what the page is showing.
+
+Changing any of them **re-counts against the server**, debounced, with the request sequence checked
+so a slow answer to an old keystroke cannot overwrite a newer one. A row count nobody can trust is
+worse than no row count.
+
+Filters the dialog does *not* control — readiness, intake, a search term — are still shown, under
+their own heading **"Also narrowing this export, from the screen"**. Sitting unlabelled among the
+dropdowns they read as dropdowns that had stopped working.
+
+### 18b. Lists you can type into
+
+There are 130 programmes. A native `<select>` means hunting with the keyboard’s first-letter jump,
+which is why the programme filter has always been the slowest control on these screens.
+
+`G.combo` draws a text box over the real `<select>`. The select stays in the DOM and keeps its
+value, so **everything that reads the filter goes on reading the select** and nothing else on the
+page has to know the box exists — the cascade, the URL state and the export all keep working
+untouched.
+
+The matching is the part worth getting right. It is accent-, case- and punctuation-insensitive, and
+matches at **any word boundary, not just the start of the string**, over both the label and the
+option value — because people type `information` for *Bachelor of Information Technology* and `BIT`
+for the same thing, and both have to work. A token of four characters or more also matches inside a
+word, so `formation` finds *Information*. Arrow keys, Enter and Escape behave as they should.
+
+It is applied to the programme list in every toolbar, and to faculty, department and programme in
+the export dialog.
+
+### 18c. Adding a student the engine did not
+
+The candidacy rule is deliberately narrow — it asks whether a student has reached the final year of
+their own programme — and it is right about **1,254 of 1,254** graduands on record. But a rule that
+is right almost always still has to be overrulable by a person with the evidence in front of them,
+because the cases it misses are precisely the ones with a broken record: a study year never written,
+a semester registered under the wrong programme, results sitting on an entry number.
+
+**Add a student…** on the Candidates toolbar opens a search over anyone in the caller’s scope.
+Each result says what the module already believes about that person — *already a candidate*,
+*already on the 2024/2025 graduation list*, or *not a candidate — reached year 2 of 3* — so nobody
+is choosing blind.
+
+**Nothing here bends the engine.** The chosen student is appended to the queue and opened in the
+same review panel as everybody else: re-assessed from live marks, with a written justification
+demanded before anyone blocked can be cleared. The override is a decision by a named person, on the
+record — not a quiet change to what counts as a candidate.
+
+`GraduationStudent.Search` is scoped exactly as the rest of the module: a HOD cannot find a student
+outside their department here any more than they can open one. Two characters minimum, 25 rows, and
+the request sequence is checked so a slow answer cannot replace a newer one.
+
+### 18d. Verified
+
+Export filters and the combo, driven headless against the real shared script:
+
+```
+fields=yyyyy                              all five controls present
+count0=996 rows match this selection.
+afterFac01 depts=7,8 progs=BIT,BCS,BEE    the cascade hides the other faculty's
+countAfterFac=500 rows match this selection.
+typed "information" -> Bachelor of Information Technology     (mid-string word match)
+typed "bcs"         -> Bachelor of Computer Science           (matched on the CODE, not the text)
+picked=BCS  inputShows=[Bachelor of Computer Science (]
+counts=2                                  debounced, not one per keystroke
+afterMatch fac=[] prog=[]                 "match the screen" restores the page filter
+posted faculty=05 year=2026/2027 readinessKept=blocked
+```
+
+The last line is the one that matters: the export carries the **dialog’s** faculty, while keeping
+the readiness the dialog does not control.
+
+The student picker:
+
+```
+opensEmpty=[Type at least two characters.]
+oneChar=[Type at least two characters.]    one character does not scan 6,641 students
+results=3
+badges=is-cand:Already a candidate / is-new:Not a candidate — reac / is-listed:Already on the 2024/20
+picked=MRU2021000101                       the NON-candidate is selectable - the whole point
+closed=true
+noHits=[Nobody in your scope matches “zzzz”.]
+```

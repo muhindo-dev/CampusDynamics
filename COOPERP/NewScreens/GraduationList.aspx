@@ -133,6 +133,17 @@ function openExport() {
         columns: window.G_COLS || [],
         pageRows: rows.length,
         countMethod: 'CountExport',
+        filters: {
+            focus: false,
+            years: (BOOT && BOOT.years) || [],
+            faculties: (BOOT && BOOT.faculties) || [],
+            departments: (BOOT && BOOT.departments) || [],
+            programmes: (BOOT && BOOT.programmes) || [],
+            current: {
+                acadYear: G.qs('fYear').value, faculty: G.qs('fFac').value,
+                department: G.qs('fDep').value, programme: G.qs('fProg').value
+            }
+        },
         filterSummary: sum,
         sorts: [
             { k: 'name', t: 'Name' },
@@ -331,6 +342,7 @@ document.addEventListener('DOMContentLoaded', function () {
             G.qs('fAward').value = pre.award;
         }
         G.cascade('fFac', 'fDep', 'fProg');
+        G.combo('fProg', 'Type a code or part of the name\u2026');
         chips();
         load();
     }
