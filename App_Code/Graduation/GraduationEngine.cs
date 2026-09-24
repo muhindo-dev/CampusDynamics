@@ -33,6 +33,7 @@ public class GradCandidate
 {
     public string regno = "", name = "", progcode = "", progname = "", faculty = "", department = "";
     public string entryyear = "", specialisation = "", specName = "";
+    public string nationality = "", gender = "";   // copied onto the graduand row when cleared
     public bool specIsPlaceholder = false;
     public int levelCode = 3, progLength = 3, maxStudyYear = 0;
     public string firstYear = "", lastYear = "";
