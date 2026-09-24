@@ -64,6 +64,8 @@ public static class GraduationBootstrap
             f.search = S(d, "search");
             f.readiness = S(d, "readiness");
             f.award = S(d, "award");
+            string gb = S(d, "groupBy"); if (gb != "") f.groupBy = gb;
+            string ob = S(d, "orderBy"); if (ob != "") f.orderBy = ob;
             string v = S(d, "state"); if (v != "") f.state = v;
             v = S(d, "focus"); if (v != "") f.focus = v;
             v = S(d, "sort"); if (v != "") f.sort = v;

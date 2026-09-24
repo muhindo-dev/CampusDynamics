@@ -209,6 +209,8 @@ window.G = (function () {
     /// there to be wired.
     function openStudent(page, regno, buildFooter, onReady) {
         current = null;
+        // Where this candidate sits in the queue, so the walker in the header means something.
+        for (var qi = 0; qi < Q.ids.length; qi++) if (Q.ids[qi] === regno) { Q.idx = qi; break; }
         qs('gModalName').textContent = regno;
         qs('gModalSub').textContent = 'Reading the record…';
         qs('gModalPhoto').src = photo(regno);
@@ -224,12 +226,47 @@ window.G = (function () {
             }
             current = d;
             renderStudent(d);
+            drawWalker();
             qs('gModalFoot').innerHTML = buildFooter ? buildFooter(d.student) : '';
             if (onReady) onReady(d.student);
         });
     }
 
     function currentStudent() { return current; }
+
+    /// Position in the queue, and arrows to walk it without deciding anything.
+    function drawWalker() {
+        var host = qs('gModalSub');
+        if (!host) return;
+        var old = qs('gWalk');
+        if (old && old.parentNode) old.parentNode.removeChild(old);
+        if (Q.idx < 0 || Q.ids.length < 2) return;
+
+        var w = document.createElement('div');
+        w.className = 'g-walk';
+        w.id = 'gWalk';
+        w.innerHTML =
+            '<button type="button" class="g-walk__b" id="gWprev" title="Previous candidate"' +
+            (prevIn(Q.idx) < 0 ? ' disabled' : '') + '>&lsaquo;</button>' +
+            '<span class="g-walk__t">' + esc(queuePos()) + '</span>' +
+            '<button type="button" class="g-walk__b" id="gWnext" title="Next candidate"' +
+            (nextIn(Q.idx) < 0 && Q.page >= Q.pages ? ' disabled' : '') + '>&rsaquo;</button>';
+        host.parentNode.appendChild(w);
+
+        if (qs('gWprev')) qs('gWprev').addEventListener('click', function () {
+            var i = prevIn(Q.idx);
+            if (i >= 0 && walkTo) walkTo(Q.ids[i]);
+        });
+        if (qs('gWnext')) qs('gWnext').addEventListener('click', function () {
+            var i = nextIn(Q.idx);
+            if (i >= 0 && walkTo) walkTo(Q.ids[i]);
+            else if (Q.page < Q.pages && Q.nextPage) Q.nextPage(Q.page + 1);
+        });
+    }
+
+    /// The page supplies how to open a candidate, since only it knows its own footer.
+    var walkTo = null;
+    function onWalk(fn) { walkTo = fn; }
 
     function cell(label, val) {
         return '<div><span>' + esc(label) + '</span><b>' + esc(val) + '</b></div>';
@@ -727,82 +764,106 @@ window.G = (function () {
              xRadio('gxr', 'page', 'Only the ' + (XOPT.pageRows || 0) + ' on screen now', rowMode === 'page') +
              '</div></div>';
 
-        // ── columns, grouped ──
+        // ── format. PDF first and by default: what leaves this module is usually a document
+        //    for a meeting, not data for a spreadsheet. ──
+        var fmt = saved.fmt || 'pdf';
+        h += '<div class="g-xs"><div class="g-xs__h">Format</div><div class="g-xr">' +
+             xRadio('gxf', 'pdf', 'PDF \u2014 the formal document: crest, certification block, ' +
+                                  'grouped by programme, signature block', fmt === 'pdf') +
+             xRadio('gxf', 'xls', 'Excel workbook \u2014 cover sheet, frozen headings, extra summary tabs', fmt === 'xls') +
+             xRadio('gxf', 'csv', 'CSV \u2014 one flat sheet, for loading elsewhere', fmt === 'csv') +
+             '</div></div>';
+
+        // ── columns, folded. Almost nobody changes these, and thirty checkboxes between the
+        //    reader and the Export button is thirty checkboxes of scrolling. ──
         if (cols.length) {
             var groups = [], seen = {};
             for (i = 0; i < cols.length; i++) {
                 if (!seen[cols[i].g]) { seen[cols[i].g] = []; groups.push(cols[i].g); }
                 seen[cols[i].g].push(cols[i]);
             }
-            h += '<div class="g-xs"><div class="g-xs__h">Columns' +
-                 '<button type="button" class="g-xlink" id="gXall">all</button>' +
-                 '<button type="button" class="g-xlink" id="gXnone">none</button>' +
-                 '<button type="button" class="g-xlink" id="gXdef">default</button></div>';
-            for (i = 0; i < groups.length; i++) {
-                h += '<div class="g-xg"><div class="g-xg__h">' + esc(groups[i]) + '</div><div class="g-xg__b">';
-                var g = seen[groups[i]];
-                for (var j = 0; j < g.length; j++) {
-                    c = g[j];
-                    var on = chosen ? (chosen.indexOf(c.k) >= 0) : !!c.on;
-                    h += '<label class="g-ck"><input type="checkbox" class="gxc" value="' + esc(c.k) + '"' +
-                         (on ? ' checked' : '') + ' data-def="' + (c.on ? 1 : 0) + '" /><span>' +
-                         esc(c.t) + '</span></label>';
+            var nOn = 0;
+            for (i = 0; i < cols.length; i++)
+                if (chosen ? (chosen.indexOf(cols[i].k) >= 0) : !!cols[i].on) nOn++;
+
+            h += xFold('cols', 'Columns', '<span id="gXcolsN">' + nOn + ' of ' + cols.length + '</span>',
+                       (function () {
+                var x = '<div class="g-xs__h g-xs__h--sub">Choose what the file carries' +
+                        '<button type="button" class="g-xlink" id="gXall">all</button>' +
+                        '<button type="button" class="g-xlink" id="gXnone">none</button>' +
+                        '<button type="button" class="g-xlink" id="gXdef">default</button></div>';
+                for (var q = 0; q < groups.length; q++) {
+                    x += '<div class="g-xg"><div class="g-xg__h">' + esc(groups[q]) + '</div><div class="g-xg__b">';
+                    var g = seen[groups[q]];
+                    for (var j = 0; j < g.length; j++) {
+                        var cc = g[j];
+                        var on = chosen ? (chosen.indexOf(cc.k) >= 0) : !!cc.on;
+                        x += '<label class="g-ck"><input type="checkbox" class="gxc" value="' + esc(cc.k) + '"' +
+                             (on ? ' checked' : '') + ' data-def="' + (cc.on ? 1 : 0) + '" /><span>' +
+                             esc(cc.t) + '</span></label>';
+                    }
+                    x += '</div></div>';
                 }
-                h += '</div></div>';
-            }
-            h += '</div>';
+                return x;
+            })());
         }
 
-        // ── extra sheets ──
+        // ── advanced, folded: order, grouping, and the extra sheets ──
         var sheets = XOPT.sheets || [];
+        var adv = '';
+        if (XOPT.sorts && XOPT.sorts.length) {
+            var curSort = saved.sort || XOPT.sortDefault || XOPT.sorts[0].k;
+            adv += '<div class="g-xg"><div class="g-xg__h">Order the rows by</div><div class="g-xr">';
+            for (i = 0; i < XOPT.sorts.length; i++)
+                adv += xRadio('gxo', XOPT.sorts[i].k, XOPT.sorts[i].t, curSort === XOPT.sorts[i].k);
+            adv += '</div></div>';
+        }
+        if (XOPT.groups && XOPT.groups.length) {
+            var curGrp = saved.group === undefined ? (XOPT.groupDefault || 'prog') : saved.group;
+            adv += '<div class="g-xg"><div class="g-xg__h">Break the document into sections by</div><div class="g-xr">';
+            for (i = 0; i < XOPT.groups.length; i++)
+                adv += xRadio('gxg', XOPT.groups[i].k, XOPT.groups[i].t, curGrp === XOPT.groups[i].k);
+            adv += '</div></div>';
+        }
         if (sheets.length) {
             var ss = saved.sheets && saved.sheets.length ? saved.sheets : null;
-            h += '<div class="g-xs"><div class="g-xs__h">Extra sheets</div><div class="g-xg__b">';
+            adv += '<div class="g-xg"><div class="g-xg__h">Extra sheets <em>(workbook only)</em></div>' +
+                   '<div class="g-xg__b">';
             for (i = 0; i < sheets.length; i++) {
                 var son = ss ? (ss.indexOf(sheets[i].k) >= 0) : !!sheets[i].on;
-                h += '<label class="g-ck"><input type="checkbox" class="gxs" value="' + esc(sheets[i].k) + '"' +
-                     (son ? ' checked' : '') + ' /><span>' + esc(sheets[i].t) +
-                     (sheets[i].d ? '<small>' + esc(sheets[i].d) + '</small>' : '') + '</span></label>';
+                adv += '<label class="g-ck"><input type="checkbox" class="gxs" value="' + esc(sheets[i].k) + '"' +
+                       (son ? ' checked' : '') + ' /><span>' + esc(sheets[i].t) +
+                       (sheets[i].d ? '<small>' + esc(sheets[i].d) + '</small>' : '') + '</span></label>';
             }
-            h += '</div></div>';
+            adv += '</div><div class="g-xnote" id="gXcsvnote" style="display:none;">' +
+                   'A CSV is a single sheet, and a PDF is a document \u2014 these are included ' +
+                   'in the Excel workbook only.</div></div>';
         }
-
-        // ── format ──
-        var fmt = saved.fmt || 'xls';
-        h += '<div class="g-xs"><div class="g-xs__h">Format</div><div class="g-xr">' +
-             xRadio('gxf', 'xls', 'Excel workbook \u2014 branded, cover sheet, frozen headings', fmt === 'xls') +
-             xRadio('gxf', 'csv', 'CSV \u2014 one flat sheet, for loading elsewhere', fmt === 'csv') +
-             '</div></div>';
+        if (adv !== '') h += xFold('adv', 'Advanced', '', adv);
 
         qs('gXbody').innerHTML = h;
 
-        // CSV cannot carry extra tabs. Saying so, and disabling them, beats producing a file
-        // that quietly lost half of what was asked for.
+        xWireFolds();
+
+        // Only the workbook has tabs. Saying so, and disabling them, beats producing a file that
+        // quietly lost half of what was asked for.
         function fmtChanged() {
-            var csv = xVal('gxf') === 'csv';
+            var notXls = xVal('gxf') !== 'xls';
             var b = document.querySelectorAll('.gxs');
             for (var k = 0; k < b.length; k++) {
-                b[k].disabled = csv;
-                b[k].parentNode.classList.toggle('is-off', csv);
+                b[k].disabled = notXls;
+                b[k].parentNode.classList.toggle('is-off', notXls);
             }
             var note = qs('gXcsvnote');
-            if (note) note.style.display = csv ? 'block' : 'none';
+            if (note) note.style.display = notXls ? 'block' : 'none';
             echo();
-        }
-        if (sheets.length) {
-            var sec = qs('gXbody').querySelectorAll('.g-xs');
-            var host = sec[sec.length - 2];
-            var n = document.createElement('div');
-            n.className = 'g-xnote'; n.id = 'gXcsvnote'; n.style.display = 'none';
-            n.textContent = 'A CSV is a single sheet, so these are not included in that format.';
-            host.appendChild(n);
         }
 
         var boxes = qs('gXbody').querySelectorAll('.gxc, .gxs');
         for (i = 0; i < boxes.length; i++) boxes[i].addEventListener('change', echo);
         var radios = qs('gXbody').querySelectorAll('input[name="gxf"]');
         for (i = 0; i < radios.length; i++) radios[i].addEventListener('change', fmtChanged);
-        radios = qs('gXbody').querySelectorAll('input[name="gxr"]');
+        radios = qs('gXbody').querySelectorAll('input[name="gxr"], input[name="gxo"], input[name="gxg"]');
         for (i = 0; i < radios.length; i++) radios[i].addEventListener('change', echo);
 
         if (qs('gXall')) qs('gXall').addEventListener('click', function () { xSet(1); });
@@ -839,6 +900,31 @@ window.G = (function () {
         }
     }
 
+    /// A collapsed section inside the export dialog. Its open/closed state is remembered per
+    /// section, so someone who works with columns every day is not folding them open every time.
+    function xFold(key, title, badge, body) {
+        var open = false;
+        try { open = sessionStorage.getItem('gxf_' + key) === '1'; } catch (e) { }
+        return '<div class="g-xs g-xs--fold' + (open ? ' is-open' : '') + '" data-xfold="' + key + '">' +
+               '<button type="button" class="g-xs__h g-xs__h--btn">' +
+                 '<svg viewBox="0 0 24 24" width="10" height="10" fill="none" stroke="currentColor" ' +
+                 'stroke-width="3"><polyline points="9 18 15 12 9 6"></polyline></svg>' +
+                 '<span>' + esc(title) + '</span>' +
+                 (badge ? '<em>' + badge + '</em>' : '') +
+               '</button><div class="g-xs__b">' + body + '</div></div>';
+    }
+
+    function xWireFolds() {
+        var f = qs('gXbody').querySelectorAll('[data-xfold] .g-xs__h--btn');
+        for (var i = 0; i < f.length; i++)
+            f[i].addEventListener('click', function () {
+                var box = this.parentNode, k = box.getAttribute('data-xfold');
+                var now = !box.classList.contains('is-open');
+                box.classList.toggle('is-open', now);
+                try { sessionStorage.setItem('gxf_' + k, now ? '1' : '0'); } catch (e) { }
+            });
+    }
+
     function xRadio(name, val, label, on) {
         return '<label class="g-ck"><input type="radio" name="' + name + '" value="' + val + '"' +
                (on ? ' checked' : '') + ' /><span>' + esc(label) + '</span></label>';
@@ -866,10 +952,19 @@ window.G = (function () {
                                 : (XOPT.total === undefined ? null : XOPT.total);
         var parts = [];
         parts.push(n === null ? 'rows: counting…' : (n + ' row' + (n === 1 ? '' : 's')));
-        if (XOPT.columns && XOPT.columns.length) parts.push(cols + ' column' + (cols === 1 ? '' : 's'));
+        if (XOPT.columns && XOPT.columns.length) {
+            parts.push(cols + ' column' + (cols === 1 ? '' : 's'));
+            var badge = qs('gXcolsN');
+            if (badge) badge.textContent = cols + ' of ' + XOPT.columns.length;
+        }
         var sh = xPicked('gxs').length;
-        if (sh && fmt !== 'csv') parts.push(sh + ' extra sheet' + (sh === 1 ? '' : 's'));
-        parts.push(fmt === 'csv' ? 'CSV' : 'Excel workbook');
+        if (sh && fmt === 'xls') parts.push(sh + ' extra sheet' + (sh === 1 ? '' : 's'));
+        var ord = xVal('gxo');
+        if (ord && XOPT.sorts) {
+            for (var z = 0; z < XOPT.sorts.length; z++)
+                if (XOPT.sorts[z].k === ord) { parts.push('by ' + XOPT.sorts[z].t.toLowerCase()); break; }
+        }
+        parts.push(fmt === 'csv' ? 'CSV' : fmt === 'xls' ? 'Excel workbook' : 'PDF document');
         e.textContent = parts.join('  ·  ');
 
         var go = qs('gXgo');
@@ -883,8 +978,20 @@ window.G = (function () {
     function xRun() {
         if (!XOPT) return;
         var cols = xPicked('gxc'), sheets = xPicked('gxs'),
-            fmt = xVal('gxf'), mode = xVal('gxr');
-        xSave(XKEY, { cols: cols, sheets: sheets, fmt: fmt, rows: mode });
+            fmt = xVal('gxf'), mode = xVal('gxr'),
+            ord = xVal('gxo'), grp = xVal('gxg');
+        xSave(XKEY, { cols: cols, sheets: sheets, fmt: fmt, rows: mode, sort: ord, group: grp });
+
+        // Order and grouping travel inside the filter, so the server applies them to the rows
+        // themselves — "sort by performance" means CGPA descending in the PDF, the workbook and
+        // the CSV alike, not a label on one of them.
+        var cfg = XOPT.cfg;
+        try {
+            var o = JSON.parse(cfg);
+            if (ord) o.orderBy = ord;
+            o.groupBy = grp || '';
+            cfg = JSON.stringify(o);
+        } catch (e) { }
 
         var extra = {
             gradCols: cols.join(','),
@@ -892,7 +999,7 @@ window.G = (function () {
             gradRows: mode,
             gradPageSize: String(XOPT.pageRows || 0)
         };
-        post(XOPT.page, fmt, XOPT.cfg, extra);
+        post(XOPT.page, fmt, cfg, extra);
         xClose();
         toast('Building the file\u2026 it will download when it is ready.', true);
     }
@@ -939,6 +1046,193 @@ window.G = (function () {
 
     function serverExport(page, format, cfgJson) { post(page, format, cfgJson, null); }
 
+    /* ── The reason dialog ────────────────────────────────────────────
+       prompt() is gone. It cannot be styled, cannot validate as you type, cannot show whom you
+       are about to hold, and on a batch of forty it gives no clue what the forty are.
+
+       The suggestions come from the server, chosen for THIS candidate out of the findings the
+       engine has just produced — so a student with an unpublished mark is offered a sentence
+       about unpublished marks, not a dropdown of everything anyone has ever written. Clicking
+       one fills the box rather than submitting, because the reviewer should add the specifics:
+       which paper, which document. */
+    var RD = null;
+
+    function reasonMount() {
+        if (qs('gRov')) return;
+        var d = document.createElement('div');
+        d.innerHTML =
+            '<div class="g-ov" id="gRov">' +
+              '<div class="g-modal g-modal--r" role="dialog" aria-modal="true" aria-labelledby="gRtitle">' +
+                '<div class="g-modal__h">' +
+                  '<div class="g-modal__t"><b id="gRtitle">Hold</b><span id="gRsub"></span></div>' +
+                  '<button type="button" class="g-modal__x" id="gRx" aria-label="Close">&times;</button>' +
+                '</div>' +
+                '<div class="g-modal__b" id="gRbody"></div>' +
+                '<div class="g-modal__f">' +
+                  '<span class="g-hint" id="gRcount"></span>' +
+                  '<button type="button" class="g-btn" id="gRcancel">Cancel</button>' +
+                  '<button type="button" class="g-btn g-btn--p" id="gRgo" disabled="disabled">Hold</button>' +
+                '</div>' +
+              '</div>' +
+            '</div>';
+        while (d.firstChild) document.body.appendChild(d.firstChild);
+
+        var ov = qs('gRov');
+        ov.addEventListener('mousedown', function (e) { if (e.target === ov) reasonClose(); });
+        qs('gRx').addEventListener('click', reasonClose);
+        qs('gRcancel').addEventListener('click', reasonClose);
+        qs('gRgo').addEventListener('click', reasonSubmit);
+        document.addEventListener('keydown', function (e) {
+            if (e.key === 'Escape' && ov.classList.contains('is-open')) reasonClose();
+        });
+    }
+
+    function reasonClose() {
+        var ov = qs('gRov');
+        if (!ov) return;
+        ov.classList.remove('is-open');
+        // The evidence modal may still be open underneath; only the last one restores scrolling.
+        if (!qs('gOv') || !qs('gOv').classList.contains('is-open')) document.body.style.overflow = '';
+    }
+
+    function reasonSubmit() {
+        if (!RD) return;
+        var v = qs('gRtext').value.trim();
+        if (v.length < RD.min) return;
+        var cb = RD.onSubmit;
+        reasonClose();
+        if (cb) cb(v);
+    }
+
+    /// The one call a page makes to ask for a reason.
+    function reasonDialog(o) {
+        reasonMount();
+        RD = o || {};
+        RD.min = RD.min === undefined ? 10 : RD.min;
+
+        qs('gRtitle').textContent = RD.title || 'Hold this candidate';
+        qs('gRsub').textContent = RD.subtitle || '';
+        qs('gRgo').textContent = RD.verb || 'Hold';
+
+        qs('gRbody').innerHTML =
+            (RD.warn ? '<div class="g-note g-note--warn">' + esc(RD.warn) + '</div>' : '') +
+            '<div class="g-rs" id="gRsug"><div class="g-load">Finding the likely reasons\u2026</div></div>' +
+            '<label class="g-rl" for="gRtext">The reason, in your own words</label>' +
+            '<textarea id="gRtext" class="g-rt" rows="3" spellcheck="true" ' +
+            'placeholder="Whoever picks this up next has only this sentence to go on."></textarea>' +
+            '<div class="g-rh" id="gRhint"></div>';
+
+        var ta = qs('gRtext');
+        ta.value = RD.initial || '';
+
+        function grade() {
+            var n = ta.value.trim().length;
+            var ok = n >= RD.min;
+            qs('gRgo').disabled = !ok;
+            qs('gRhint').className = 'g-rh' + (ok ? ' is-ok' : '');
+            qs('gRhint').textContent = ok
+                ? 'That will be recorded against your name.'
+                : (RD.min - n) + ' more character' + (RD.min - n === 1 ? '' : 's') + ' needed.';
+            qs('gRcount').textContent = RD.count > 1
+                ? (RD.count + ' candidates will be held under this reason.') : '';
+        }
+        ta.addEventListener('input', grade);
+        // Ctrl+Enter submits: a reviewer working a queue keeps their hands on the keyboard.
+        ta.addEventListener('keydown', function (e) {
+            if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); reasonSubmit(); }
+        });
+        grade();
+
+        qs('gRov').classList.add('is-open');
+        document.body.style.overflow = 'hidden';
+        setTimeout(function () { try { ta.focus(); } catch (e) { } }, 30);
+
+        ajax(RD.page, 'HoldReasons', { regno: RD.regno || '' }, function (d) {
+            var box = qs('gRsug');
+            if (!box) return;
+            if (!d || !d.success || !d.suggestions || !d.suggestions.length) { box.innerHTML = ''; return; }
+            var h = '<div class="g-rs__h">Likely reasons' +
+                    (RD.regno ? ' for this candidate' : '') + '</div>';
+            for (var i = 0; i < d.suggestions.length; i++)
+                h += '<button type="button" class="g-sug" data-i="' + i + '">' +
+                     '<b>' + esc(d.suggestions[i].text) + '</b>' +
+                     (d.suggestions[i].why ? '<span>' + esc(d.suggestions[i].why) + '</span>' : '') +
+                     '</button>';
+            box.innerHTML = h;
+            var b = box.querySelectorAll('.g-sug');
+            for (i = 0; i < b.length; i++)
+                b[i].addEventListener('click', function () {
+                    // Fill, do not submit. The specifics are what make a reason useful.
+                    ta.value = d.suggestions[+this.getAttribute('data-i')].text;
+                    grade();
+                    try { ta.focus(); ta.setSelectionRange(ta.value.length, ta.value.length); } catch (e) { }
+                });
+        });
+    }
+
+    /* ── The queue ────────────────────────────────────────────────────
+       A reviewer with 996 candidates should decide and be handed the next one, not be returned
+       to a table to find their place again.
+
+       The list is deliberately NOT reloaded between decisions. A cleared candidate leaves the
+       pending queue, so reloading would renumber the rows underneath and make "next" mean
+       something different every time. The decided row is marked in place and the list refreshes
+       when the modal finally closes. */
+    var Q = { ids: [], idx: -1, total: 0, page: 1, pages: 1, size: 50, nextPage: null, decided: {} };
+
+    function queue(o) {
+        Q.ids = o.ids || [];
+        Q.total = o.total || Q.ids.length;
+        Q.page = o.page || 1;
+        Q.pages = o.pages || 1;
+        Q.size = o.size || 50;
+        Q.nextPage = o.nextPage || null;
+        Q.idx = -1;
+    }
+
+    function autoAdvance() {
+        try { return sessionStorage.getItem('gauto') !== '0'; } catch (e) { return true; }
+    }
+    function setAutoAdvance(on) {
+        try { sessionStorage.setItem('gauto', on ? '1' : '0'); } catch (e) { }
+    }
+
+    /// Marks a candidate as decided so the queue can skip it and the row can show it.
+    function markDecided(regno, label) {
+        Q.decided[regno] = label || 'done';
+        var tr = document.querySelector('#gBody tr[data-reg="' + (window.CSS && CSS.escape
+                    ? CSS.escape(regno) : regno) + '"]');
+        if (tr) {
+            tr.classList.add('is-decided');
+            var chip = tr.querySelector('.g-chip');
+            if (chip) { chip.className = 'g-chip g-chip--listed'; chip.textContent = label || 'done'; }
+            var ck = tr.querySelector('.ck');
+            if (ck) { ck.checked = false; ck.disabled = true; }
+        }
+    }
+
+    /// The next candidate after this one that has not already been decided in this run.
+    function nextIn(from) {
+        for (var i = from + 1; i < Q.ids.length; i++)
+            if (!Q.decided[Q.ids[i]]) return i;
+        return -1;
+    }
+    function prevIn(from) {
+        for (var i = from - 1; i >= 0; i--)
+            if (!Q.decided[Q.ids[i]]) return i;
+        return -1;
+    }
+
+    function queuePos() {
+        if (Q.idx < 0 || !Q.ids.length) return '';
+        var onPage = (Q.idx + 1) + ' of ' + Q.ids.length + ' on this page';
+        if (Q.total > Q.ids.length) {
+            var overall = (Q.page - 1) * Q.size + Q.idx + 1;
+            return onPage + '  \u00b7  ' + overall + ' of ' + Q.total + ' in the queue';
+        }
+        return onPage;
+    }
+
     return {
         qs: qs, esc: esc, n0: n0, n1: n1, n2: n2,
         ajax: ajax, toast: toast,
@@ -946,8 +1240,18 @@ window.G = (function () {
         readUrl: readUrl, writeUrl: writeUrl,
         fill: fill, cascade: cascade,
         mount: mount, openModal: openModal, closeModal: closeModal, wireModal: wireModal,
-        openStudent: openStudent, currentStudent: currentStudent,
+        openStudent: openStudent, currentStudent: currentStudent, onWalk: onWalk,
         csv: csv, serverExport: serverExport, exportDialog: exportDialog,
-        debounce: debounce, freshness: freshness, chips: chips, pager: pager
+        debounce: debounce, freshness: freshness, chips: chips, pager: pager,
+        reasonDialog: reasonDialog, queue: queue, markDecided: markDecided,
+        autoAdvance: autoAdvance, setAutoAdvance: setAutoAdvance,
+        queueNext: function () { return nextIn(Q.idx); },
+        queuePrev: function () { return prevIn(Q.idx); },
+        queueAt: function (i) { return Q.ids[i]; },
+        queueIndex: function () { return Q.idx; },
+        queueSetIndex: function (i) { Q.idx = i; },
+        queueIds: function () { return Q.ids; },
+        queueHasMorePages: function () { return Q.page < Q.pages; },
+        queueLoadNextPage: function () { if (Q.nextPage) Q.nextPage(Q.page + 1); }
     };
 })();

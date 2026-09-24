@@ -68,8 +68,22 @@ public partial class COOPERP_NewScreens_GraduationCentre : System.Web.UI.Page
             GraduationExport.Csv(Response, file, "Graduation Overview", scope.Label, cover,
                                  flat.Columns, flat.Rows);
         }
-        else
+        else if (fmt == "xls")
             GraduationExport.Workbook(Response, file, "Graduation Overview", scope.Label, cover, sheets);
+        else
+        {
+            // The overview has no student rows, so the document is the programme table with the
+            // headline figures folded into the certification block above it.
+            GraduationExport.Sheet flat = ByProgramme(o);
+            cover.Add(new KeyValuePair<string, string>("Candidates", N(o.candidates)));
+            cover.Add(new KeyValuePair<string, string>("Ready", N(o.ready)));
+            cover.Add(new KeyValuePair<string, string>("Blocked", N(o.blocked)));
+            cover.Add(new KeyValuePair<string, string>("Held", N(o.held)));
+            cover.Add(new KeyValuePair<string, string>("On the list", N(o.listed)));
+            GraduationPdf.Send(Response, file, "Graduation Overview", f.acadYear, scope.Label, cover,
+                               GraduationExport.PdfCols(flat),
+                               GraduationExport.ToTable(flat, null), "", false, null);
+        }
     }
 
     private static string N(int v) { return v.ToString(CultureInfo.InvariantCulture); }

@@ -439,3 +439,68 @@
 /* A single page still reports its total; it just has nothing to navigate. */
 .g-pager--one{justify-content:flex-start;}
 .g-pager--none{display:none;}
+
+/* ════════════════════════════════════════════════════════════════════
+   The reason dialog.
+
+   Replaces prompt(), which could not be styled, could not validate as
+   you type, could not show whom you were about to hold, and on a batch
+   of forty gave no clue what the forty were.
+   ════════════════════════════════════════════════════════════════════ */
+.g-modal--r{max-width:560px;}
+.g-rs{margin-bottom:10px;}
+.g-rs__h{font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:.45px;
+    color:var(--mute);margin-bottom:5px;}
+
+/* A suggestion fills the box rather than submitting: the specifics — which paper, which
+   document — are what make a reason worth reading later. */
+.g-sug{display:block;width:100%;text-align:left;background:#f8fbff;border:1px solid #cddffa;
+    border-radius:3px;padding:5px 8px;margin-bottom:4px;cursor:pointer;font:inherit;}
+.g-sug:hover{border-color:var(--accent);background:#eef5ff;}
+.g-sug b{display:block;font-size:11.5px;font-weight:600;color:var(--ink);line-height:1.35;}
+.g-sug span{display:block;font-size:9.5px;color:var(--mute);margin-top:1px;}
+
+.g-rl{display:block;font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:.45px;
+    color:var(--mute);margin-bottom:3px;}
+.g-rt{width:100%;border:1px solid var(--line);border-radius:0;padding:6px 8px;font:inherit;
+    font-size:12px;line-height:1.5;color:var(--ink);resize:vertical;min-height:62px;}
+.g-rt:focus{outline:none;border-color:var(--accent);}
+.g-rh{font-size:10.5px;color:var(--warn);margin-top:4px;}
+.g-rh.is-ok{color:var(--mute);}
+
+/* ── the queue walker, in the modal header ── */
+.g-walk{display:flex;align-items:center;gap:4px;flex:0 0 auto;margin-left:auto;padding-right:6px;}
+.g-walk__t{font-size:10px;color:var(--mute);white-space:nowrap;font-variant-numeric:tabular-nums;}
+.g-walk__b{border:1px solid var(--line);background:#fff;color:var(--navy);width:22px;height:22px;
+    border-radius:2px;cursor:pointer;font-size:15px;line-height:1;padding:0;}
+.g-walk__b:hover:not([disabled]){border-color:var(--accent);color:var(--accent);}
+.g-walk__b[disabled]{opacity:.35;cursor:not-allowed;}
+
+/* A row decided during this run: struck through in place, because reloading the list between
+   decisions would renumber the queue underneath the reviewer. */
+.g-tbl tbody tr.is-decided td{opacity:.5;}
+.g-tbl tbody tr.is-decided .g-who__t b{text-decoration:line-through;}
+
+/* The auto-advance switch lives with the decision it affects. */
+.g-auto{display:flex;align-items:center;gap:5px;font-size:10.5px;color:var(--ink2);
+    margin-left:auto;cursor:pointer;white-space:nowrap;}
+.g-auto input{cursor:pointer;margin:0;}
+
+/* ── batch bar ── */
+.g-batch{display:flex;align-items:center;gap:7px;flex-wrap:wrap;padding:6px 11px;
+    background:#eef5ff;border:1px solid #cddffa;border-radius:3px;margin-bottom:9px;}
+.g-batch__n{font-size:11.5px;color:var(--navy);font-weight:700;}
+.g-batch__x{margin-left:auto;}
+
+/* ── folded sections in the export dialog ── */
+.g-xs--fold .g-xs__b{display:none;}
+.g-xs--fold.is-open .g-xs__b{display:block;}
+.g-xs__h--btn{width:100%;border:0;font:inherit;cursor:pointer;text-align:left;}
+.g-xs__h--btn svg{color:var(--accent);flex:0 0 10px;transition:transform .15s;}
+.g-xs--fold.is-open .g-xs__h--btn svg{transform:rotate(90deg);}
+.g-xs__h--btn em{font-style:normal;margin-left:auto;font-size:9.5px;font-weight:700;
+    color:var(--ink2);background:#fff;border:1px solid var(--line);border-radius:8px;
+    padding:0 6px;text-transform:none;letter-spacing:0;}
+.g-xs__h--sub{border-bottom:1px solid var(--line);}
+.g-xg__h em{font-style:normal;text-transform:none;letter-spacing:0;color:#b6bfcc;}
+

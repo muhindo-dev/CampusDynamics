@@ -163,8 +163,19 @@ public partial class COOPERP_NewScreens_GraduationHeld : System.Web.UI.Page
             if (fmt == "csv")
                 GraduationExport.Csv(Response, file, "Held Candidates", scope.Label, cover,
                                      sheet.Columns, sheet.Rows);
-            else
+            else if (fmt == "xls")
                 GraduationExport.Workbook(Response, file, "Held Candidates", scope.Label, cover, sheets);
+            else
+            {
+                var groups = new List<string>();
+                foreach (GradCandidate g in rows)
+                    groups.Add(g.progname == "" ? g.progcode : g.progname + "   (" + g.progcode + ")");
+                GraduationExport.Sheet pdfSheet = GraduationExport.WithoutGroupColumns(sheet, "prog");
+                GraduationPdf.Send(Response, file, "Held Candidates", f.acadYear, scope.Label, cover,
+                                   GraduationExport.PdfCols(pdfSheet),
+                                   GraduationExport.ToTable(pdfSheet, groups),
+                                   GraduationExport.GROUP_COL, true, GraduationExport.Truncation);
+            }
         }
         finally { GraduationExport.Truncation = null; }
     }
@@ -228,6 +239,10 @@ public partial class COOPERP_NewScreens_GraduationHeld : System.Web.UI.Page
 
     [WebMethod(EnableSession = true)]
     public static string GetStudent(string regno) { return GraduationStudent.Detail(regno); }
+
+    /// <summary>Reasons worth offering for THIS candidate. See GraduationReasons.</summary>
+    [WebMethod(EnableSession = true)]
+    public static string HoldReasons(string regno) { return GraduationReasons.For(regno); }
 
     [WebMethod(EnableSession = true)]
     public static string ReleaseStudent(string regno, string acadYear, string note)

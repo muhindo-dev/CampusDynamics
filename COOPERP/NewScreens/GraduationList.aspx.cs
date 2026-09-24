@@ -180,6 +180,10 @@ public partial class COOPERP_NewScreens_GraduationList : System.Web.UI.Page
         if (!scope.HasAccess) return;
 
         GraduationEngine.GradFilter f = GraduationBootstrap.Parse(Request.Form["gradConfig"] ?? "");
+
+        // The export dialog's "order by" is authoritative for a file, whatever the screen was
+        // showing. Fetch already knows how to order; it just needs telling.
+        if (f.orderBy != "") f.sort = f.orderBy;
         List<Row> rows = Fetch(scope, f);
 
         bool truncated = rows.Count > EXPORT_CAP;
@@ -190,8 +194,12 @@ public partial class COOPERP_NewScreens_GraduationList : System.Web.UI.Page
                EXPORT_CAP.ToString(CultureInfo.InvariantCulture) + ".")
             : null;
 
+        // Grouping is a stable second pass over the already-ordered rows, so the chosen order
+        // survives inside each programme.
+        if (f.groupBy != "") GroupSort(rows, f.groupBy);
+
         // Numbered within programme, the way a graduation list is read out and signed off. Done
-        // after the sort, because the number means "nth in this programme on this list".
+        // after both, because the number means "nth in this programme on this list".
         string lastProg = null;
         int n = 0;
         foreach (Row r in rows)
@@ -214,16 +222,72 @@ public partial class COOPERP_NewScreens_GraduationList : System.Web.UI.Page
         var cover = GraduationBootstrap.CoverOf(f, "");
         cover.Add(new KeyValuePair<string, string>("Names on this list",
             rows.Count.ToString(CultureInfo.InvariantCulture)));
+        cover.Add(new KeyValuePair<string, string>("Ordered by", OrderLabel(f.sort)));
         string file = GraduationExport.FileName("graduation-list", f.acadYear);
         try
         {
             if (fmt == "csv")
                 GraduationExport.Csv(Response, file, "Graduation List", scope.Label, cover,
                                      sheet.Columns, sheet.Rows);
-            else
+            else if (fmt == "xls")
                 GraduationExport.Workbook(Response, file, "Graduation List", scope.Label, cover, sheets);
+            else
+            {
+                GraduationExport.Sheet pdfSheet = GraduationExport.WithoutGroupColumns(sheet, f.groupBy);
+                GraduationPdf.Send(Response, file, "Graduation List", f.acadYear, scope.Label, cover,
+                                   GraduationExport.PdfCols(pdfSheet),
+                                   GraduationExport.ToTable(pdfSheet, GroupValues(rows, f.groupBy)),
+                                   f.groupBy == "" ? "" : GraduationExport.GROUP_COL,
+                                   true, GraduationExport.Truncation);
+            }
         }
         finally { GraduationExport.Truncation = null; }
+    }
+
+    private static string OrderLabel(string by)
+    {
+        switch ((by ?? "").ToLowerInvariant())
+        {
+            case "regno": return "Student number";
+            case "cgpa": return "CGPA, highest first";
+            case "class": return "Class of award";
+            case "name": return "Name";
+            default: return "Programme, then name";
+        }
+    }
+
+    /// <summary>
+    /// A stable second pass that gathers the rows into groups without disturbing the order
+    /// chosen inside them. List.Sort is unstable, so the position after the first sort is
+    /// carried as the tie-breaker.
+    /// </summary>
+    private static void GroupSort(List<Row> rows, string groupBy)
+    {
+        var pos = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+        for (int i = 0; i < rows.Count; i++) if (!pos.ContainsKey(rows[i].regno)) pos[rows[i].regno] = i;
+        bool fac = groupBy == "fac";
+        rows.Sort(delegate(Row a, Row b)
+        {
+            string ka = fac ? a.faculty : (a.progname == "" ? a.progcode : a.progname);
+            string kb = fac ? b.faculty : (b.progname == "" ? b.progcode : b.progname);
+            int d = string.Compare(ka, kb, StringComparison.OrdinalIgnoreCase);
+            if (d != 0) return d;
+            int ia, ib;
+            pos.TryGetValue(a.regno, out ia);
+            pos.TryGetValue(b.regno, out ib);
+            return ia.CompareTo(ib);
+        });
+    }
+
+    private static List<string> GroupValues(List<Row> rows, string groupBy)
+    {
+        if (groupBy == "") return null;
+        var l = new List<string>();
+        foreach (Row r in rows)
+            l.Add(groupBy == "fac"
+                ? (r.faculty == "" ? "(no faculty recorded)" : r.faculty)
+                : (r.progname == "" ? r.progcode : r.progname + "   (" + r.progcode + ")"));
+        return l;
     }
 
     /// <summary>The way a Senate paper opens: how many from each programme, and how they fell.</summary>
@@ -339,6 +403,10 @@ public partial class COOPERP_NewScreens_GraduationList : System.Web.UI.Page
 
     [WebMethod(EnableSession = true)]
     public static string GetStudent(string regno) { return GraduationStudent.Detail(regno); }
+
+    /// <summary>Reasons worth offering for THIS candidate. See GraduationReasons.</summary>
+    [WebMethod(EnableSession = true)]
+    public static string HoldReasons(string regno) { return GraduationReasons.For(regno); }
 
     [WebMethod(EnableSession = true)]
     public static string RemoveStudent(string regno, string reason)

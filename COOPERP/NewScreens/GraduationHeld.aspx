@@ -125,8 +125,15 @@ function load() {
 
         G.qs('gMeta').textContent = G.qs('fStale').value === 'stale'
             ? 'holds nothing is blocking any more' : 'oldest first';
+        var pages = Math.max(1, Math.ceil((d.total || 0) / 100));
         G.pager('gPager', { page: page, size: 100, total: d.total || 0, shown: rows.length },
                 function (n) { page = n; sync(); });
+
+        var ids = [];
+        for (var q = 0; q < rows.length; q++) ids.push(rows[q].regno);
+        G.queue({ ids: ids, total: d.total || 0, page: page, pages: pages, size: 100,
+                  nextPage: function (n) { page = n; sync(); } });
+        G.onWalk(open);
     });
 }
 
@@ -151,6 +158,17 @@ function openExport() {
             { label: 'Department', value: G.qs('fDep').value ? txt('fDep') : 'All departments' },
             { label: 'Programme', value: G.qs('fProg').value ? txt('fProg') : 'All programmes' }
         ],
+        sorts: [
+            { k: 'name', t: 'Name' },
+            { k: 'regno', t: 'Student number' },
+            { k: 'cgpa', t: 'Performance — highest CGPA first' }
+        ],
+        sortDefault: 'name',
+        groups: [
+            { k: 'prog', t: 'Programme' },
+            { k: '', t: 'One continuous list' }
+        ],
+        groupDefault: 'prog',
         sheets: [
             { k: 'stale', t: 'Holds that can be lifted', d: 'Nothing is blocking these students any more', on: true }
         ]
@@ -160,69 +178,106 @@ function openExport() {
 function footer(g) {
     return '<button type="button" class="g-btn g-btn--p" id="mRelease">Lift the hold</button>' +
            '<button type="button" class="g-btn" id="mEdit">Edit the reason</button>' +
-           '<button type="button" class="g-btn" id="mClear">Clear for graduation</button>';
+           '<button type="button" class="g-btn" id="mClear">Clear for graduation</button>' +
+           '<label class="g-auto" title="After a decision, open the next hold in this filter">' +
+             '<input type="checkbox" id="mAuto"' + (G.autoAdvance() ? ' checked' : '') + ' />' +
+             'Move to the next' +
+           '</label>';
 }
 function open(reg) {
     G.openStudent(PAGE, reg, footer, function () {
         if (G.qs('mRelease')) G.qs('mRelease').addEventListener('click', doRelease);
         if (G.qs('mEdit')) G.qs('mEdit').addEventListener('click', doEdit);
         if (G.qs('mClear')) G.qs('mClear').addEventListener('click', doClear);
+        if (G.qs('mAuto')) G.qs('mAuto').addEventListener('change', function () {
+            G.setAutoAdvance(this.checked);
+        });
     });
 }
 
 function year() { return G.qs('fYear').value; }
 
+/* Marked in place and on to the next hold, rather than reloading the list under the reviewer.
+   The queue refreshes when the modal closes. */
+var dirty = false;
+
+function afterDecision(regno, label) {
+    dirty = true;
+    G.markDecided(regno, label);
+    if (!G.autoAdvance()) { G.closeModal(); return; }
+    var i = G.queueNext();
+    if (i >= 0) { open(G.queueAt(i)); return; }
+    G.closeModal();
+    G.toast('That was the last hold matching these filters.', true);
+}
+
 function doRelease() {
     var cur = G.currentStudent(); if (!cur) return;
     var g = cur.student;
-    var note = prompt('Lift the hold on ' + g.name + '?\n\nAnything worth noting? (optional)', '');
-    if (note === null) return;
-    G.ajax(PAGE, 'ReleaseStudent', { regno: g.regno, acadYear: year(), note: note }, function (d) {
-        if (d && d.success) { G.toast(d.message, true); G.closeModal(); load(); }
+    G.ajax(PAGE, 'ReleaseStudent', { regno: g.regno, acadYear: year(), note: '' }, function (d) {
+        if (d && d.success) { G.toast(d.message, true); afterDecision(g.regno, 'Released'); }
         else G.toast((d && d.message) || 'Could not lift that hold.', false);
     });
 }
 
-// Re-holding with a new reason supersedes rather than overwrites, so the original stays in the
-// decision history where the next reviewer can still read it.
+/* Re-holding with a new reason supersedes rather than overwrites, so the original stays in the
+   decision history where the next reviewer can still read it. */
 function doEdit() {
     var cur = G.currentStudent(); if (!cur) return;
     var g = cur.student;
-    var reason = prompt('Update the reason ' + g.name + ' is being held.\n\n' +
-        'The original is kept in the decision history.', g.holdReason || '');
-    if (reason === null) return;
-    if (reason.trim().length < 10) { G.toast('Say a little more — at least 10 characters.', false); return; }
-    if (reason.trim() === (g.holdReason || '').trim()) { G.toast('That is the reason already recorded.', false); return; }
-    G.ajax(PAGE, 'HoldStudent', { regno: g.regno, acadYear: year(), reason: reason }, function (d) {
-        if (d && d.success) { G.toast('The reason has been updated.', true); open(g.regno); load(); }
-        else G.toast((d && d.message) || 'Could not update the reason.', false);
+    G.reasonDialog({
+        page: PAGE, regno: g.regno,
+        title: 'Update why ' + g.name + ' is held',
+        subtitle: 'The original is kept in the decision history.',
+        verb: 'Update the reason',
+        initial: g.holdReason || '',
+        onSubmit: function (reason) {
+            if (reason === (g.holdReason || '').trim()) {
+                G.toast('That is the reason already recorded.', false);
+                return;
+            }
+            G.ajax(PAGE, 'HoldStudent', { regno: g.regno, acadYear: year(), reason: reason }, function (d) {
+                if (d && d.success) { G.toast('The reason has been updated.', true); dirty = true; open(g.regno); }
+                else G.toast((d && d.message) || 'Could not update the reason.', false);
+            });
+        }
     });
 }
 
 function doClear() {
     var cur = G.currentStudent(); if (!cur) return;
-    var g = cur.student, note = '';
+    var g = cur.student;
     if (!year()) { G.toast('Choose the graduation year first.', false); return; }
+
+    function send(note) {
+        G.ajax(PAGE, 'ClearStudent',
+            { regno: g.regno, acadYear: year(), note: note || '', overrideBlock: g.readiness === 'BLOCKED' },
+            function (d) {
+                if (d && d.success) { G.toast(d.message, true); afterDecision(g.regno, 'On ' + year()); }
+                else G.toast((d && d.message) || 'Could not clear that candidate.', false);
+            });
+    }
+
     if (g.readiness === 'BLOCKED') {
         var b = [];
-        for (var i = 0; i < g.findings.length; i++) if (g.findings[i].level === 'BLOCK') b.push('• ' + g.findings[i].detail);
-        note = prompt('This candidate is BLOCKED:\n\n' + b.join('\n') +
-            '\n\nClearing them anyway is recorded against your name.\nSay why (at least 10 characters):', '');
-        if (note === null) return;
-        if (note.trim().length < 10) { G.toast('A justification of at least 10 characters is needed.', false); return; }
-    } else if (!confirm('Put ' + g.name + ' on the ' + year() + ' graduation list?')) return;
-
-    G.ajax(PAGE, 'ClearStudent',
-        { regno: g.regno, acadYear: year(), note: note, overrideBlock: g.readiness === 'BLOCKED' },
-        function (d) {
-            if (d && d.success) { G.toast(d.message, true); G.closeModal(); load(); }
-            else G.toast((d && d.message) || 'Could not clear that candidate.', false);
+        for (var i = 0; i < g.findings.length; i++)
+            if (g.findings[i].level === 'BLOCK') b.push(g.findings[i].detail);
+        G.reasonDialog({
+            page: PAGE, regno: g.regno,
+            title: 'Clear ' + g.name + ' anyway',
+            subtitle: g.regno + '  ·  ' + (g.progname || g.progcode),
+            warn: 'Still blocked: ' + b.join('; ') +
+                  ' Clearing is recorded against your name and shown on the graduation list.',
+            verb: 'Clear anyway',
+            onSubmit: send
         });
+    } else if (confirm('Put ' + g.name + ' on the ' + year() + ' graduation list?')) send('');
 }
+
 
 document.addEventListener('DOMContentLoaded', function () {
     G.mount();
-    G.wireModal();
+    G.wireModal(function () { if (dirty) { dirty = false; load(); } });
     var pre = G.readUrl();
 
     document.addEventListener('click', function (e) {

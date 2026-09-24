@@ -25,7 +25,6 @@
     <div class="g-f" style="flex:1 1 130px;"><label for="fQ">Search</label>
       <input type="text" id="fQ" placeholder="Number or name&hellip;" autocomplete="off" /></div>
     <div class="g-bar__sp">
-      <button type="button" class="g-btn g-btn--p" id="btnBulk" disabled="disabled">Clear selected</button>
       <button type="button" class="g-btn" id="btnXls">Export&hellip;</button>
       <button type="button" class="g-btn" id="btnReset">Reset</button>
     </div>
@@ -34,6 +33,7 @@
   <%-- What is narrowing the view, each chip removable on its own. Without this, a filter left
        set three controls away makes "no candidates match" read like a fault in the data. --%>
   <div class="g-chips" id="gChips"></div>
+  <div class="g-batch" id="gBatch" style="display:none;"></div>
 
   <div class="g-card">
     <div class="g-card__h">
@@ -155,6 +155,13 @@ function render(d) {
     G.pager('gPager', { page: d.page, size: 50, total: d.total, shown: rows.length },
             function (n) { page = n; sync(); });
 
+    // The queue the modal walks: this page's rows, in the order the filter produced them.
+    var ids = [];
+    for (i = 0; i < rows.length; i++) ids.push(rows[i].regno);
+    G.queue({ ids: ids, total: d.total, page: d.page, pages: d.pages, size: 50,
+              nextPage: function (n) { page = n; sync(); } });
+    G.onWalk(open);
+
     G.qs('ckAll').checked = false;
     syncBulk();
 }
@@ -165,24 +172,72 @@ function selected() {
     for (var i = 0; i < b.length; i++) out.push(b[i].getAttribute('data-reg'));
     return out;
 }
+/* The batch bar appears only when something is selected, and says exactly what it will do to
+   how many. A bar that is always there, mostly disabled, is furniture. */
 function syncBulk() {
-    var n = selected().length, b = G.qs('btnBulk');
-    b.disabled = (n === 0);
-    b.textContent = n ? ('Clear ' + n + ' selected') : 'Clear selected';
+    var n = selected().length, bar = G.qs('gBatch');
+    if (!n) { bar.style.display = 'none'; bar.innerHTML = ''; return; }
+    bar.style.display = 'flex';
+    bar.innerHTML =
+        '<span class="g-batch__n">' + n + ' selected</span>' +
+        '<button type="button" class="g-btn g-btn--p g-btn--sm" id="bClear">Clear ' + n + ' for graduation</button>' +
+        '<button type="button" class="g-btn g-btn--d g-btn--sm" id="bHold">Hold ' + n + '&hellip;</button>' +
+        '<button type="button" class="g-btn g-btn--sm g-batch__x" id="bNone">Deselect</button>';
+    G.qs('bClear').addEventListener('click', doBulkClear);
+    G.qs('bHold').addEventListener('click', doBulkHold);
+    G.qs('bNone').addEventListener('click', function () {
+        var b = document.querySelectorAll('#gBody .ck');
+        for (var i = 0; i < b.length; i++) b[i].checked = false;
+        G.qs('ckAll').checked = false;
+        syncBulk();
+    });
 }
-function doBulk() {
+function doBulkClear() {
     var regs = selected();
     if (!regs.length) return;
     if (!G.qs('fYear').value) { G.toast('Choose the graduation year first.', false); return; }
     if (!confirm('Put ' + regs.length + ' candidate' + (regs.length === 1 ? '' : 's') + ' on the ' +
                  G.qs('fYear').value + ' graduation list?\n\nEach one is re-checked on the server before it is added.')) return;
-    G.qs('btnBulk').disabled = true;
+    G.qs('bClear').disabled = true;
     G.ajax(PAGE, 'ClearMany', { regnos: regs.join(','), acadYear: G.qs('fYear').value }, function (d) {
         if (!d || !d.success) { G.toast((d && d.message) || 'The bulk clear did not run.', false); syncBulk(); return; }
         G.toast(d.message, d.cleared > 0);
-        if (d.skipped && d.skipped.length) alert('Skipped ' + d.skipped.length + ':\n\n' + d.skipped.join('\n'));
+        report(d.skipped, 'cleared');
         load();
     });
+}
+
+/* A batch hold goes through the same reason dialog as a single one. Holding forty students
+   under a reason nobody had to write down would be the one place this module stopped being
+   accountable. */
+function doBulkHold() {
+    var regs = selected();
+    if (!regs.length) return;
+    if (!G.qs('fYear').value) { G.toast('Choose the graduation year first.', false); return; }
+    G.reasonDialog({
+        page: PAGE,
+        regno: '',
+        count: regs.length,
+        title: 'Hold ' + regs.length + ' candidate' + (regs.length === 1 ? '' : 's'),
+        subtitle: 'One reason, recorded separately against each of them.',
+        verb: 'Hold ' + regs.length,
+        onSubmit: function (reason) {
+            G.ajax(PAGE, 'HoldMany',
+                { regnos: regs.join(','), acadYear: G.qs('fYear').value, reason: reason },
+                function (d) {
+                    if (!d || !d.success) { G.toast((d && d.message) || 'The bulk hold did not run.', false); return; }
+                    G.toast(d.message, d.held > 0);
+                    report(d.skipped, 'held');
+                    load();
+                });
+        }
+    });
+}
+
+/* What a batch did NOT do matters as much as what it did. */
+function report(skipped, verb) {
+    if (!skipped || !skipped.length) return;
+    alert(skipped.length + ' of the selection could not be ' + verb + ':\n\n' + skipped.join('\n'));
 }
 
 /* ── export ──────────────────────────────────────────────────────────
@@ -218,6 +273,19 @@ function openExport() {
         pageRows: rows.length,
         countMethod: 'CountExport',
         filterSummary: sum,
+        sorts: [
+            { k: 'name', t: 'Name' },
+            { k: 'regno', t: 'Student number' },
+            { k: 'cgpa', t: 'Performance — highest CGPA first' },
+            { k: 'class', t: 'Class of award' }
+        ],
+        sortDefault: 'name',
+        groups: [
+            { k: 'prog', t: 'Programme' },
+            { k: 'fac', t: 'Faculty' },
+            { k: '', t: 'One continuous list' }
+        ],
+        groupDefault: 'prog',
         sheets: [
             { k: 'byprog', t: 'Summary by programme', d: 'Candidates, ready, needs a look, blocked', on: true },
             { k: 'byready', t: 'Summary by readiness', d: 'The queue in five figures', on: false },
@@ -234,6 +302,11 @@ function footer(g) {
                '<button type="button" class="g-btn" id="mClear">Clear for graduation</button>';
     return '<button type="button" class="g-btn g-btn--p" id="mClear">Clear for graduation</button>' +
            '<button type="button" class="g-btn g-btn--d" id="mHold">Hold&hellip;</button>' +
+           // The switch belongs beside the decision it changes, not in a settings menu.
+           '<label class="g-auto" title="After a decision, open the next candidate in this filter">' +
+             '<input type="checkbox" id="mAuto"' + (G.autoAdvance() ? ' checked' : '') + ' />' +
+             'Move to the next candidate' +
+           '</label>' +
            '<span class="g-hint">' +
            (g.readiness === 'BLOCKED' ? 'Blocked — clearing will ask you to justify it in writing.'
             : g.readiness === 'WARN' ? 'Read the points above before clearing.'
@@ -247,62 +320,100 @@ function open(reg) {
     G.openStudent(PAGE, reg, footer, wireFooter);
 }
 function wireFooter() {
-    var c = G.qs('mClear'), h = G.qs('mHold'), r = G.qs('mRelease');
+    var c = G.qs('mClear'), h = G.qs('mHold'), r = G.qs('mRelease'), a = G.qs('mAuto');
     if (c) c.addEventListener('click', doClear);
     if (h) h.addEventListener('click', doHold);
     if (r) r.addEventListener('click', doRelease);
+    if (a) a.addEventListener('change', function () { G.setAutoAdvance(this.checked); });
+}
+
+/* ── after a decision ─────────────────────────────────────
+   The candidate is marked decided IN PLACE and the next one opens. The list is not reloaded
+   until the modal closes: a cleared candidate leaves the pending queue, so reloading now would
+   renumber the rows underneath and make "next" mean something different every time. */
+var dirty = false;
+
+function afterDecision(regno, label) {
+    dirty = true;
+    G.markDecided(regno, label);
+    if (!G.autoAdvance()) { G.closeModal(); return; }
+
+    var i = G.queueNext();
+    if (i >= 0) { open(G.queueAt(i)); return; }
+    if (G.queueHasMorePages()) {
+        G.toast('End of this page \\u2014 fetching the next.', true);
+        G.closeModal();
+        page++; sync();
+        return;
+    }
+    G.closeModal();
+    G.toast('That was the last candidate matching these filters.', true);
 }
 
 function doClear() {
     var cur = G.currentStudent(); if (!cur) return;
-    var g = cur.student, year = G.qs('fYear').value, note = '';
+    var g = cur.student, year = G.qs('fYear').value;
     if (!year) { G.toast('Choose the graduation year first.', false); return; }
+
+    function send(note) {
+        G.ajax(PAGE, 'ClearStudent',
+            { regno: g.regno, acadYear: year, note: note || '', overrideBlock: g.readiness === 'BLOCKED' },
+            function (d) {
+                if (d && d.success) { G.toast(d.message, true); afterDecision(g.regno, 'On ' + year); }
+                else G.toast((d && d.message) || 'Could not clear that candidate.', false);
+            });
+    }
+
     if (g.readiness === 'BLOCKED') {
         var b = [];
-        for (var i = 0; i < g.findings.length; i++) if (g.findings[i].level === 'BLOCK') b.push('• ' + g.findings[i].detail);
-        note = prompt('This candidate is BLOCKED:\n\n' + b.join('\n') +
-            '\n\nClearing them anyway is recorded against your name and shown on the graduation list.\n' +
-            'Say why (at least 10 characters):', '');
-        if (note === null) return;
-        if (note.trim().length < 10) { G.toast('A justification of at least 10 characters is needed.', false); return; }
-    } else if (!confirm('Put ' + g.name + ' on the ' + year + ' graduation list?')) return;
-
-    G.ajax(PAGE, 'ClearStudent',
-        { regno: g.regno, acadYear: year, note: note, overrideBlock: g.readiness === 'BLOCKED' },
-        function (d) {
-            if (d && d.success) { G.toast(d.message, true); G.closeModal(); load(); }
-            else G.toast((d && d.message) || 'Could not clear that candidate.', false);
+        for (var i = 0; i < g.findings.length; i++)
+            if (g.findings[i].level === 'BLOCK') b.push(g.findings[i].detail);
+        G.reasonDialog({
+            page: PAGE, regno: g.regno,
+            title: 'Clear ' + g.name + ' anyway',
+            subtitle: g.regno + '  \\u00b7  ' + (g.progname || g.progcode),
+            warn: 'This candidate is blocked: ' + b.join('; ') +
+                  ' Clearing them is recorded against your name and shown on the graduation list.',
+            verb: 'Clear anyway',
+            onSubmit: send
         });
+    } else if (confirm('Put ' + g.name + ' on the ' + year + ' graduation list?')) send('');
 }
 
 function doHold() {
     var cur = G.currentStudent(); if (!cur) return;
     var g = cur.student, year = G.qs('fYear').value;
     if (!year) { G.toast('Choose the graduation year first.', false); return; }
-    var reason = prompt('Why is ' + g.name + ' being held?\n\n' +
-        'Whoever picks this up next has only this sentence to go on, so be specific (at least 10 characters).', '');
-    if (reason === null) return;
-    if (reason.trim().length < 10) { G.toast('Say a little more — at least 10 characters.', false); return; }
-    G.ajax(PAGE, 'HoldStudent', { regno: g.regno, acadYear: year, reason: reason }, function (d) {
-        if (d && d.success) { G.toast(d.message, true); G.closeModal(); load(); }
-        else G.toast((d && d.message) || 'Could not hold that candidate.', false);
+    G.reasonDialog({
+        page: PAGE, regno: g.regno,
+        title: 'Hold ' + g.name,
+        subtitle: g.regno + '  \\u00b7  ' + (g.progname || g.progcode),
+        verb: 'Hold',
+        onSubmit: function (reason) {
+            G.ajax(PAGE, 'HoldStudent', { regno: g.regno, acadYear: year, reason: reason }, function (d) {
+                if (d && d.success) { G.toast(d.message, true); afterDecision(g.regno, 'Held'); }
+                else G.toast((d && d.message) || 'Could not hold that candidate.', false);
+            });
+        }
     });
 }
 
 function doRelease() {
     var cur = G.currentStudent(); if (!cur) return;
     var g = cur.student;
-    var note = prompt('Lift the hold on ' + g.name + '?\n\nAnything worth noting? (optional)', '');
-    if (note === null) return;
-    G.ajax(PAGE, 'ReleaseStudent', { regno: g.regno, acadYear: G.qs('fYear').value, note: note }, function (d) {
-        if (d && d.success) { G.toast(d.message, true); G.closeModal(); load(); }
+    G.ajax(PAGE, 'ReleaseStudent', { regno: g.regno, acadYear: G.qs('fYear').value, note: '' }, function (d) {
+        if (d && d.success) { G.toast(d.message, true); afterDecision(g.regno, 'Released'); }
         else G.toast((d && d.message) || 'Could not lift that hold.', false);
     });
 }
 
+
+
 document.addEventListener('DOMContentLoaded', function () {
     G.mount();
-    G.wireModal();
+    // Refreshing on close rather than after each decision is what keeps the queue stable while
+    // it is being worked.
+    G.wireModal(function () { if (dirty) { dirty = false; load(); } });
     var pre = G.readUrl();
 
     document.addEventListener('click', function (e) {
@@ -331,7 +442,6 @@ document.addEventListener('DOMContentLoaded', function () {
     var typed = G.debounce(function () { page = 1; sync(); }, 350);
     G.qs('fQ').addEventListener('input', typed);
     G.qs('fQ').addEventListener('keydown', function (e) { if (e.key === 'Enter') { page = 1; sync(); } });
-    G.qs('btnBulk').addEventListener('click', doBulk);
     G.qs('btnXls').addEventListener('click', openExport);
     G.qs('btnReset').addEventListener('click', function () {
         resetFilters();

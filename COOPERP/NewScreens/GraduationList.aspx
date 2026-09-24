@@ -134,6 +134,20 @@ function openExport() {
         pageRows: rows.length,
         countMethod: 'CountExport',
         filterSummary: sum,
+        sorts: [
+            { k: 'name', t: 'Name' },
+            { k: 'regno', t: 'Student number' },
+            { k: 'cgpa', t: 'Performance — highest CGPA first' },
+            { k: 'class', t: 'Class of award' },
+            { k: 'prog', t: 'Programme, then name' }
+        ],
+        sortDefault: 'name',
+        groups: [
+            { k: 'prog', t: 'Programme' },
+            { k: 'fac', t: 'Faculty' },
+            { k: '', t: 'One continuous list' }
+        ],
+        groupDefault: 'prog',
         sheets: [
             { k: 'byprog', t: 'Summary by programme', d: 'How a Senate paper opens', on: true },
             { k: 'byclass', t: 'By class of award', d: 'The distribution table that always gets asked for', on: true },
@@ -163,6 +177,13 @@ function load() {
         G.qs('gBody').innerHTML = h || '<tr><td colspan="7" class="g-empty">Nobody is on this list yet.</td></tr>';
         G.qs('gMeta').textContent = rows.length + ' on the ' + (G.qs('fYear').value || 'combined') + ' list';
         fillAwards();
+
+        // No decisions to advance through here, but the walker still lets a reviewer step from
+        // one name to the next without going back to the table.
+        var ids = [];
+        for (var q = 0; q < rows.length; q++) ids.push(rows[q].regno);
+        G.queue({ ids: ids, total: rows.length, page: 1, pages: 1, size: rows.length });
+        G.onWalk(open);
     });
 }
 
@@ -236,15 +257,24 @@ function open(reg) {
 function doRemove() {
     var cur = G.currentStudent(); if (!cur) return;
     var g = cur.student;
-    var reason = prompt('Take ' + g.name + ' OFF the ' + g.graduatedYear + ' graduation list?\n\n' +
-        'The decision history is kept. Say why (at least 10 characters):', '');
-    if (reason === null) return;
-    if (reason.trim().length < 10) { G.toast('A reason of at least 10 characters is needed.', false); return; }
-    G.ajax(PAGE, 'RemoveStudent', { regno: g.regno, reason: reason }, function (d) {
-        if (d && d.success) { G.toast(d.message, true); G.closeModal(); load(); }
-        else G.toast((d && d.message) || 'Could not remove that name.', false);
+    // Taking a name OFF a graduation list is the most consequential thing this page can do, so
+    // it goes through the same reason dialog as every other decision rather than a prompt box.
+    G.reasonDialog({
+        page: PAGE, regno: g.regno,
+        title: 'Take ' + g.name + ' off the list',
+        subtitle: g.regno + '  ·  ' + (g.progname || g.progcode),
+        warn: 'This removes them from the ' + g.graduatedYear +
+              ' graduation list. The decision history is kept either way.',
+        verb: 'Take off the list',
+        onSubmit: function (reason) {
+            G.ajax(PAGE, 'RemoveStudent', { regno: g.regno, reason: reason }, function (d) {
+                if (d && d.success) { G.toast(d.message, true); G.closeModal(); load(); }
+                else G.toast((d && d.message) || 'Could not remove that name.', false);
+            });
+        }
     });
 }
+
 
 document.addEventListener('DOMContentLoaded', function () {
     G.mount();

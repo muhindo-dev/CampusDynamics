@@ -1,5 +1,6 @@
 ﻿using System;
 using System.Collections.Generic;
+using System.Data;
 using System.Globalization;
 using System.Text;
 using System.Web;
@@ -144,6 +145,113 @@ public static class GraduationExport
         foreach (string k in list.Split(','))
             if (k.Trim() == key) return true;
         return false;
+    }
+
+    // =================================================================
+    //  The bridge to the PDF.
+    //
+    //  The workbook and the document are built from the SAME Sheet, so
+    //  the columns a user ticked cannot mean one thing in Excel and
+    //  another in the PDF.
+    // =================================================================
+
+    /// <summary>Hidden column carrying the value the PDF groups on.</summary>
+    public const string GROUP_COL = "_grp";
+
+    /// <summary>
+    /// A sheet as a bindable table. Fields are named C0..Cn rather than by heading, because a
+    /// heading like "Class of Award" or "Zero / Unmarked" is not a legal binding expression.
+    /// </summary>
+    public static DataTable ToTable(Sheet sh, List<string> groupValues)
+    {
+        var t = new DataTable();
+        for (int i = 0; i < sh.Columns.Length; i++) t.Columns.Add("C" + i, typeof(string));
+        if (groupValues != null) t.Columns.Add(GROUP_COL, typeof(string));
+
+        for (int r = 0; r < sh.Rows.Count; r++)
+        {
+            string[] src = sh.Rows[r];
+            DataRow row = t.NewRow();
+            for (int i = 0; i < sh.Columns.Length; i++) row["C" + i] = i < src.Length ? (src[i] ?? "") : "";
+            if (groupValues != null)
+                row[GROUP_COL] = r < groupValues.Count ? (groupValues[r] ?? "") : "";
+            t.Rows.Add(row);
+        }
+        return t;
+    }
+
+    /// <summary>
+    /// Printed widths, derived from the heading and the data rather than hard-coded, so adding a
+    /// column to a catalogue does not mean editing a parallel table of numbers. The report
+    /// scales whatever comes back to the page width, so these are proportions in practice.
+    /// </summary>
+    /// <summary>
+    /// Columns the group heading already states, and which therefore should not be repeated on
+    /// every row of that group. Grouping by programme prints
+    /// "BACHELOR OF INFORMATION TECHNOLOGY   (BIT)" above the rows; printing the same two
+    /// values again in every row costs about a third of the page width and tells the reader
+    /// nothing. The data is not lost — it is in the heading.
+    /// </summary>
+    public static Sheet WithoutGroupColumns(Sheet sh, string groupBy)
+    {
+        if (sh == null || string.IsNullOrEmpty(groupBy)) return sh;
+
+        var drop = new List<string>();
+        if (groupBy == "prog") { drop.Add("Programme"); drop.Add("Programme Code"); }
+        else if (groupBy == "fac") { drop.Add("Faculty"); }
+
+        var keep = new List<int>();
+        for (int i = 0; i < sh.Columns.Length; i++)
+            if (!drop.Contains(sh.Columns[i])) keep.Add(i);
+        if (keep.Count == sh.Columns.Length || keep.Count == 0) return sh;
+
+        var outp = new Sheet();
+        outp.Name = sh.Name;
+        outp.Subtitle = sh.Subtitle;
+        var heads = new string[keep.Count];
+        for (int k = 0; k < keep.Count; k++)
+        {
+            heads[k] = sh.Columns[keep[k]];
+            if (sh.NumericColumns.Contains(keep[k])) outp.NumericColumns.Add(k);
+        }
+        outp.Columns = heads;
+        foreach (string[] r in sh.Rows)
+        {
+            var row = new string[keep.Count];
+            for (int k = 0; k < keep.Count; k++) row[k] = keep[k] < r.Length ? r[keep[k]] : "";
+            outp.Rows.Add(row);
+        }
+        return outp;
+    }
+
+    public static List<GraduationPdf.PCol> PdfCols(Sheet sh)
+    {
+        var l = new List<GraduationPdf.PCol>();
+        for (int i = 0; i < sh.Columns.Length; i++)
+        {
+            string head = sh.Columns[i] ?? "";
+            bool num = sh.NumericColumns.Contains(i);
+
+            // How wide the content actually runs, sampled rather than assumed.
+            int widest = head.Length;
+            int sample = Math.Min(sh.Rows.Count, 200);
+            for (int r = 0; r < sample; r++)
+            {
+                string[] row = sh.Rows[r];
+                if (i < row.Length && row[i] != null && row[i].Length > widest) widest = row[i].Length;
+            }
+            if (widest > 46) widest = 46;          // one long reason must not starve every other column
+
+            float w = 16f + widest * 4.6f;
+            // A numeric column is narrow, but never narrower than its own heading: capping at a
+            // flat 64 printed "CREDITS EARNE" with the D cut off.
+            float headNeeds = 12f + head.Length * 4.4f;
+            if (num && w > 64f) w = 64f;
+            if (w < headNeeds) w = headNeeds;
+            if (w < 40f) w = 40f;
+            l.Add(new GraduationPdf.PCol("C" + i, head, w, num));
+        }
+        return l;
     }
 
     private static string X(string s)

@@ -280,6 +280,13 @@ public static class GraduationEngine
         /// <summary>Class of award, for the graduation list. Matched as a prefix, so "First"
         /// catches both "First Class Honours" and "First Class".</summary>
         public string award = "";
+
+        // ── Export presentation. These never touch the WHERE clause; they decide how the rows
+        //    that came back are ordered and grouped in the file. ──────────────────────────
+        /// <summary>'' = none; 'prog' = one section per programme; 'fac' = per faculty.</summary>
+        public string groupBy = "prog";
+        /// <summary>name | regno | cgpa | class | prog</summary>
+        public string orderBy = "name";
         public string search = "";
         public string sort = "regno";
         public int page = 1;

@@ -218,6 +218,11 @@ public partial class COOPERP_NewScreens_GraduationCandidates : System.Web.UI.Pag
             : null;
 
         List<GraduationExport.Col<GradCandidate>> cat = Catalogue();
+        // Ordered and grouped before anything is written, so the PDF, the workbook and the CSV
+        // are the same list in the same order rather than three different answers.
+        Order(rows, f.orderBy);
+        if (f.groupBy != "") GroupSort(rows, f.groupBy);
+
         GraduationExport.Sheet sheet = GraduationExport.Build(
             "Candidates",
             f.acadYear == "" ? "" : ("for " + f.acadYear),
@@ -235,6 +240,7 @@ public partial class COOPERP_NewScreens_GraduationCandidates : System.Web.UI.Pag
             f.focus == "cycle" ? "The graduating cycle" : "Everyone not yet graduated");
         cover.Add(new KeyValuePair<string, string>("Candidates in this file",
             rows.Count.ToString(CultureInfo.InvariantCulture)));
+        cover.Add(new KeyValuePair<string, string>("Ordered by", OrderLabel(f.orderBy)));
 
         string file = GraduationExport.FileName("graduation-candidates", f.acadYear);
         try
@@ -242,10 +248,128 @@ public partial class COOPERP_NewScreens_GraduationCandidates : System.Web.UI.Pag
             if (fmt == "csv")
                 GraduationExport.Csv(Response, file, "Graduation Candidates", scope.Label, cover,
                                      sheet.Columns, sheet.Rows);
-            else
+            else if (fmt == "xls")
                 GraduationExport.Workbook(Response, file, "Graduation Candidates", scope.Label, cover, sheets);
+            else
+            {
+                GraduationExport.Sheet pdfSheet = GraduationExport.WithoutGroupColumns(sheet, f.groupBy);
+                GraduationPdf.Send(Response, file, "Graduation Candidates", f.acadYear, scope.Label,
+                                   cover, GraduationExport.PdfCols(pdfSheet),
+                                   GraduationExport.ToTable(pdfSheet, GroupValues(rows, f.groupBy)),
+                                   f.groupBy == "" ? "" : GraduationExport.GROUP_COL,
+                                   true, GraduationExport.Truncation);
+            }
         }
         finally { GraduationExport.Truncation = null; }
+    }
+
+    // ─────────────────────────────────────────────────────────────────
+    //  Ordering and grouping for the file.
+    //
+    //  Done in C# on the rows already read, not in SQL. Readiness, class
+    //  of award and the credit figures are all computed after the query,
+    //  so "sort by performance" is not something the database can do.
+    // ─────────────────────────────────────────────────────────────────
+    private static void Order(List<GradCandidate> rows, string by)
+    {
+        Comparison<GradCandidate> cmp;
+        switch ((by ?? "").ToLowerInvariant())
+        {
+            case "regno":
+                cmp = delegate(GradCandidate a, GradCandidate b)
+                { return string.Compare(a.regno, b.regno, StringComparison.OrdinalIgnoreCase); };
+                break;
+            case "cgpa":
+                // Highest first — "sort by performance" means the best at the top.
+                cmp = delegate(GradCandidate a, GradCandidate b)
+                {
+                    int d = b.cgpa.CompareTo(a.cgpa);
+                    return d != 0 ? d : string.Compare(a.name, b.name, StringComparison.OrdinalIgnoreCase);
+                };
+                break;
+            case "class":
+                cmp = delegate(GradCandidate a, GradCandidate b)
+                {
+                    int d = ClassRank(a.degClass).CompareTo(ClassRank(b.degClass));
+                    if (d != 0) return d;
+                    d = b.cgpa.CompareTo(a.cgpa);
+                    return d != 0 ? d : string.Compare(a.name, b.name, StringComparison.OrdinalIgnoreCase);
+                };
+                break;
+            case "prog":
+                cmp = delegate(GradCandidate a, GradCandidate b)
+                {
+                    int d = string.Compare(a.progname, b.progname, StringComparison.OrdinalIgnoreCase);
+                    return d != 0 ? d : string.Compare(a.name, b.name, StringComparison.OrdinalIgnoreCase);
+                };
+                break;
+            default:    // by name
+                cmp = delegate(GradCandidate a, GradCandidate b)
+                {
+                    int d = string.Compare(a.name, b.name, StringComparison.OrdinalIgnoreCase);
+                    return d != 0 ? d : string.Compare(a.regno, b.regno, StringComparison.OrdinalIgnoreCase);
+                };
+                break;
+        }
+        rows.Sort(cmp);
+    }
+
+    /// <summary>Best class first. Anything unrecognised sorts last rather than in the middle.</summary>
+    private static int ClassRank(string c)
+    {
+        c = (c ?? "").ToLowerInvariant();
+        if (c.Contains("first") || c.Contains("distinction")) return 0;
+        if (c.Contains("upper")) return 1;
+        if (c.Contains("lower")) return 2;
+        if (c.Contains("credit")) return 3;
+        if (c.Contains("pass")) return 4;
+        return 9;
+    }
+
+    private static string OrderLabel(string by)
+    {
+        switch ((by ?? "").ToLowerInvariant())
+        {
+            case "regno": return "Student number";
+            case "cgpa": return "CGPA, highest first";
+            case "class": return "Class of award";
+            case "prog": return "Programme, then name";
+            default: return "Name";
+        }
+    }
+
+    /// <summary>
+    /// A stable sort that keeps the chosen order inside each group. List.Sort is unstable, so
+    /// the group key is compared first and the already-sorted position second.
+    /// </summary>
+    private static void GroupSort(List<GradCandidate> rows, string groupBy)
+    {
+        var pos = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+        for (int i = 0; i < rows.Count; i++) if (!pos.ContainsKey(rows[i].regno)) pos[rows[i].regno] = i;
+        bool fac = groupBy == "fac";
+        rows.Sort(delegate(GradCandidate a, GradCandidate b)
+        {
+            string ka = fac ? a.faculty : (a.progname == "" ? a.progcode : a.progname);
+            string kb = fac ? b.faculty : (b.progname == "" ? b.progcode : b.progname);
+            int d = string.Compare(ka, kb, StringComparison.OrdinalIgnoreCase);
+            if (d != 0) return d;
+            int ia, ib;
+            pos.TryGetValue(a.regno, out ia);
+            pos.TryGetValue(b.regno, out ib);
+            return ia.CompareTo(ib);
+        });
+    }
+
+    /// <summary>The group heading for each row, in row order.</summary>
+    private static List<string> GroupValues(List<GradCandidate> rows, string groupBy)
+    {
+        if (groupBy == "") return null;
+        var l = new List<string>();
+        foreach (GradCandidate g in rows)
+            l.Add(groupBy == "fac"
+                ? (g.faculty == "" ? "(no faculty recorded)" : g.faculty)
+                : (g.progname == "" ? g.progcode : g.progname + "   (" + g.progcode + ")"));
+        return l;
     }
 
     /// <summary>How the queue divides across programmes — the tab a Dean opens first.</summary>
@@ -353,6 +477,66 @@ public partial class COOPERP_NewScreens_GraduationCandidates : System.Web.UI.Pag
     /// dishonesty that makes people stop trusting a screen, so where it is affordable the real
     /// figure is computed, and where it is not, the discrepancy is stated.
     /// </summary>
+    /// <summary>
+    /// Holds a selection under one shared reason.
+    ///
+    /// Mirrors ClearMany: one student at a time through GraduationService.Hold, so scope is
+    /// re-checked per student and every hold lands in acad_grad_review as its own row. A batch
+    /// decision must be exactly as accountable as an individual one — the only thing shared is
+    /// the wording.
+    /// </summary>
+    [WebMethod(EnableSession = true)]
+    public static string HoldMany(string regnos, string acadYear, string reason)
+    {
+        MarksScope scope = MarksScopeResolver.Resolve();
+        if (!scope.HasAccess) return GraduationBootstrap.Denied();
+        acadYear = (acadYear ?? "").Trim();
+        if (acadYear == "") return J.Serialize(new { success = false, message = "Choose the graduation year first." });
+        reason = (reason ?? "").Trim();
+        if (reason.Length < 10)
+            return J.Serialize(new { success = false, message = "A reason of at least 10 characters is needed." });
+
+        var ids = new List<string>();
+        foreach (string x in (regnos ?? "").Split(','))
+        { string t = x.Trim(); if (t != "" && !ids.Contains(t)) ids.Add(t); }
+        if (ids.Count == 0) return J.Serialize(new { success = false, message = "Nothing was selected." });
+        if (ids.Count > 300) return J.Serialize(new { success = false, message = "Hold at most 300 at a time." });
+
+        int done = 0;
+        var skipped = new List<string>();
+        foreach (string reg in ids)
+        {
+            string raw = GraduationService.Hold(scope, reg, acadYear, reason);
+            bool ok = false;
+            try
+            {
+                var d = J.Deserialize<Dictionary<string, object>>(raw);
+                object v;
+                ok = d.TryGetValue("success", out v) && v != null && Convert.ToBoolean(v);
+                if (!ok)
+                {
+                    object m; d.TryGetValue("message", out m);
+                    skipped.Add(reg + " \u2014 " + (m == null ? "refused" : m.ToString()));
+                }
+            }
+            catch { skipped.Add(reg + " \u2014 could not be read"); }
+            if (ok) done++;
+        }
+
+        return J.Serialize(new
+        {
+            success = true,
+            held = done,
+            skipped = skipped,
+            message = done + (done == 1 ? " candidate was" : " candidates were") + " held" +
+                      (skipped.Count > 0 ? "; " + skipped.Count + " skipped." : ".")
+        });
+    }
+
+    /// <summary>Reasons worth offering for THIS candidate. See GraduationReasons.</summary>
+    [WebMethod(EnableSession = true)]
+    public static string HoldReasons(string regno) { return GraduationReasons.For(regno); }
+
     [WebMethod(EnableSession = true)]
     public static string CountExport(string configJson)
     {
