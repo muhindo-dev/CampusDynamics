@@ -235,6 +235,56 @@ window.G = (function () {
         return '<div><span>' + esc(label) + '</span><b>' + esc(val) + '</b></div>';
     }
 
+    /// One study year's results, as its own panel. Two of these sit side by side, so a
+    /// three-year degree is two rows and a reviewer sees the whole degree without scrolling.
+    function yearPanel(yr, list) {
+        var i, courses = 0, cu = 0, fails = 0, zeros = 0, acads = {}, acadList = [];
+
+        for (i = 0; i < list.length; i++) {
+            var r = list[i];
+            courses++;
+            if (r.score !== null && r.score >= 50) cu += (+r.cu || 0);
+            if (r.score !== null && r.score > 0 && r.score < 50) fails++;
+            if (r.score === 0 || r.score === null) zeros++;
+            if (r.acad && !acads[r.acad]) { acads[r.acad] = 1; acadList.push(r.acad); }
+        }
+        acadList.sort();
+
+        // Semester first, then course code, so the panel reads the way a transcript does.
+        list.sort(function (a, b) {
+            var d1 = (+a.sem || 0) - (+b.sem || 0);
+            return d1 !== 0 ? d1 : String(a.code).localeCompare(String(b.code));
+        });
+
+        var meta = courses + ' course' + (courses === 1 ? '' : 's') + '  ·  ' + n0(cu) + ' CU';
+        if (fails) meta += '  ·  ' + fails + ' failed';
+
+        var h = '<div class="g-yr' + (fails ? ' has-fail' : '') + '">' +
+                '<div class="g-yr__h"><b>' + esc(yr === 0 ? 'Not placed in a year' : 'Year ' + yr) + '</b>' +
+                '<span>' + esc(acadList.join(', ')) + '</span>' +
+                '<em>' + esc(meta) + '</em></div>' +
+                '<table class="g-tbl g-yr__t"><tbody>';
+
+        var sem = null;
+        for (i = 0; i < list.length; i++) {
+            var x = list[i];
+            if (x.sem !== sem) {
+                sem = x.sem;
+                h += '<tr class="g-yr__sem"><td colspan="4">' +
+                     esc(sem ? 'Semester ' + sem : 'Semester not recorded') + '</td></tr>';
+            }
+            var bad = (x.score !== null && x.score > 0 && x.score < 50);
+            var zero = (x.score === 0);
+            var cls = bad ? ' is-fail' : (zero || x.score === null ? ' is-zero' : '');
+            h += '<tr><td class="g-yr__c"><b>' + esc(x.code) + '</b>' +
+                 '<span>' + esc(x.name) + '</span></td>' +
+                 '<td class="g-num g-sub">' + n0(x.cu) + '</td>' +
+                 '<td class="g-num g-yr__s' + cls + '">' + (x.score === null ? '&ndash;' : esc(x.score)) + '</td>' +
+                 '<td class="g-yr__g' + cls + '">' + esc(x.grade || '') + '</td></tr>';
+        }
+        return h + '</tbody></table></div>';
+    }
+
     function renderStudent(d) {
         var g = d.student, h = '', i;
 
@@ -242,16 +292,53 @@ window.G = (function () {
         qs('gModalSub').textContent = (g.progname || g.progcode) + '  ·  intake ' + (g.entryyear || '–') +
             '  ·  ' + (g.firstYear ? g.firstYear + ' to ' + g.lastYear : 'no results on record');
 
-        // ── The verdict, first and in one line ──────────────────────────────
-        //  A reviewer opens this to answer one question: can this person graduate? So that
-        //  answer is the first thing on the page, with the reasons under it — rather than
-        //  making them read eight checks and work it out.
-        var blocks = [], warns = [];
+        var blocks = [], warns = [], passes = [];
         for (i = 0; i < (g.findings || []).length; i++) {
             if (g.findings[i].level === 'BLOCK') blocks.push(g.findings[i]);
             else if (g.findings[i].level === 'WARN' || g.findings[i].level === 'NA') warns.push(g.findings[i]);
+            else if (g.findings[i].level === 'PASS') passes.push(g.findings[i]);
         }
 
+        // ── What changes what you may do, before anything else ──────────────
+        //  Two short lines. A student already on a list, or held, cannot be acted on the same
+        //  way, so this is not something to find further down.
+        if (g.graduatedYear)
+            h += '<div class="g-note g-note--info"><b>Already on the ' + esc(g.graduatedYear) +
+                 ' graduation list.</b>' + (g.clearedActor ? ' Cleared by ' + esc(g.clearedActor) +
+                 (g.clearedAt ? ' on ' + esc(g.clearedAt) : '') + '.' : '') + '</div>';
+        if (g.holdReason)
+            h += '<div class="g-note g-note--warn"><b>Held by ' + esc(g.holdActor) + ' on ' +
+                 esc(g.holdAt) + '.</b><br>' + esc(g.holdReason) + '</div>';
+
+        // ── The results, first ──────────────────────────────────────────────
+        //  What the student actually did is the evidence; everything else on this panel is a
+        //  conclusion drawn from it. Laid out by study year, two years to a row, because that
+        //  is how a degree is read — not as one long list sorted by academic year.
+        var byYear = {}, years = [];
+        for (i = 0; i < (d.results || []).length; i++) {
+            var r = d.results[i];
+            var y = +r.sy || 0;
+            if (!byYear[y]) { byYear[y] = []; years.push(y); }
+            byYear[y].push(r);
+        }
+        years.sort(function (a, b) {
+            if (a === 0) return 1;          // unplaced results last, never first
+            if (b === 0) return -1;
+            return a - b;
+        });
+
+        if (years.length) {
+            h += '<div class="g-yrs">';
+            for (i = 0; i < years.length; i++) h += yearPanel(years[i], byYear[years[i]]);
+            h += '</div>';
+        } else {
+            h += '<div class="g-note g-note--warn">No results on record for this student.</div>';
+        }
+
+        // ── Then the verdict ────────────────────────────────────────────────
+        //  What is blocking them stays on the face of it — that is the decision. What merely
+        //  wants a look is folded away, because on this data most candidates carry several
+        //  warnings and an open list of them buries the two lines that decide the case.
         var kind = blocks.length ? 'bad' : (warns.length ? 'warn' : 'ok');
         var head = blocks.length
             ? (blocks.length === 1 ? 'One thing is blocking this candidate' : blocks.length + ' things are blocking this candidate')
@@ -261,23 +348,21 @@ window.G = (function () {
 
         h += '<div class="g-verdict g-verdict--' + kind + '">' +
              '<div class="g-verdict__h">' + esc(head) + '</div>';
-        if (blocks.length || warns.length) {
+        if (blocks.length) {
             h += '<ul class="g-verdict__l">';
             for (i = 0; i < blocks.length; i++)
                 h += '<li class="is-block"><b>' + esc(blocks[i].name) + '</b> ' + esc(blocks[i].detail) + '</li>';
-            for (i = 0; i < warns.length; i++)
-                h += '<li class="is-warn"><b>' + esc(warns[i].name) + '</b> ' + esc(warns[i].detail) + '</li>';
             h += '</ul>';
         }
+        if (warns.length) {
+            var wl = '<ul class="g-verdict__l">';
+            for (i = 0; i < warns.length; i++)
+                wl += '<li class="is-warn"><b>' + esc(warns[i].name) + '</b> ' + esc(warns[i].detail) + '</li>';
+            wl += '</ul>';
+            h += fold('warns', warns.length === 1 ? 'One thing to look at' : 'Things to look at',
+                      warns.length, wl, false, 'g-fold--in');
+        }
         h += '</div>';
-
-        if (g.graduatedYear)
-            h += '<div class="g-note g-note--info"><b>Already on the ' + esc(g.graduatedYear) +
-                 ' graduation list.</b>' + (g.clearedActor ? ' Cleared by ' + esc(g.clearedActor) +
-                 (g.clearedAt ? ' on ' + esc(g.clearedAt) : '') + '.' : '') + '</div>';
-        if (g.holdReason)
-            h += '<div class="g-note g-note--warn"><b>Held by ' + esc(g.holdActor) + ' on ' +
-                 esc(g.holdAt) + '.</b><br>' + esc(g.holdReason) + '</div>';
 
         // ── The numbers behind it ───────────────────────────────────
         var pct = g.cuRequired > 0 ? Math.min(100, Math.round(g.cuEarned * 100 / g.cuRequired)) : 0;
@@ -301,11 +386,23 @@ window.G = (function () {
                 : '.') + '</div>';
 
         // ── Everything else, folded away until wanted ───────────────────────
-        //  The detail matters when it matters. Leaving it all open pushed the decision off
-        //  the screen and buried the two lines that actually decide the case.
-        var passes = [];
-        for (i = 0; i < (g.findings || []).length; i++)
-            if (g.findings[i].level === 'PASS') passes.push(g.findings[i]);
+        if (d.structure && d.structure.length) {
+            var miss = 0;
+            for (i = 0; i < d.structure.length; i++) if (d.structure[i].score === null) miss++;
+            var st = '<div class="g-wrap" style="max-height:260px;"><table class="g-tbl g-struct"><thead><tr>' +
+                     '<th>Yr</th><th>Sem</th><th>Course</th><th class="g-num">CU</th><th>Result</th></tr></thead><tbody>';
+            for (i = 0; i < d.structure.length; i++) {
+                var c = d.structure[i];
+                var cls2 = c.score === null ? 'miss' : (c.score > 0 && c.score < 50 ? 'fail' : '');
+                st += '<tr><td>' + esc(c.sy) + '</td><td>' + esc(c.sem) + '</td>' +
+                      '<td>' + esc(c.code) + '<div class="g-sub">' + esc(c.name) + '</div></td>' +
+                      '<td class="g-num">' + n0(c.cu) + '</td><td class="' + cls2 + '">' +
+                      (c.score === null ? 'no result' : c.score + '%') + '</td></tr>';
+            }
+            st += '</tbody></table></div>';
+            h += fold('struct', 'Against the programme structure',
+                      miss ? (miss + ' of ' + d.structure.length + ' with no result') : d.structure.length, st);
+        }
 
         if (passes.length) {
             h += fold('checks', 'Checks that passed', passes.length, (function () {
@@ -316,40 +413,6 @@ window.G = (function () {
                 return x;
             })());
         }
-
-        if (d.structure && d.structure.length) {
-            var miss = 0;
-            for (i = 0; i < d.structure.length; i++) if (d.structure[i].score === null) miss++;
-            var st = '<div class="g-wrap" style="max-height:230px;"><table class="g-tbl g-struct"><thead><tr>' +
-                     '<th>Yr</th><th>Sem</th><th>Course</th><th class="g-num">CU</th><th>Result</th></tr></thead><tbody>';
-            for (i = 0; i < d.structure.length; i++) {
-                var c = d.structure[i];
-                var cls = c.score === null ? 'miss' : (c.score > 0 && c.score < 50 ? 'fail' : '');
-                st += '<tr><td>' + esc(c.sy) + '</td><td>' + esc(c.sem) + '</td>' +
-                      '<td>' + esc(c.code) + '<div class="g-sub">' + esc(c.name) + '</div></td>' +
-                      '<td class="g-num">' + n0(c.cu) + '</td><td class="' + cls + '">' +
-                      (c.score === null ? 'no result' : c.score + '%') + '</td></tr>';
-            }
-            st += '</tbody></table></div>';
-            h += fold('struct', 'Against the programme structure',
-                      miss ? (miss + ' of ' + d.structure.length + ' with no result') : d.structure.length, st);
-        }
-
-        var rs = '<div class="g-wrap" style="max-height:260px;"><table class="g-tbl"><thead><tr>' +
-                 '<th>Year</th><th>Yr/Sem</th><th>Course</th><th class="g-num">CU</th>' +
-                 '<th class="g-num">Score</th><th>Grade</th></tr></thead><tbody>';
-        for (i = 0; i < (d.results || []).length; i++) {
-            var x = d.results[i];
-            var bad = (x.score !== null && x.score > 0 && x.score < 50), zero = (x.score === 0);
-            rs += '<tr><td class="g-sub">' + esc(x.acad) + '</td><td class="g-sub">' + esc(x.sy) + '/' + esc(x.sem) + '</td>' +
-                  '<td>' + esc(x.code) + '<div class="g-sub">' + esc(x.name) + '</div></td>' +
-                  '<td class="g-num">' + n0(x.cu) + '</td>' +
-                  '<td class="g-num"' + (bad ? ' style="color:#8c2019;font-weight:700"'
-                                             : (zero ? ' style="color:#92400e;font-weight:700"' : '')) + '>' +
-                  (x.score === null ? '–' : x.score) + '</td><td>' + esc(x.grade) + '</td></tr>';
-        }
-        rs += '</tbody></table></div>';
-        h += fold('results', 'Results on record', (d.results || []).length, rs);
 
         if (d.history && d.history.length) {
             var hi = '';
@@ -377,9 +440,10 @@ window.G = (function () {
 
     /// A collapsed section. Open it and it stays open for the rest of the session, because a
     /// reviewer who wants to see results for one student usually wants them for the next.
-    function fold(key, title, count, body, openByDefault) {
+    function fold(key, title, count, body, openByDefault, cls) {
         var open = foldState(key, openByDefault);
-        return '<div class="g-fold' + (open ? ' is-open' : '') + '" data-fold="' + key + '">' +
+        return '<div class="g-fold' + (open ? ' is-open' : '') + (cls ? ' ' + cls : '') +
+               '" data-fold="' + key + '">' +
                '<button type="button" class="g-fold__h">' +
                  '<svg viewBox="0 0 24 24" width="11" height="11" fill="none" stroke="currentColor" ' +
                  'stroke-width="3"><polyline points="9 18 15 12 9 6"></polyline></svg>' +
@@ -389,11 +453,14 @@ window.G = (function () {
     }
 
     var folds = {};
+    /// A remembered fold beats its default, in BOTH directions. The old form read the stored
+    /// value, then forced any default-open section back open whenever it was stored closed —
+    /// so a section you deliberately collapsed reopened on the next student, every time.
     function foldState(key, def) {
         if (folds[key] === undefined) {
-            try { folds[key] = sessionStorage.getItem('gfold_' + key) === '1'; }
-            catch (e) { folds[key] = !!def; }
-            if (folds[key] === false && def) folds[key] = true;
+            var v = null;
+            try { v = sessionStorage.getItem('gfold_' + key); } catch (e) { }
+            folds[key] = (v === null || v === undefined) ? !!def : (v === '1');
         }
         return folds[key];
     }

@@ -1073,3 +1073,54 @@ module uses — the same ninety pixels the other four pages were already spendin
   function — thesis and supervisor tracking — rather than a duplicate, so it was left alone. Its
   scope gap is real and should be closed the same way.
 * Its "Chart Placeholder" was never built, and the PDF button calls `window.print()`.
+
+---
+
+## 14. The review panel, re-ordered around the evidence — 2026-09-24
+
+Brief: *"when previewing a student, show results first … in grid format (2 per row) in years
+starting with year 1, y2, y3 … make the width of modal more wide … make the warnings collapsible
+and by default collapsed … ensure easiness and going direct to the point."*
+
+**Results first, by study year, two years to a row.** What a student actually did is the evidence;
+everything else on the panel is a conclusion drawn from it. It was the third fold down, collapsed,
+behind eight checks and six statistics. It is now the first thing on the panel and it opens
+expanded.
+
+They are grouped by *study year*, not listed by academic year, because that is how a degree is
+read. Each panel carries the academic year it maps to, the course count, the credits earned and the
+number failed; a year containing a fail takes a red border and header, so the problem year is
+visible before a single row is read. Within a panel, semesters are separated and courses sort by
+code. Results the system cannot place in a study year get their own panel, always last — never
+first, which a naive numeric sort would have done since their year is 0.
+
+A three-year degree is therefore two rows and fits without scrolling. The grid falls to one column
+below 900px, and `align-items:start` keeps a short year from stretching to match the tall one
+beside it.
+
+**The modal is 1180px wide**, up from 880. Two panels side by side in 880px put each year's courses
+in a scrolling sliver. The export dialog keeps its own narrower 660px through `.g-modal--x`: a form
+of six short questions wants the opposite treatment.
+
+**Warnings collapse, blockers do not.** On this data most candidates carry several warnings — 12,829
+of the 14,547-strong backlog are WARN — and an open list of them buried the one or two lines that
+decide the case. What is *blocking* a candidate stays on the face of the verdict; what merely wants
+a look is one click away, with its count on the button.
+
+**A fold bug fixed on the way.** `foldState` read the stored value and then forced any default-open
+section back open whenever it was stored closed:
+
+```js
+if (folds[key] === false && def) folds[key] = true;   // wrong
+```
+
+It could not tell "no stored value" from "stored closed", so a section you deliberately collapsed
+reopened on the next student, every time. It now distinguishes the two, and a remembered choice
+beats the default in both directions.
+
+**Verified** headless against the real shared script with a three-year degree carrying a fail, a
+zero, an unmarked paper and an unplaced result: first block is the year grid; panels read
+`Year 1, Year 2, Year 3, Not placed in a year`; the grid computes to 2 columns at 1280px and 1 at
+820px; the warnings fold starts collapsed, opens on click, persists the choice, and holds all 3
+warnings; the structure fold stays closed and decision history stays open; the Clear button remains
+on screen with a live handler.
