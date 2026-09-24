@@ -1,6 +1,6 @@
 # Graduation Centre — design and build plan
 
-**Status:** plan agreed, not yet built
+**Status:** built — schema, engine, service and interface are in. Not yet exercised by a signed-in user (see §11).
 **Author:** Claude (Opus 5) with the MIS Manager
 **Date:** 2026-09-24
 **Benchmark:** `ResultsExporter.aspx` — its Export Summary Report modal for the filter
@@ -555,6 +555,61 @@ mark entered, a 41 needs a retake. The effect on the calibration cohort:
 Both remaining blocks are correct. `MRU2023000649` (DME) is on the 2024/2025 graduation list with
 **five** failed papers — 28, 31, 33, 34 and 44. That is precisely the name this module exists to
 stop, and it is already on a list.
+
+## 9c. Build verification — 2026-09-24
+
+| Step | Result |
+|---|---|
+| Schema applied | `acad_grad_review` created, `idx_grad_year` added, `acad_graduands` **untouched** (1,621 rows before and after) |
+| Engine compiles | yes |
+| Service compiles | yes |
+| Page compiles, script parses | yes |
+| Endpoints deny an unauthenticated caller | all six, including the write endpoints |
+| Nothing written by those probes | 0 review rows, 1,621 graduands |
+| Sidebar entry | already present from the previous version — no change needed |
+
+### Speed
+
+| query | cost |
+|---|---|
+| Overview — bucketed pass over 14,548 candidates | **0.015 s** |
+| Overview — progress by programme | 0.003 s |
+| Candidates — identify and page | 0.002 s |
+| Candidates — aggregate one page of 100 | 0.082 s |
+| Evidence panel — one student, live | 0.0008 s |
+
+### A bug found in the Overview arithmetic, before anyone saw it
+
+The first cut computed `ready = total − (failed + lowCgpa) − warned − held`, which subtracts a
+student who both fails a paper and sits below the CGPA floor **twice** — 286 students were in
+both buckets, so Ready was understated by that much and the four numbers did not add up to the
+pool. The buckets now partition properly:
+
+| | candidates |
+|---|---|
+| blocked | 1,587 |
+| needs a look | 352 |
+| ready | 12,609 |
+| **total** | **14,548** |
+
+The blocker *table* still overlaps on purpose — it answers "how many would this one problem
+release", not "how do they partition" — and that is now said in the code.
+
+## 11. What has NOT been verified
+
+The interface has never been opened by a signed-in user. eadmin has no master-key login (the
+portal's `1111` is a student-portal feature only), so every check above is a compile, a parse, an
+unauthenticated denial, or SQL measured directly against the database.
+
+What needs a human with an eadmin account:
+
+1. Open the module and confirm each of the four tabs renders.
+2. Confirm the scope line reads correctly for an administrator, a Dean and a HOD, and that a
+   Dean sees only their faculty.
+3. Clear one candidate and confirm the `acad_graduands` row and the `acad_grad_review` row both
+   appear, and that a transcript still prints for that student.
+4. Hold one candidate, confirm the reason is required, then release them.
+5. Confirm a blocked candidate refuses to clear without a justification.
 
 ## 10. Open questions for the MIS Manager
 

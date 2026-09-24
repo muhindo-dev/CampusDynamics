@@ -417,6 +417,169 @@ public static class GraduationEngine
         return sb.Length == 0 ? "''" : sb.ToString();
     }
 
+    // ── Overview ──────────────────────────────────────────
+    public class ProgProgress
+    {
+        public string progcode = "", progname = "", faculty = "";
+        public int candidates = 0, listed = 0, held = 0, blocked = 0;
+    }
+
+    public class GradOverview
+    {
+        public int candidates = 0;       // reached final year, not on any list
+        public int ready = 0;            // nothing blocking
+        public int blocked = 0;          // at least one BLOCK
+        public int held = 0;             // an open hold
+        public int listed = 0;           // on the graduation list for the selected year
+        public int listedAllYears = 0;
+        public int backlogEarlier = 0;   // finished before the selected year and still not listed
+        public List<GC2> blockers = new List<GC2>();
+        public List<ProgProgress> programmes = new List<ProgProgress>();
+        public List<string> integrity = new List<string>();
+    }
+    public class GC2 { public string name = ""; public int count = 0; }
+
+    private static void AddGc(List<GC2> l, string n, int v)
+    { var g = new GC2(); g.name = n; g.count = v; l.Add(g); }
+
+    /// <summary>
+    /// The four numbers at the top of the module, the blocker breakdown beneath them, and the
+    /// per-programme progress table.
+    ///
+    /// Computed set-based. Running the per-candidate assessment over 14,548 students to draw a
+    /// dashboard would be exactly the mistake the Results Exporter was making, and every figure
+    /// here has to reconcile with the list it links to, so the SAME candidacy predicate is used.
+    /// </summary>
+    public static GradOverview Overview(MarksScope scope, GradFilter f)
+    {
+        var o = new GradOverview();
+        if (scope == null || !scope.HasAccess) return o;
+
+        using (var c = new MySqlConnection(Conn()))
+        {
+            c.Open();
+
+            // The candidacy predicate, shared with the list so the two cannot disagree.
+            string cand =
+                " FROM acad_student s JOIN acad_programme p ON p.progcode=s.progid " +
+                " WHERE EXISTS (SELECT 1 FROM acad_results r WHERE r.regno=s.regno " +
+                "   AND r.studyyear >= IFNULL(NULLIF(p.couselength,0),3)) ";
+            var p = new Dictionary<string, object>();
+            var extra = new StringBuilder();
+            if (f.faculty != "") { extra.Append(" AND p.faculty_code=@fac "); p["@fac"] = f.faculty; }
+            int dep;
+            if (f.department != "" && int.TryParse(f.department, out dep))
+            { extra.Append(" AND p.department_id=@dep "); p["@dep"] = dep; }
+            if (f.programme != "") { extra.Append(" AND s.progid=@prog "); p["@prog"] = f.programme; }
+            extra.Append(scope.ProgFilter("s", "progid"));
+            string where = cand + extra;
+            string notListed = " AND NOT EXISTS (SELECT 1 FROM acad_graduands g WHERE g.regno=s.regno) ";
+
+            // One pass over the outstanding candidates, bucketed by what is wrong with them.
+            // The per-student figures are computed in a derived table rather than by joining
+            // acad_results, which would multiply a student by their number of courses.
+            using (var cmd = new MySqlCommand(
+                    // Counted so the buckets PARTITION the pool: a student who both fails a
+                    // paper and sits below the CGPA floor is one blocked student, not two, and
+                    // Ready is what is left after blocked and warned are taken out.
+                    "SELECT COUNT(*) total, SUM(fails>0) blk_fail, SUM(cgpa<2.0) blk_cgpa, " +
+                    " SUM(is_held) held, " +
+                    " SUM(fails>0 OR cgpa<2.0 OR is_held) blocked_any, " +
+                    " SUM(NOT (fails>0 OR cgpa<2.0 OR is_held) AND (zeros>0 OR nulls>0)) warn_marks " +
+                    "FROM ( SELECT s.regno, " +
+                    "  (SELECT COUNT(*) FROM acad_results r2 WHERE r2.regno=s.regno AND r2.score>0 AND r2.score<50) fails, " +
+                    "  (SELECT COUNT(*) FROM acad_results r3 WHERE r3.regno=s.regno AND r3.score=0) zeros, " +
+                    "  (SELECT COUNT(*) FROM acad_results r4 WHERE r4.regno=s.regno AND r4.score IS NULL) nulls, " +
+                    "  IFNULL((SELECT SUM(IFNULL(r5.CreditUnits,0)*IFNULL(r5.gradept,0))/NULLIF(SUM(IFNULL(r5.CreditUnits,0)),0) " +
+                    "          FROM acad_results r5 WHERE r5.regno=s.regno),0) cgpa, " +
+                    "  EXISTS(SELECT 1 FROM acad_grad_review v WHERE v.regno=s.regno AND v.verdict='HELD' AND v.superseded_at IS NULL) is_held " +
+                    where + notListed + " ) z", c))
+            {
+                foreach (KeyValuePair<string, object> kv in p) cmd.Parameters.AddWithValue(kv.Key, kv.Value);
+                using (var r = cmd.ExecuteReader())
+                    if (r.Read())
+                    {
+                        o.candidates = RI(r, 0);
+                        int blkFail = RI(r, 1), blkCgpa = RI(r, 2);
+                        o.held = RI(r, 3);
+                        o.blocked = RI(r, 4);
+                        int warnMarks = RI(r, 5);
+                        o.ready = o.candidates - o.blocked - warnMarks;
+                        if (o.ready < 0) o.ready = 0;
+                        // The blocker table overlaps on purpose - a student can appear in two
+                        // rows of it - because the question it answers is "how many candidates
+                        // would this one problem release", not "how do they partition".
+                        AddGc(o.blockers, "Failed papers (1-49)", blkFail);
+                        AddGc(o.blockers, "CGPA below 2.0", blkCgpa);
+                        AddGc(o.blockers, "Marks of zero, or no mark at all", warnMarks);
+                        AddGc(o.blockers, "Held by a reviewer", o.held);
+                    }
+            }
+
+            // On the list for the selected year, and overall.
+            using (var cmd = new MySqlCommand(
+                "SELECT COUNT(*) FROM acad_graduands g JOIN acad_student s ON s.regno=g.regno " +
+                "JOIN acad_programme p ON p.progcode=s.progid WHERE 1=1 " +
+                (f.acadYear == "" ? "" : " AND g.acadyear=@ay ") + extra, c))
+            {
+                if (f.acadYear != "") cmd.Parameters.AddWithValue("@ay", f.acadYear);
+                foreach (KeyValuePair<string, object> kv in p) cmd.Parameters.AddWithValue(kv.Key, kv.Value);
+                object v = cmd.ExecuteScalar();
+                o.listed = v == null || v == DBNull.Value ? 0 : Convert.ToInt32(v);
+            }
+
+            // Per-programme progress. A Dean's week before Senate is spent in this table.
+            using (var cmd = new MySqlCommand(
+                "SELECT TRIM(s.progid) pc, MAX(IFNULL(p.progname,'')) pn, MAX(IFNULL(p.faculty_code,'')) fc, " +
+                " COUNT(*) cand, " +
+                " SUM(EXISTS(SELECT 1 FROM acad_graduands g WHERE g.regno=s.regno)) listed, " +
+                " SUM(EXISTS(SELECT 1 FROM acad_grad_review v WHERE v.regno=s.regno AND v.verdict='HELD' AND v.superseded_at IS NULL)) held, " +
+                " SUM((SELECT COUNT(*) FROM acad_results r2 WHERE r2.regno=s.regno AND r2.score>0 AND r2.score<50)>0) blocked " +
+                where + " GROUP BY pc ORDER BY cand DESC LIMIT 60", c))
+            {
+                foreach (KeyValuePair<string, object> kv in p) cmd.Parameters.AddWithValue(kv.Key, kv.Value);
+                using (var r = cmd.ExecuteReader())
+                    while (r.Read())
+                    {
+                        var pp = new ProgProgress();
+                        pp.progcode = RS(r, 0); pp.progname = RS(r, 1); pp.faculty = RS(r, 2);
+                        pp.candidates = RI(r, 3); pp.listed = RI(r, 4); pp.held = RI(r, 5); pp.blocked = RI(r, 6);
+                        o.programmes.Add(pp);
+                    }
+            }
+
+            // Data-integrity notices. Reported, never auto-corrected: taking a name off a
+            // graduation list is a Registrar's decision, not a script's.
+            try
+            {
+                using (var cmd = new MySqlCommand(
+                    "SELECT COUNT(*) FROM acad_graduands g JOIN acad_student s ON s.regno=g.regno " +
+                    "JOIN acad_programme p ON p.progcode=s.progid " +
+                    "WHERE IFNULL((SELECT MAX(r.studyyear) FROM acad_results r WHERE r.regno=g.regno),0) " +
+                    " < IFNULL(NULLIF(p.couselength,0),3)" + extra, c))
+                {
+                    foreach (KeyValuePair<string, object> kv in p) cmd.Parameters.AddWithValue(kv.Key, kv.Value);
+                    object v = cmd.ExecuteScalar();
+                    int bad = v == null || v == DBNull.Value ? 0 : Convert.ToInt32(v);
+                    if (bad > 0)
+                        o.integrity.Add(bad + " name" + (bad == 1 ? " is" : "s are") +
+                            " already on a graduation list without having reached the final year of their programme.");
+                }
+                using (var cmd = new MySqlCommand(
+                    "SELECT COUNT(*) FROM (SELECT regno FROM acad_graduands GROUP BY regno HAVING COUNT(*)>1) x", c))
+                {
+                    object v = cmd.ExecuteScalar();
+                    int dup = v == null || v == DBNull.Value ? 0 : Convert.ToInt32(v);
+                    if (dup > 0)
+                        o.integrity.Add(dup + " student" + (dup == 1 ? " appears" : "s appear") +
+                            " on a graduation list more than once.");
+                }
+            }
+            catch { }
+        }
+        return o;
+    }
+
     // ── The checks ───────────────────────────────────────────────────
     private static void Add(GradCandidate g, string code, string name, string level, string detail)
     {

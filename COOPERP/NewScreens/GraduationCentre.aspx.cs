@@ -1,472 +1,386 @@
 using System;
-using System.Data;
-using System.Web.UI;
-using System.Web.UI.WebControls;
-using MySql.Data.MySqlClient;
+using System.Collections.Generic;
 using System.Configuration;
+using System.Web.Script.Serialization;
+using System.Web.Services;
+using MySql.Data.MySqlClient;
 
+// =====================================================================
+//  Graduation Centre — the page.
+//  Plan: COOPERP/NewScreens/GRADUATION_CENTRE_PLAN.md
+//
+//  This file is transport only: authorise, unpack the request, call the
+//  engine or the service, serialise the answer. Not one number is
+//  computed here. Every figure on screen comes from GraduationEngine, so
+//  that the dashboard and the list it links to cannot disagree.
+//
+//  Replaces the January 2026 DevExpress version of this page. The tables
+//  it wrote to are unchanged: a student is on the graduation list if and
+//  only if they have an acad_graduands row, exactly as before, so
+//  transcripts, certificates and AlumniDataBank are unaffected.
+// =====================================================================
 public partial class COOPERP_NewScreens_GraduationCentre : System.Web.UI.Page
 {
-    private string connectionString = ConfigurationManager.ConnectionStrings["vacConnectionString"].ConnectionString;
+    private static readonly JavaScriptSerializer J = new JavaScriptSerializer();
 
-    protected void Page_Load(object sender, EventArgs e)
+    private static string Conn()
+    { return ConfigurationManager.ConnectionStrings["vacConnectionString"].ConnectionString; }
+
+    protected void Page_Load(object sender, EventArgs e) { }
+
+    private static string Denied()
     {
-        if (!IsPostBack)
+        return J.Serialize(new
         {
-            LoadFilters();
-            SetDefaultFilters();
-            LoadGraduandsData();
+            success = false,
+            hasAccess = false,
+            message = "Your account is not linked to a faculty or department, so no graduation data is available."
+        });
+    }
+
+    private static GraduationEngine.GradFilter Parse(string json)
+    {
+        var f = new GraduationEngine.GradFilter();
+        if (string.IsNullOrEmpty(json)) return f;
+        try
+        {
+            var d = J.Deserialize<Dictionary<string, object>>(json);
+            f.acadYear = S(d, "acadYear");
+            f.faculty = S(d, "faculty");
+            f.department = S(d, "department");
+            f.programme = S(d, "programme");
+            f.entryYear = S(d, "entryYear");
+            f.finishedIn = S(d, "finishedIn");
+            f.search = S(d, "search");
+            string st = S(d, "state"); if (st != "") f.state = st;
+            f.readiness = S(d, "readiness");
+            string so = S(d, "sort"); if (so != "") f.sort = so;
+            int n;
+            if (int.TryParse(S(d, "page"), out n) && n > 0) f.page = n;
+            if (int.TryParse(S(d, "size"), out n) && n > 0) f.size = n;
         }
+        catch { }
+        return f;
     }
 
-    protected void LoadFilters()
+    private static string S(Dictionary<string, object> d, string k)
+    { object o; return d != null && d.TryGetValue(k, out o) && o != null ? o.ToString().Trim() : ""; }
+
+    // ── Bootstrap: scope, and the filter lists that cascade ──────────
+    [WebMethod(EnableSession = true)]
+    public static string GetBootstrap()
     {
-        // Load Faculties
-        using (MySqlConnection conn = new MySqlConnection(connectionString))
+        try
         {
-            conn.Open();
+            MarksScope scope = MarksScopeResolver.Resolve();
+            if (!scope.HasAccess) return Denied();
 
-            // Faculties
-            string sqlFaculty = "SELECT DISTINCT faculty_code, faculty_name FROM acad_faculty ORDER BY faculty_name";
-            using (MySqlCommand cmd = new MySqlCommand(sqlFaculty, conn))
+            var years = new List<string>();
+            var faculties = new List<object>();
+            var departments = new List<object>();
+            var programmes = new List<object>();
+            string currentYear = "";
+
+            using (var c = new MySqlConnection(Conn()))
             {
-                using (MySqlDataReader dr = cmd.ExecuteReader())
-                {
-                    ddlFaculty.Items.Clear();
-                    ddlFaculty.Items.Add(new ListItem("-- All Faculties --", ""));
-                    while (dr.Read())
-                    {
-                        ddlFaculty.Items.Add(new ListItem(dr["faculty_name"].ToString(), dr["faculty_code"].ToString()));
-                    }
-                }
+                c.Open();
+                // Graduation years already in use, plus the academic years results exist for,
+                // so a list can be started for a year nobody has graduated in yet.
+                using (var cmd = new MySqlCommand(
+                    "SELECT y FROM ( " +
+                    "  SELECT DISTINCT acadyear y FROM acad_graduands WHERE acadyear REGEXP '^[0-9]{4}/[0-9]{4}$' " +
+                    "  UNION SELECT DISTINCT acad FROM acad_results WHERE acad REGEXP '^[0-9]{4}/[0-9]{4}$' " +
+                    ") z ORDER BY y DESC", c))
+                using (var r = cmd.ExecuteReader())
+                    while (r.Read()) years.Add(r[0].ToString());
+
+                if (years.Count > 0) currentYear = years[0];
+
+                string pf = scope.ProgFilterExpr("p.progcode");
+                using (var cmd = new MySqlCommand(
+                    "SELECT TRIM(f.faculty_code) fc, f.faculty_name FROM acad_faculty f " +
+                    "WHERE EXISTS (SELECT 1 FROM acad_programme p WHERE TRIM(p.faculty_code)=TRIM(f.faculty_code)" + pf + ") " +
+                    "ORDER BY f.faculty_name", c))
+                using (var r = cmd.ExecuteReader())
+                    while (r.Read()) faculties.Add(new { v = r[0].ToString(), t = r[1].ToString() });
+
+                using (var cmd = new MySqlCommand(
+                    "SELECT d.ID, d.dept_name, TRIM(IFNULL(d.faculty_code,'')) fc FROM hrm_departments d " +
+                    "WHERE EXISTS (SELECT 1 FROM acad_programme p WHERE p.department_id=d.ID" + pf + ") " +
+                    "ORDER BY d.dept_name", c))
+                using (var r = cmd.ExecuteReader())
+                    while (r.Read()) departments.Add(new { v = r[0].ToString(), t = r[1].ToString(), fac = r[2].ToString() });
+
+                using (var cmd = new MySqlCommand(
+                    "SELECT TRIM(p.progcode) pc, COALESCE(p.progname,p.progcode) pn, " +
+                    " TRIM(IFNULL(p.faculty_code,'')) fc, IFNULL(p.department_id,0) dep " +
+                    "FROM acad_programme p WHERE TRIM(IFNULL(p.progcode,''))<>'' AND p.progcode<>'-'" + pf +
+                    " ORDER BY pn", c))
+                using (var r = cmd.ExecuteReader())
+                    while (r.Read())
+                        programmes.Add(new { v = r[0].ToString(), t = r[1].ToString(), fac = r[2].ToString(), dep = r[3].ToString() });
             }
 
-            // Entry Years (last 10 years)
-            ddlEntryYear.Items.Clear();
-            ddlEntryYear.Items.Add(new ListItem("-- All --", ""));
-            int currentYear = DateTime.Now.Year;
-            for (int i = currentYear; i >= currentYear - 10; i--)
+            return J.Serialize(new
             {
-                ddlEntryYear.Items.Add(new ListItem(i.ToString(), i.ToString()));
-            }
-
-            // Academic Years (generated programmatically)
-            ddlAcadYear.Items.Clear();
-            ddlAcadYear.Items.Add(new ListItem("-- All --", ""));
-            for (int i = currentYear + 1; i >= currentYear - 10; i--)
-            {
-                string acadYear = string.Format("{0}/{1}", i, i + 1);
-                ddlAcadYear.Items.Add(new ListItem(acadYear, acadYear));
-            }
+                success = true,
+                hasAccess = true,
+                scopeLabel = scope.Label,
+                roleNote = scope.RoleNote,
+                canAct = true,
+                years = years,
+                currentYear = currentYear,
+                faculties = faculties,
+                departments = departments,
+                programmes = programmes
+            });
         }
+        catch (Exception ex) { return J.Serialize(new { success = false, message = ex.Message }); }
     }
 
-    protected void SetDefaultFilters()
+    [WebMethod(EnableSession = true)]
+    public static string GetOverview(string configJson)
     {
-        // Set default academic year to current
-        string currentAcadYear = GetCurrentAcadYear();
-        if (!string.IsNullOrEmpty(currentAcadYear) && ddlAcadYear.Items.FindByValue(currentAcadYear) != null)
+        try
         {
-            ddlAcadYear.SelectedValue = currentAcadYear;
+            MarksScope scope = MarksScopeResolver.Resolve();
+            if (!scope.HasAccess) return Denied();
+            GraduationEngine.GradOverview o = GraduationEngine.Overview(scope, Parse(configJson));
+            return J.Serialize(new { success = true, overview = o });
         }
-
-        // Update display
-        litAcadYearDisplay.Text = string.IsNullOrEmpty(ddlAcadYear.SelectedValue) ? "All" : ddlAcadYear.SelectedValue;
-        litStudyYearDisplay.Text = string.IsNullOrEmpty(ddlStudyYear.SelectedValue) ? "All" : ddlStudyYear.SelectedValue;
+        catch (Exception ex) { return J.Serialize(new { success = false, message = ex.Message }); }
     }
 
-    private string GetCurrentAcadYear()
+    [WebMethod(EnableSession = true)]
+    public static string GetCandidates(string configJson)
     {
-        int year = DateTime.Now.Year;
-        int month = DateTime.Now.Month;
-        
-        // If we're in the second half of the year (August onwards), the academic year is current/next
-        if (month >= 8)
-            return string.Format("{0}/{1}", year, year + 1);
-        else
-            return string.Format("{0}/{1}", year - 1, year);
-    }
-
-    protected void ddlFaculty_SelectedIndexChanged(object sender, EventArgs e)
-    {
-        LoadProgrammes();
-        LoadGraduandsData();
-    }
-
-    protected void LoadProgrammes()
-    {
-        using (MySqlConnection conn = new MySqlConnection(connectionString))
+        try
         {
-            conn.Open();
-            string sql = "SELECT progcode, progname FROM acad_programme WHERE 1=1";
-            if (!string.IsNullOrEmpty(ddlFaculty.SelectedValue))
+            MarksScope scope = MarksScopeResolver.Resolve();
+            if (!scope.HasAccess) return Denied();
+            GraduationEngine.GradFilter f = Parse(configJson);
+            int total;
+            List<GradCandidate> rows = GraduationEngine.Page(scope, f, out total);
+            return J.Serialize(new
             {
-                sql += " AND faculty_code = @fac";
-            }
-            sql += " ORDER BY progname";
-
-            using (MySqlCommand cmd = new MySqlCommand(sql, conn))
-            {
-                if (!string.IsNullOrEmpty(ddlFaculty.SelectedValue))
-                {
-                    cmd.Parameters.AddWithValue("@fac", ddlFaculty.SelectedValue);
-                }
-
-                using (MySqlDataReader dr = cmd.ExecuteReader())
-                {
-                    ddlProgramme.Items.Clear();
-                    ddlProgramme.Items.Add(new ListItem("-- All Programmes --", ""));
-                    while (dr.Read())
-                    {
-                        ddlProgramme.Items.Add(new ListItem(dr["progname"].ToString(), dr["progcode"].ToString()));
-                    }
-                }
-            }
+                success = true,
+                rows = rows,
+                total = total,
+                page = f.page,
+                size = f.size,
+                pages = (total + f.size - 1) / f.size
+            });
         }
+        catch (Exception ex) { return J.Serialize(new { success = false, message = ex.Message }); }
     }
 
-    protected void ddlProgramme_SelectedIndexChanged(object sender, EventArgs e)
+    /// <summary>
+    /// One student, assessed live, with the programme structure beside their results so a
+    /// missing course reads as a gap rather than as a smaller total.
+    /// </summary>
+    [WebMethod(EnableSession = true)]
+    public static string GetStudent(string regno)
     {
-        LoadGraduandsData();
-    }
-
-    protected void ddlEntryYear_SelectedIndexChanged(object sender, EventArgs e)
-    {
-        LoadGraduandsData();
-    }
-
-    protected void ddlAcadYear_SelectedIndexChanged(object sender, EventArgs e)
-    {
-        litAcadYearDisplay.Text = string.IsNullOrEmpty(ddlAcadYear.SelectedValue) ? "All" : ddlAcadYear.SelectedValue;
-        LoadGraduandsData();
-    }
-
-    protected void ddlStudyYear_SelectedIndexChanged(object sender, EventArgs e)
-    {
-        litStudyYearDisplay.Text = string.IsNullOrEmpty(ddlStudyYear.SelectedValue) ? "All" : ddlStudyYear.SelectedValue;
-        LoadGraduandsData();
-    }
-
-    protected void ddlStatus_SelectedIndexChanged(object sender, EventArgs e)
-    {
-        LoadGraduandsData();
-    }
-
-    protected void btnRefresh_Click(object sender, EventArgs e)
-    {
-        LoadGraduandsData();
-    }
-
-    protected void LoadGraduandsData()
-    {
-        using (MySqlConnection conn = new MySqlConnection(connectionString))
+        try
         {
-            conn.Open();
+            MarksScope scope = MarksScopeResolver.Resolve();
+            if (!scope.HasAccess) return Denied();
+            regno = (regno ?? "").Trim();
+            if (regno == "") return J.Serialize(new { success = false, message = "No student was given." });
 
-            // Build query to get students eligible for graduation with their current status
-            // CGPA is retrieved from acad_graduands if already a graduand, otherwise shows as 0 (to be calculated when adding)
-            // Study year comes from acad_registration table (MAX to get latest)
-            string sql = @"
-                SELECT 
-                    s.regno,
-                    CONCAT(s.firstname, ' ', IFNULL(s.othername, '')) AS stud_name,
-                    p.progname AS prog_name,
-                    s.entryyear AS entry_year,
-                    IFNULL(r.study_year, 1) AS study_year,
-                    IFNULL(g.cgpa, 0) AS cgpa,
-                    CASE 
-                        WHEN g.degclass IS NOT NULL THEN g.degclass
-                        WHEN IFNULL(g.cgpa, 0) >= 3.6 THEN 'First Class'
-                        WHEN IFNULL(g.cgpa, 0) >= 3.0 THEN 'Second Class Upper'
-                        WHEN IFNULL(g.cgpa, 0) >= 2.5 THEN 'Second Class Lower'
-                        WHEN IFNULL(g.cgpa, 0) >= 2.0 THEN 'Pass'
-                        ELSE '-'
-                    END AS award_class,
-                    CASE 
-                        WHEN IFNULL(r.study_year, 1) >= COALESCE(p.couselength, 3) THEN 'Completed'
-                        ELSE 'In Progress'
-                    END AS completion_status,
-                    IFNULL(s.gender, '') AS gender,
-                    IFNULL(s.nationality, '') AS nationality,
-                    CASE WHEN g.regno IS NOT NULL THEN 'Yes' ELSE 'No' END AS is_graduand
-                FROM acad_student s
-                LEFT JOIN acad_programme p ON s.progid = p.progcode
-                LEFT JOIN (SELECT regno, MAX(studyyear) AS study_year FROM acad_registration GROUP BY regno) r ON s.regno = r.regno
-                LEFT JOIN acad_graduands g ON s.regno = g.regno
-                WHERE (s.stud_status = 'Active' OR s.new_status = 'Active')";
+            var results = new List<object>();
+            var structure = new List<object>();
+            var history = new List<object>();
+            GradCandidate g;
 
-            // Apply filters
-            if (!string.IsNullOrEmpty(ddlFaculty.SelectedValue))
+            using (var c = new MySqlConnection(Conn()))
             {
-                sql += " AND p.faculty_code = @fac";
-            }
-            if (!string.IsNullOrEmpty(ddlProgramme.SelectedValue))
-            {
-                sql += " AND s.progid = @prog";
-            }
-            if (!string.IsNullOrEmpty(ddlEntryYear.SelectedValue))
-            {
-                sql += " AND s.entryyear = @entry";
-            }
-            if (!string.IsNullOrEmpty(ddlStudyYear.SelectedValue))
-            {
-                sql += " AND r.study_year = @study";
-            }
-            if (ddlStatus.SelectedValue == "GRAD")
-            {
-                sql += " AND g.regno IS NOT NULL";
-            }
+                c.Open();
+                g = GraduationService.Load(c, scope, regno);
+                if (g == null) return J.Serialize(new { success = false, message = "No student record for " + regno + "." });
+                if (!scope.AllowsProg(g.progcode))
+                    return J.Serialize(new { success = false, message = "That student is outside the programmes you can see." });
 
-            sql += " ORDER BY s.regno";
-
-            using (MySqlCommand cmd = new MySqlCommand(sql, conn))
-            {
-                if (!string.IsNullOrEmpty(ddlFaculty.SelectedValue))
-                    cmd.Parameters.AddWithValue("@fac", ddlFaculty.SelectedValue);
-                if (!string.IsNullOrEmpty(ddlProgramme.SelectedValue))
-                    cmd.Parameters.AddWithValue("@prog", ddlProgramme.SelectedValue);
-                if (!string.IsNullOrEmpty(ddlEntryYear.SelectedValue))
-                    cmd.Parameters.AddWithValue("@entry", int.Parse(ddlEntryYear.SelectedValue));
-                if (!string.IsNullOrEmpty(ddlStudyYear.SelectedValue))
-                    cmd.Parameters.AddWithValue("@study", int.Parse(ddlStudyYear.SelectedValue));
-
-                using (MySqlDataAdapter da = new MySqlDataAdapter(cmd))
+                using (var cmd = new MySqlCommand(
+                    "SELECT r.acad, r.studyyear, r.semester, r.courseid, IFNULL(c2.courseName,'') cn, " +
+                    " IFNULL(r.CreditUnits,0) cu, r.score, IFNULL(r.grade,'') gr, IFNULL(r.gradept,0) gp " +
+                    "FROM acad_results r LEFT JOIN acad_course c2 ON c2.courseID=r.courseid " +
+                    "WHERE r.regno=@r ORDER BY r.acad DESC, r.studyyear DESC, r.semester, r.courseid", c))
                 {
-                    DataTable dt = new DataTable();
-                    da.Fill(dt);
-
-                    gvGraduands.DataSource = dt;
-                    gvGraduands.DataBind();
-
-                    // Update stats
-                    litTotalCount.Text = dt.Rows.Count.ToString();
-
-                    int completedCount = 0;
-                    int graduandsCount = 0;
-                    foreach (DataRow row in dt.Rows)
-                    {
-                        if (row["completion_status"].ToString() == "Completed")
-                            completedCount++;
-                        if (row["is_graduand"].ToString() == "Yes")
-                            graduandsCount++;
-                    }
-                    litCompletedCount.Text = completedCount.ToString();
-                    litGraduandsCount.Text = graduandsCount.ToString();
-                }
-            }
-        }
-    }
-
-    protected void btnAddGraduands_Click(object sender, EventArgs e)
-    {
-        var selectedKeys = gvGraduands.GetSelectedFieldValues("regno");
-        if (selectedKeys.Count == 0)
-        {
-            ShowMessage("Please select at least one student.", "warning");
-            return;
-        }
-
-        int addedCount = 0;
-        string acadYear = !string.IsNullOrEmpty(ddlAcadYear.SelectedValue) ? ddlAcadYear.SelectedValue : GetCurrentAcadYear();
-        string username = Session["username"] != null ? Session["username"].ToString() : "system";
-
-        using (MySqlConnection conn = new MySqlConnection(connectionString))
-        {
-            conn.Open();
-
-            foreach (var key in selectedKeys)
-            {
-                string regno = key.ToString();
-
-                // Check if already a graduand
-                string checkSql = "SELECT COUNT(*) FROM acad_graduands WHERE regno = @regno";
-                using (MySqlCommand checkCmd = new MySqlCommand(checkSql, conn))
-                {
-                    checkCmd.Parameters.AddWithValue("@regno", regno);
-                    if (Convert.ToInt32(checkCmd.ExecuteScalar()) > 0)
-                        continue;
-                }
-
-                // Get student details (basic info without CGPA - CGPA will be calculated via stored procedure)
-                // Study year from acad_registration table
-                string detailSql = @"SELECT s.regno, CONCAT(s.firstname, ' ', IFNULL(s.othername, '')) AS stud_name, 
-                                    s.progid, IFNULL(s.gender, '') AS gender, 
-                                    IFNULL((SELECT MAX(studyyear) FROM acad_registration WHERE regno = s.regno), 1) AS study_year
-                                    FROM acad_student s
-                                    WHERE s.regno = @regno";
-
-                DataTable dtStudent = new DataTable();
-                using (MySqlCommand detailCmd = new MySqlCommand(detailSql, conn))
-                {
-                    detailCmd.Parameters.AddWithValue("@regno", regno);
-                    using (MySqlDataAdapter da = new MySqlDataAdapter(detailCmd))
-                    {
-                        da.Fill(dtStudent);
-                    }
-                }
-
-                if (dtStudent.Rows.Count > 0)
-                {
-                    DataRow row = dtStudent.Rows[0];
-                    int studyYear = row["study_year"] != DBNull.Value ? Convert.ToInt32(row["study_year"]) : 1;
-                    
-                    // Calculate CGPA using stored procedure (get latest semester's CGPA)
-                    decimal cgpa = 0;
-                    try
-                    {
-                        using (MySqlCommand cmdCgpa = new MySqlCommand("acad_SemesterSummary", conn))
-                        {
-                            cmdCgpa.CommandType = CommandType.StoredProcedure;
-                            cmdCgpa.Parameters.AddWithValue("@reg", regno);
-                            cmdCgpa.Parameters.AddWithValue("@yr", studyYear);
-                            cmdCgpa.Parameters.AddWithValue("@sem", 2); // Try semester 2 first
-                            
-                            using (MySqlDataReader reader = cmdCgpa.ExecuteReader())
+                    cmd.Parameters.AddWithValue("@r", regno);
+                    using (var r = cmd.ExecuteReader())
+                        while (r.Read())
+                            results.Add(new
                             {
-                                if (reader.Read() && reader["cgpa"] != DBNull.Value)
-                                {
-                                    cgpa = Convert.ToDecimal(reader["cgpa"]);
-                                }
-                            }
-                        }
-                        
-                        // If no CGPA from sem 2, try sem 1
-                        if (cgpa == 0)
-                        {
-                            using (MySqlCommand cmdCgpa = new MySqlCommand("acad_SemesterSummary", conn))
-                            {
-                                cmdCgpa.CommandType = CommandType.StoredProcedure;
-                                cmdCgpa.Parameters.AddWithValue("@reg", regno);
-                                cmdCgpa.Parameters.AddWithValue("@yr", studyYear);
-                                cmdCgpa.Parameters.AddWithValue("@sem", 1);
-                                
-                                using (MySqlDataReader reader = cmdCgpa.ExecuteReader())
-                                {
-                                    if (reader.Read() && reader["cgpa"] != DBNull.Value)
-                                    {
-                                        cgpa = Convert.ToDecimal(reader["cgpa"]);
-                                    }
-                                }
-                            }
-                        }
-                    }
-                    catch { /* CGPA calculation failed, will use 0 */ }
-                    
-                    string degClass = GetDegreeClass(cgpa);
-
-                    // Insert graduand
-                    string insertSql = @"INSERT INTO acad_graduands (regno, convocation, comp_date, grad_date, cgpa, degclass, stud_name, progcode, gen, created_by, created_date)
-                                        VALUES (@regno, @acad, NOW(), NULL, @cgpa, @degclass, @stud_name, @progcode, @gen, @usr, NOW())";
-
-                    using (MySqlCommand insertCmd = new MySqlCommand(insertSql, conn))
-                    {
-                        insertCmd.Parameters.AddWithValue("@regno", regno);
-                        insertCmd.Parameters.AddWithValue("@acad", acadYear);
-                        insertCmd.Parameters.AddWithValue("@cgpa", cgpa);
-                        insertCmd.Parameters.AddWithValue("@degclass", degClass);
-                        insertCmd.Parameters.AddWithValue("@stud_name", row["stud_name"]);
-                        insertCmd.Parameters.AddWithValue("@progcode", row["progid"]);
-                        insertCmd.Parameters.AddWithValue("@gen", row["gender"]);
-                        insertCmd.Parameters.AddWithValue("@usr", username);
-
-                        try
-                        {
-                            insertCmd.ExecuteNonQuery();
-                            addedCount++;
-                        }
-                        catch (Exception ex)
-                        {
-                            // Log error but continue
-                            System.Diagnostics.Debug.WriteLine("Error adding graduand: " + ex.Message);
-                        }
-                    }
+                                acad = r[0].ToString(),
+                                sy = r[1].ToString(),
+                                sem = r[2].ToString(),
+                                code = r[3].ToString(),
+                                name = r[4].ToString(),
+                                cu = Convert.ToDouble(r[5]),
+                                score = r.IsDBNull(6) ? (object)null : Convert.ToInt32(r[6]),
+                                grade = r[7].ToString(),
+                                gp = Convert.ToDouble(r[8])
+                            });
                 }
-            }
-        }
 
-        gvGraduands.Selection.UnselectAll();
-        LoadGraduandsData();
-        ShowMessage(string.Format("Successfully added {0} student(s) to graduands list.", addedCount), "success");
-    }
-
-    protected void btnRemoveGraduands_Click(object sender, EventArgs e)
-    {
-        var selectedKeys = gvGraduands.GetSelectedFieldValues("regno");
-        if (selectedKeys.Count == 0)
-        {
-            ShowMessage("Please select at least one graduand to remove.", "warning");
-            return;
-        }
-
-        int removedCount = 0;
-        string username = Session["username"] != null ? Session["username"].ToString() : "system";
-
-        using (MySqlConnection conn = new MySqlConnection(connectionString))
-        {
-            conn.Open();
-
-            foreach (var key in selectedKeys)
-            {
-                string regno = key.ToString();
-
-                string deleteSql = "DELETE FROM acad_graduands WHERE regno = @regno";
-                using (MySqlCommand deleteCmd = new MySqlCommand(deleteSql, conn))
+                // The programme structure, marked against what the student actually has. Only
+                // shown when a real specialisation resolves — otherwise it would be a list of
+                // courses from somebody else's curriculum.
+                if (!g.specIsPlaceholder)
                 {
-                    deleteCmd.Parameters.AddWithValue("@regno", regno);
-                    int affected = deleteCmd.ExecuteNonQuery();
-                    if (affected > 0)
-                        removedCount++;
+                    using (var cmd = new MySqlCommand(
+                        "SELECT pc.study_year, pc.semester, pc.course_code, IFNULL(ac.courseName,'') cn, " +
+                        " IFNULL(ac.CreditUnit,0) cu, pc.course_type, " +
+                        " (SELECT r.score FROM acad_results r WHERE r.regno=@r AND r.courseid=pc.course_code LIMIT 1) score " +
+                        "FROM acad_programmecourses pc LEFT JOIN acad_course ac ON ac.courseID=pc.course_code " +
+                        "WHERE pc.progcode=@p AND IFNULL(pc.specialisation_id,0)=@sp AND pc.status='Active' " +
+                        "ORDER BY pc.study_year, pc.semester, pc.course_code", c))
+                    {
+                        cmd.Parameters.AddWithValue("@r", regno);
+                        cmd.Parameters.AddWithValue("@p", g.progcode);
+                        cmd.Parameters.AddWithValue("@sp", g.specialisation);
+                        using (var r = cmd.ExecuteReader())
+                            while (r.Read())
+                                structure.Add(new
+                                {
+                                    sy = r[0].ToString(),
+                                    sem = r[1].ToString(),
+                                    code = r[2].ToString(),
+                                    name = r[3].ToString(),
+                                    cu = Convert.ToDouble(r[4]),
+                                    type = r[5].ToString(),
+                                    score = r.IsDBNull(6) ? (object)null : Convert.ToInt32(r[6])
+                                });
+                    }
+                }
+
+                using (var cmd = new MySqlCommand(
+                    "SELECT verdict, IFNULL(reason,''), actor, IFNULL(actor_role,''), " +
+                    " DATE_FORMAT(created_at,'%e %b %Y, %H:%i'), acadyear, " +
+                    " IF(superseded_at IS NULL,1,0) inforce " +
+                    "FROM acad_grad_review WHERE regno=@r ORDER BY id DESC LIMIT 40", c))
+                {
+                    cmd.Parameters.AddWithValue("@r", regno);
+                    using (var r = cmd.ExecuteReader())
+                        while (r.Read())
+                            history.Add(new
+                            {
+                                verdict = r[0].ToString(),
+                                reason = r[1].ToString(),
+                                actor = r[2].ToString(),
+                                role = r[3].ToString(),
+                                at = r[4].ToString(),
+                                year = r[5].ToString(),
+                                inForce = Convert.ToInt32(r[6]) == 1
+                            });
                 }
             }
+
+            return J.Serialize(new
+            {
+                success = true,
+                student = g,
+                results = results,
+                structure = structure,
+                history = history
+            });
         }
-
-        gvGraduands.Selection.UnselectAll();
-        LoadGraduandsData();
-        ShowMessage(string.Format("Successfully removed {0} student(s) from graduands list.", removedCount), "success");
+        catch (Exception ex) { return J.Serialize(new { success = false, message = ex.Message }); }
     }
 
-    protected void btnExportExcel_Click(object sender, EventArgs e)
+    /// <summary>The graduation list itself, with who cleared each name and when.</summary>
+    [WebMethod(EnableSession = true)]
+    public static string GetGraduationList(string configJson)
     {
-        gvExporter.WriteXlsxToResponse("GraduationCentre_" + DateTime.Now.ToString("yyyyMMdd"));
+        try
+        {
+            MarksScope scope = MarksScopeResolver.Resolve();
+            if (!scope.HasAccess) return Denied();
+            GraduationEngine.GradFilter f = Parse(configJson);
+
+            var rows = new List<object>();
+            using (var c = new MySqlConnection(Conn()))
+            {
+                c.Open();
+                var ps = new List<string>();
+                string w = " WHERE 1=1 ";
+                if (f.acadYear != "") { w += " AND g.acadyear=@ay "; ps.Add("@ay"); }
+                if (f.faculty != "") { w += " AND p.faculty_code=@fac "; ps.Add("@fac"); }
+                if (f.programme != "") { w += " AND g.progcode=@prog "; ps.Add("@prog"); }
+                if (f.search != "") { w += " AND (g.regno LIKE @q OR g.stud_name LIKE @q) "; ps.Add("@q"); }
+                w += scope.ProgFilter("g", "progcode");
+
+                using (var cmd = new MySqlCommand(
+                    "SELECT g.regno, g.stud_name, g.progcode, IFNULL(p.progname,'') pn, g.cgpa, g.degclass, " +
+                    " g.acadyear, IFNULL(g.gender,''), IFNULL(g.nationality,''), " +
+                    " IFNULL(g.trans_status,''), IFNULL(g.cert_status,''), " +
+                    " IFNULL((SELECT v.actor FROM acad_grad_review v WHERE v.regno=g.regno AND v.verdict='CLEARED' " +
+                    "         ORDER BY v.id DESC LIMIT 1),'') cleared_by, " +
+                    " IFNULL((SELECT DATE_FORMAT(v.created_at,'%e %b %Y') FROM acad_grad_review v " +
+                    "         WHERE v.regno=g.regno AND v.verdict='CLEARED' ORDER BY v.id DESC LIMIT 1),'') cleared_at " +
+                    "FROM acad_graduands g LEFT JOIN acad_programme p ON p.progcode=g.progcode " +
+                    w + " ORDER BY p.progname, g.stud_name LIMIT 3000", c))
+                {
+                    if (ps.Contains("@ay")) cmd.Parameters.AddWithValue("@ay", f.acadYear);
+                    if (ps.Contains("@fac")) cmd.Parameters.AddWithValue("@fac", f.faculty);
+                    if (ps.Contains("@prog")) cmd.Parameters.AddWithValue("@prog", f.programme);
+                    if (ps.Contains("@q")) cmd.Parameters.AddWithValue("@q", "%" + f.search + "%");
+                    using (var r = cmd.ExecuteReader())
+                        while (r.Read())
+                            rows.Add(new
+                            {
+                                regno = r[0].ToString(),
+                                name = r[1].ToString(),
+                                progcode = r[2].ToString(),
+                                progname = r[3].ToString(),
+                                cgpa = Convert.ToDouble(r[4]),
+                                degclass = r[5].ToString(),
+                                year = r[6].ToString(),
+                                gender = r[7].ToString(),
+                                nationality = r[8].ToString(),
+                                transStatus = r[9].ToString(),
+                                certStatus = r[10].ToString(),
+                                clearedBy = r[11].ToString(),
+                                clearedAt = r[12].ToString()
+                            });
+                }
+            }
+            return J.Serialize(new { success = true, rows = rows, total = rows.Count });
+        }
+        catch (Exception ex) { return J.Serialize(new { success = false, message = ex.Message }); }
     }
 
-    protected void btnPrintList_Click(object sender, EventArgs e)
+    // ── Decisions. Every one re-checks scope inside the service. ─────
+    [WebMethod(EnableSession = true)]
+    public static string ClearStudent(string regno, string acadYear, string note, bool overrideBlock)
     {
-        // Print functionality - could open a print-friendly view
-        ScriptManager.RegisterStartupScript(this, GetType(), "print", "window.print();", true);
+        MarksScope scope = MarksScopeResolver.Resolve();
+        if (!scope.HasAccess) return Denied();
+        return GraduationService.Clear(scope, regno, acadYear, note, overrideBlock);
     }
 
-    private string GetDegreeClass(decimal cgpa)
+    [WebMethod(EnableSession = true)]
+    public static string HoldStudent(string regno, string acadYear, string reason)
     {
-        if (cgpa >= 3.6m) return "First Class";
-        if (cgpa >= 3.0m) return "Second Class Upper";
-        if (cgpa >= 2.5m) return "Second Class Lower";
-        if (cgpa >= 2.0m) return "Pass";
-        return "Fail";
+        MarksScope scope = MarksScopeResolver.Resolve();
+        if (!scope.HasAccess) return Denied();
+        return GraduationService.Hold(scope, regno, acadYear, reason);
     }
 
-    private void ShowMessage(string message, string type)
+    [WebMethod(EnableSession = true)]
+    public static string ReleaseStudent(string regno, string acadYear, string note)
     {
-        pnlMessage.CssClass = "gc-message show gc-message--" + type;
-        litMessage.Text = message;
-        pnlMessage.Visible = true;
+        MarksScope scope = MarksScopeResolver.Resolve();
+        if (!scope.HasAccess) return Denied();
+        return GraduationService.Release(scope, regno, acadYear, note);
     }
 
-    protected string GetStatusBadge(object status)
+    [WebMethod(EnableSession = true)]
+    public static string RemoveStudent(string regno, string reason)
     {
-        string statusStr = status != null ? status.ToString() : "";
-        if (statusStr == "Completed")
-            return "<span class='gc-status-badge gc-status-badge--completed'>Completed</span>";
-        else
-            return "<span class='gc-status-badge gc-status-badge--pending'>In Progress</span>";
-    }
-
-    protected string GetGraduandBadge(object isGraduand)
-    {
-        string str = isGraduand != null ? isGraduand.ToString() : "";
-        if (str == "Yes")
-            return "<span class='gc-status-badge gc-status-badge--graduated'>Yes</span>";
-        else
-            return "<span style='color:#6c757d;'>No</span>";
+        MarksScope scope = MarksScopeResolver.Resolve();
+        if (!scope.HasAccess) return Denied();
+        return GraduationService.RemoveFromList(scope, regno, reason);
     }
 }
