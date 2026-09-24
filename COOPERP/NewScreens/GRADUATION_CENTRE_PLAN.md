@@ -1848,3 +1848,91 @@ The avatar in the shared modal became a button when the photograph was made open
 opening that modal for something other than a student — which the summary does — hid the image and
 left the button and its expand badge behind. `G.showPhoto(false)` now hides the control, and
 `openStudent` restores it.
+
+---
+
+## 21. The 2026/2027 list cleared, so approval is the only way on — 2026-09-25
+
+Brief: *"for now, remove everyone from graduation list. for someone to be on that list, they must
+first be approved."*
+
+### 21a. Why this was scoped to one cycle rather than the whole table
+
+`acad_graduands` is the **system of record for who has graduated**, not a working list. Nineteen
+stored procedures and eighteen code files read it — every transcript procedure,
+`CertificateDataHelper`, `AlumniDataBank`, and **`Verify.aspx`, which is the public,
+unauthenticated page an employer uses to verify an MRU award**. A row removed from here stops all
+of that working for that person.
+
+Of the 1,625 rows on the list:
+
+| | |
+|---|---|
+| Approved through the Graduation Centre | **6** |
+| Pre-date the module | 1,619 |
+| Have physically attended a ceremony (1st–13th) | **1,419** |
+| Have a printed transcript | 553 |
+| Have a printed certificate | 477 |
+| In the 2026/2027 cycle | **18** |
+
+Emptying the table would have told every future enquirer that 1,419 people who have already
+graduated never did. The scope was put to the Registrar with those figures and three costed
+options; **the current cycle only** was chosen, and **move to an archive table** rather than
+delete.
+
+The 2026/2027 cycle is the one still being compiled, and it is materially different: **none of its
+18 rows has a printed transcript, a printed certificate, or a convocation.** Removing them costs
+nobody a document and breaks no verification.
+
+### 21b. A count that moved while it was being read
+
+The first count returned 17; the listing a few minutes later returned 18. Rather than assume a
+mistake, the cause was found: `MRU2027000002` had been cleared through the module at **01:35:04**,
+between the two queries — live use of the screen while it was being examined.
+
+That mattered for a second reason: the backup had been taken at **01:30:54**, so it was already one
+row short. It was retaken before anything was removed. A backup nobody checked the freshness of is
+not a backup.
+
+### 21c. What was done
+
+`COOPERP/sql/academics/graduation_reset_current_cycle.sql`, applied 2026-09-25.
+
+* `acad_graduands_archive` created — the same shape as the source, plus `removed_at`,
+  `removed_by` and `removed_why`, keeping each row's original `ID`.
+* All 18 rows copied across and deleted **inside one transaction**: archived and removed together,
+  or neither.
+* `acad_grad_stats.on_list` corrected for exactly those 18 students. That column is a cache; the
+  statement is the same one `GraduationStats.Touch()` runs per student, applied to the cycle.
+* A full table backup taken first:
+  `COOPERP/sql/academics/backups/acad_graduands-20260925-020541.sql`.
+
+**`acad_grad_review` was deliberately not touched.** Who cleared whom, when, and on what evidence is
+a record in its own right and survives the name leaving the list. Re-clearing a student supersedes
+the earlier verdict, exactly as it would have anyway.
+
+### 21d. Verified
+
+```
+BEFORE  1,625 on the list   18 in 2026/2027
+AFTER   1,607 on the list    0 in 2026/2027   18 archived
+```
+
+* All 18 now carry `on_list = 0` in the summary.
+* Decision history intact: 7 CLEARED, 1 HELD, 4 RELEASED.
+* Every other year untouched — 2025/2026: 190, 2024/2025: 522, 2023/2024: 599, 2022/2023: 59.
+* Public verification still resolves for past graduates.
+* The undo was proved rather than assumed: the restore SELECT returns all 18 rows with every
+  column populated, the original IDs preserved, and **0 ID collisions** against the live table.
+
+### 21e. One thing the Registrar should know
+
+Of the 18 removed, **only 8 reappear in the candidates queue**. The other **10 are not candidates
+at all** — the engine says they never reached the final year of their programme, which is the same
+finding recorded in §10: twelve of the fourteen names then on the 2026/2027 list had not reached a
+final year.
+
+So this reset has not merely cleared the list; it has separated the 8 genuine candidates from the
+10 that should probably never have been there. Those 10 will not come back on their own. If any of
+them does belong on the list, **Add a student…** on the Candidates screen will find them and put
+them through the same review as everybody else, with the override recorded against a named person.
