@@ -21,6 +21,8 @@
     <div class="g-bar__sp">
       <button type="button" class="g-btn" id="btnReset">Reset</button>
       <button type="button" class="g-btn" id="btnXls">Export</button>
+      <button type="button" class="g-btn" id="btnRefresh"
+              title="Counts read a per-student summary. Decisions always read live marks.">Refresh</button>
     </div>
   </div>
 
@@ -46,6 +48,13 @@
   <div id="gNoAccess" class="g-note g-note--warn" style="display:none;"></div>
 </div>
 
+<script type="text/javascript">
+// The first paint, rendered into the page by Page_Load. Two sequential round trips - and two
+// turns of the per-session PageMethod lock - removed from the opening of every visit.
+window.G_BOOT = <%= BootJson %>;
+window.G_DATA = <%= DataJson %>;
+window.G_AGE  = '<%= StatsAge %>';
+</script>
 <script src="js/graduation.js"></script>
 <script type="text/javascript">
 (function () {
@@ -166,8 +175,19 @@ document.addEventListener('DOMContentLoaded', function () {
         G.cascade('fFac', 'fDep', 'fProg'); sync();
     });
     G.qs('btnXls').addEventListener('click', function () { G.serverExport(PAGE, 'xls', cfg()); });
+    G.qs('btnRefresh').addEventListener('click', function () {
+        var b = G.qs('btnRefresh');
+        b.disabled = true; b.textContent = 'Rebuilding…';
+        G.ajax(PAGE, 'RefreshStats', {}, function (d) {
+            b.disabled = false; b.textContent = 'Refresh';
+            if (!d || !d.success) { G.toast((d && d.message) || 'The rebuild did not run.', false); return; }
+            G.toast(d.message, true);
+            window.G_AGE = d.freshness;
+            load();
+        });
+    });
 
-    G.ajax(PAGE, 'GetBootstrap', {}, function (o) {
+    function boot(o) {
         if (!o || !o.success || !o.hasAccess) {
             G.qs('gToolbar').style.display = 'none';
             var na = G.qs('gNoAccess'); na.style.display = 'block';
@@ -186,8 +206,13 @@ document.addEventListener('DOMContentLoaded', function () {
         if (pre.dept) G.qs('fDep').value = pre.dept;
         if (pre.prog) G.qs('fProg').value = pre.prog;
         G.cascade('fFac', 'fDep', 'fProg');
-        load();
-    });
+        // The overview arrived with the page; render it without a round trip.
+        if (window.G_DATA && window.G_DATA.success) render(window.G_DATA.overview);
+        else load();
+    }
+
+    if (window.G_BOOT) boot(window.G_BOOT);
+    else G.ajax(PAGE, 'GetBootstrap', {}, boot);
 });
 })();
 </script>

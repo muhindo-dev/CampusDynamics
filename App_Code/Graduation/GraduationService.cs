@@ -318,6 +318,8 @@ public static class GraduationService
                         }
                         Supersede(c, tx, g.regno);
                         WriteVerdict(c, tx, g, acadYear, "CLEARED", note, actor, scope.RoleNote);
+                        // The summary the queues read must not still show them as outstanding.
+                        GraduationStats.Touch(c, tx, g.regno);
                         Audit(c, tx, actor, g.regno, g.name, g.progcode, acadYear,
                               g.readiness == "BLOCKED"
                                 ? "Cleared onto the graduation list OVER a block: " + note
@@ -453,6 +455,7 @@ public static class GraduationService
                         g.graduatedYear = "";
                         WriteVerdict(c, tx, g, year, "RELEASED", "Removed from the graduation list: " + reason,
                                      actor, scope.RoleNote);
+                        GraduationStats.Touch(c, tx, g.regno);
                         Audit(c, tx, actor, g.regno, g.name, g.progcode, year,
                               "Removed from the graduation list: " + reason);
                         tx.Commit();

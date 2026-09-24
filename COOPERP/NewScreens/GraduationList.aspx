@@ -36,6 +36,11 @@
   <div id="gNoAccess" class="g-note g-note--warn" style="display:none;"></div>
 </div>
 
+<script type="text/javascript">
+// Rendered into the page by Page_Load, so the controls are populated without a round trip.
+window.G_BOOT = <%= BootJson %>;
+window.G_AGE  = '<%= StatsAge %>';
+</script>
 <script src="js/graduation.js"></script>
 <script type="text/javascript">
 (function () {
@@ -182,7 +187,7 @@ document.addEventListener('DOMContentLoaded', function () {
         G.cascade('fFac', 'fDep', 'fProg'); sync();
     });
 
-    G.ajax(PAGE, 'GetBootstrap', {}, function (o) {
+    function boot(o) {
         if (!o || !o.success || !o.hasAccess) {
             G.qs('gToolbar').style.display = 'none';
             var na = G.qs('gNoAccess'); na.style.display = 'block';
@@ -202,7 +207,10 @@ document.addEventListener('DOMContentLoaded', function () {
         if (pre.q) G.qs('fQ').value = pre.q;
         G.cascade('fFac', 'fDep', 'fProg');
         load();
-    });
+    }
+
+    if (window.G_BOOT) boot(window.G_BOOT);
+    else G.ajax(PAGE, 'GetBootstrap', {}, boot);
 });
 })();
 </script>

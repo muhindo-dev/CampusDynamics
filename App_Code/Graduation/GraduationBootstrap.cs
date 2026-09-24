@@ -20,6 +20,23 @@ public static class GraduationBootstrap
     private static string Conn()
     { return ConfigurationManager.ConnectionStrings["vacConnectionString"].ConnectionString; }
 
+    /// <summary>
+    /// Makes a JSON payload safe to emit inside a &lt;script&gt; block.
+    ///
+    /// A programme name or a student name containing "&lt;/script&gt;" would otherwise close the
+    /// block early and everything after it would be parsed as HTML. The sequences below cannot
+    /// appear inside a JSON string except as literal text, and escaping them this way is still
+    /// valid JSON, so the browser parses exactly the same object.
+    /// </summary>
+    public static string ForScriptBlock(string json)
+    {
+        if (string.IsNullOrEmpty(json)) return "null";
+        // NOTE the doubled backslash: in C# source the six characters that spell a
+        // unicode escape ARE the character itself, which would make this a no-op. What
+        // is wanted is the literal two-character text that JSON reads as an escape.
+        return json.Replace("<", "\\u003c").Replace(">", "\\u003e").Replace("&", "\\u0026");
+    }
+
     public static string Denied()
     {
         return J.Serialize(new
@@ -123,12 +140,10 @@ public static class GraduationBootstrap
                 if (withCounts)
                 {
                     using (var cmd = new MySqlCommand(
-                        "SELECT TRIM(s.progid), COUNT(*) FROM acad_student s " +
-                        "JOIN acad_programme p ON p.progcode=s.progid " +
-                        "WHERE EXISTS (SELECT 1 FROM acad_results r WHERE r.regno=s.regno " +
-                        "   AND r.studyyear >= IFNULL(NULLIF(p.couselength,0),3)) " +
-                        " AND NOT EXISTS (SELECT 1 FROM acad_graduands g WHERE g.regno=s.regno)" +
-                        scope.ProgFilter("s", "progid") + " GROUP BY 1", c))
+                        // From the summary: 916ms against acad_results became immeasurable.
+                        "SELECT a.progcode, COUNT(*) FROM " + GraduationStats.TABLE + " a " +
+                        "WHERE a.is_candidate=1 AND a.on_list=0" +
+                        scope.ProgFilter("a", "progcode") + " GROUP BY a.progcode", c))
                     using (var r = cmd.ExecuteReader())
                         while (r.Read())
                         {
@@ -157,10 +172,10 @@ public static class GraduationBootstrap
                     }
 
                 using (var cmd = new MySqlCommand(
+                    // From the summary: 862ms became 25ms.
                     "SELECT DISTINCT s.entryyear FROM acad_student s " +
-                    "JOIN acad_programme p ON p.progcode=s.progid " +
-                    "WHERE IFNULL(s.entryyear,0)>0 AND EXISTS (SELECT 1 FROM acad_results r " +
-                    "  WHERE r.regno=s.regno AND r.studyyear >= IFNULL(NULLIF(p.couselength,0),3))" +
+                    "JOIN " + GraduationStats.TABLE + " a ON a.regno=s.regno " +
+                    "WHERE a.is_candidate=1 AND IFNULL(s.entryyear,0)>0" +
                     scope.ProgFilter("s", "progid") + " ORDER BY s.entryyear DESC", c))
                 using (var r = cmd.ExecuteReader())
                     while (r.Read()) intakes.Add(r[0].ToString());

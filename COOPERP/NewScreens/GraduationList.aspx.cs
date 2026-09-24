@@ -76,10 +76,34 @@ public partial class COOPERP_NewScreens_GraduationList : System.Web.UI.Page
         return rows;
     }
 
+    private const bool WITH_COUNTS = false;
+
+    /// <summary>
+    /// The filter lists, rendered into the page rather than fetched.
+    ///
+    /// This page used to open by firing GetBootstrap and waiting before it could even draw its
+    /// controls. The answer is available at render time, so it ships with the page. AJAX is
+    /// kept for the filter changes that follow.
+    /// </summary>
+    public string BootJson = "null";
+    public string StatsAge = "";
+
+    private void Prime()
+    {
+        try
+        {
+            MarksScope sc = MarksScopeResolver.Resolve();
+            StatsAge = GraduationStats.Freshness();
+            if (sc.HasAccess)
+                BootJson = GraduationBootstrap.ForScriptBlock(GraduationBootstrap.Bootstrap(WITH_COUNTS));
+        }
+        catch { BootJson = "null"; }
+    }
+
     protected void Page_Load(object sender, EventArgs e)
     {
         string fmt = Request.Form["gradExport"];
-        if (string.IsNullOrEmpty(fmt)) return;
+        if (string.IsNullOrEmpty(fmt)) { Prime(); return; }
 
         MarksScope scope = MarksScopeResolver.Resolve();
         if (!scope.HasAccess) return;

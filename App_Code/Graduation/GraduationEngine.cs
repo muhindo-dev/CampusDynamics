@@ -309,10 +309,9 @@ public static class GraduationEngine
         if (prev == "") return "";
         p["@cy1"] = f.acadYear;
         p["@cy0"] = prev;
-        return " AND EXISTS (SELECT 1 FROM acad_results rc WHERE rc.regno=s.regno " +
-               "   AND rc.acad IN (@cy1,@cy0)) " +
-               " AND NOT EXISTS (SELECT 1 FROM acad_results rl WHERE rl.regno=s.regno " +
-               "   AND " + YearOk("rl.acad") + " AND rl.acad > @cy1) ";
+        // last_year is stored, already restricted to believable years, so "finished in Y or
+        // Y-1" is now a column comparison instead of two correlated EXISTS over acad_results.
+        return " AND a.last_year IN (@cy1,@cy0) ";
     }
 
     private static string RS(MySqlDataReader r, int i)
@@ -332,13 +331,17 @@ public static class GraduationEngine
     /// </summary>
     private static string CandidateSql(MarksScope scope, GradFilter f, Dictionary<string, object> p, bool countOnly)
     {
+        // Everything hangs off acad_grad_stats: is_candidate, on_list and last_year are all
+        // stored, so identifying a candidate is an index lookup rather than an aggregate over
+        // 639,185 result rows. See GraduationStats for why, and for what stays live.
         var w = new StringBuilder();
-        w.Append(" FROM acad_student s JOIN acad_programme p ON p.progcode=s.progid ");
-        w.Append(" WHERE EXISTS (SELECT 1 FROM acad_results r WHERE r.regno=s.regno ");
-        w.Append("   AND r.studyyear >= IFNULL(NULLIF(p.couselength,0),3)) ");
+        w.Append(" FROM " + GraduationStats.TABLE + " a ");
+        w.Append(" JOIN acad_student s ON s.regno=a.regno ");
+        w.Append(" JOIN acad_programme p ON p.progcode=s.progid ");
+        w.Append(" WHERE a.is_candidate=1 ");
 
         if (f.state == "pending")
-            w.Append(" AND NOT EXISTS (SELECT 1 FROM acad_graduands g WHERE g.regno=s.regno) ");
+            w.Append(" AND a.on_list=0 ");
         else if (f.state == "listed")
             w.Append(" AND EXISTS (SELECT 1 FROM acad_graduands g WHERE g.regno=s.regno" +
                      (f.acadYear == "" ? "" : " AND g.acadyear=@ay") + ") ");
@@ -357,12 +360,7 @@ public static class GraduationEngine
         // the held queue are already narrow by definition.
         if (f.state == "pending") w.Append(CycleClause(f, p));
 
-        if (f.finishedIn != "")
-        {
-            w.Append(" AND (SELECT MAX(r3.acad) FROM acad_results r3 WHERE r3.regno=s.regno " +
-                     " AND " + YearOk("r3.acad") + ")=@fin ");
-            p["@fin"] = f.finishedIn;
-        }
+        if (f.finishedIn != "") { w.Append(" AND a.last_year=@fin "); p["@fin"] = f.finishedIn; }
         if (f.search != "")
         {
             w.Append(" AND (s.regno LIKE @q OR CONCAT(IFNULL(s.firstname,''),' ',IFNULL(s.othername,'')) LIKE @q) ");
@@ -391,7 +389,10 @@ public static class GraduationEngine
         return "SELECT s.regno, TRIM(CONCAT(IFNULL(s.firstname,''),' ',IFNULL(s.othername,''))) nm, " +
                " TRIM(s.progid) progid, IFNULL(p.progname,'') progname, IFNULL(p.faculty_code,'') fac, " +
                " IFNULL(p.department_id,0) dep, IFNULL(s.entryyear,'') ey, IFNULL(s.specialisation,'') sp, " +
-               " IFNULL(p.levelCode,3) lvl, IFNULL(NULLIF(p.couselength,0),3) plen " +
+               " IFNULL(p.levelCode,3) lvl, IFNULL(NULLIF(p.couselength,0),3) plen, " +
+               // carried from the summary, so the page needs no second pass over acad_results
+               " a.maxsy, a.courses, a.cu_earned, a.fails, a.zero_marks, a.no_score, a.cgpa, " +
+               " IFNULL(a.first_year,''), IFNULL(a.last_year,'') " +
                w + order + " LIMIT " + f.size + " OFFSET " + ((f.page < 1 ? 0 : f.page - 1) * f.size);
     }
 
@@ -433,6 +434,10 @@ public static class GraduationEngine
                         g.progname = RS(r, 3); g.faculty = RS(r, 4); g.department = RS(r, 5);
                         g.entryyear = RS(r, 6); g.specialisation = RS(r, 7);
                         g.levelCode = RI(r, 8); g.progLength = RI(r, 9);
+                        g.maxStudyYear = RI(r, 10); g.coursesTaken = RI(r, 11);
+                        g.cuEarned = RD(r, 12); g.failedPapers = RI(r, 13);
+                        g.zeroMarks = RI(r, 14); g.missingScores = RI(r, 15);
+                        g.cgpa = RD(r, 16); g.firstYear = RS(r, 17); g.lastYear = RS(r, 18);
                         g.specIsPlaceholder = (g.specialisation == "" || g.specialisation == "0" || g.specialisation == "13");
                         list.Add(g);
                         if (!byReg.ContainsKey(g.regno)) byReg.Add(g.regno, g);
@@ -451,29 +456,9 @@ public static class GraduationEngine
     {
         string inList = InList(list);
 
-        // Results aggregate. Credits count a course ONCE and only when passed; acad_results
-        // carries UNIQUE(regno,courseid) so a repeat overwrites rather than duplicating, but
-        // the GROUP BY makes that explicit rather than relying on it.
-        using (var cmd = new MySqlCommand(
-            "SELECT r.regno, MAX(r.studyyear) maxsy, COUNT(*) taken, " +
-            " SUM(CASE WHEN r.score>=50 THEN IFNULL(r.CreditUnits,0) ELSE 0 END) cu_pass, " +
-            " SUM(r.score>0 AND r.score<50) failed, SUM(r.score=0) zeros, SUM(r.score IS NULL) noscore, " +
-            " SUM(IFNULL(r.CreditUnits,0)*IFNULL(r.gradept,0)) gpnum, SUM(IFNULL(r.CreditUnits,0)) gpden, " +
-            " MIN(CASE WHEN " + YearOk("r.acad") + " THEN r.acad END) firstyr, " +
-            " MAX(CASE WHEN " + YearOk("r.acad") + " THEN r.acad END) lastyr " +
-            "FROM acad_results r WHERE r.regno IN (" + inList + ") GROUP BY r.regno", c))
-        using (var r = cmd.ExecuteReader())
-            while (r.Read())
-            {
-                GradCandidate g;
-                if (!byReg.TryGetValue(RS(r, 0), out g)) continue;
-                g.maxStudyYear = RI(r, 1); g.coursesTaken = RI(r, 2);
-                g.cuEarned = RD(r, 3); g.failedPapers = RI(r, 4);
-                g.zeroMarks = RI(r, 5); g.missingScores = RI(r, 6);
-                double num = RD(r, 7), den = RD(r, 8);
-                g.cgpa = den > 0 ? Math.Round(num / den, 2) : 0;
-                g.firstYear = RS(r, 9); g.lastYear = RS(r, 10);
-            }
+        // The results arithmetic already arrived with the list query, out of the summary, so
+        // there is no second pass over acad_results here at all. What remains is the two small
+        // membership lookups below.
 
         // Already on a graduation list?
         using (var cmd = new MySqlCommand(
@@ -587,6 +572,10 @@ public static class GraduationEngine
     }
     public class GC2 { public string name = ""; public int count = 0; }
 
+    /// <summary>The cycle narrowing for the per-programme table, kept in step with the counts.</summary>
+    private static string extra2(GradFilter f, Dictionary<string, object> p)
+    { return CycleClause(f, p); }
+
     private static void AddGc(List<GC2> l, string n, int v)
     { var g = new GC2(); g.name = n; g.count = v; l.Add(g); }
 
@@ -615,11 +604,16 @@ public static class GraduationEngine
         {
             c.Open();
 
-            // The candidacy predicate, shared with the list so the two cannot disagree.
-            string cand =
-                " FROM acad_student s JOIN acad_programme p ON p.progcode=s.progid " +
-                " WHERE EXISTS (SELECT 1 FROM acad_results r WHERE r.regno=s.regno " +
-                "   AND r.studyyear >= IFNULL(NULLIF(p.couselength,0),3)) ";
+            // The candidacy predicate, shared with the list so the two cannot disagree — and
+            // now a stored column rather than an aggregate. See GraduationStats.
+            string from =
+                " FROM " + GraduationStats.TABLE + " a " +
+                " JOIN acad_student s ON s.regno=a.regno " +
+                " JOIN acad_programme p ON p.progcode=s.progid " +
+                " LEFT JOIN (SELECT DISTINCT regno, 1 held FROM acad_grad_review " +
+                "            WHERE verdict='HELD' AND superseded_at IS NULL) h ON h.regno=a.regno " +
+                " WHERE a.is_candidate=1 ";
+
             var p = new Dictionary<string, object>();
             var extra = new StringBuilder();
             if (f.faculty != "") { extra.Append(" AND p.faculty_code=@fac "); p["@fac"] = f.faculty; }
@@ -628,31 +622,19 @@ public static class GraduationEngine
             { extra.Append(" AND p.department_id=@dep "); p["@dep"] = dep; }
             if (f.programme != "") { extra.Append(" AND s.progid=@prog "); p["@prog"] = f.programme; }
             extra.Append(scope.ProgFilter("s", "progid"));
-            string where = cand + extra;
-            // The same narrowing the Candidates tab uses. A dashboard that counts a different
-            // population from the list it links into is worse than no dashboard.
-            string notListed = " AND NOT EXISTS (SELECT 1 FROM acad_graduands g WHERE g.regno=s.regno) " +
-                               CycleClause(f, p);
+
+            string where = from + extra;
+            string notListed = " AND a.on_list=0 " + CycleClause(f, p);
 
             // One pass over the outstanding candidates, bucketed by what is wrong with them.
-            // The per-student figures are computed in a derived table rather than by joining
-            // acad_results, which would multiply a student by their number of courses.
+            // The buckets PARTITION the pool: a student who both fails a paper and sits below
+            // the CGPA floor is one blocked student, not two, and Ready is what is left.
             using (var cmd = new MySqlCommand(
-                    // Counted so the buckets PARTITION the pool: a student who both fails a
-                    // paper and sits below the CGPA floor is one blocked student, not two, and
-                    // Ready is what is left after blocked and warned are taken out.
-                    "SELECT COUNT(*) total, SUM(fails>0) blk_fail, SUM(cgpa<2.0) blk_cgpa, " +
-                    " SUM(is_held) held, " +
-                    " SUM(fails>0 OR cgpa<2.0 OR is_held) blocked_any, " +
-                    " SUM(NOT (fails>0 OR cgpa<2.0 OR is_held) AND (zeros>0 OR nulls>0)) warn_marks " +
-                    "FROM ( SELECT s.regno, " +
-                    "  (SELECT COUNT(*) FROM acad_results r2 WHERE r2.regno=s.regno AND r2.score>0 AND r2.score<50) fails, " +
-                    "  (SELECT COUNT(*) FROM acad_results r3 WHERE r3.regno=s.regno AND r3.score=0) zeros, " +
-                    "  (SELECT COUNT(*) FROM acad_results r4 WHERE r4.regno=s.regno AND r4.score IS NULL) nulls, " +
-                    "  IFNULL((SELECT SUM(IFNULL(r5.CreditUnits,0)*IFNULL(r5.gradept,0))/NULLIF(SUM(IFNULL(r5.CreditUnits,0)),0) " +
-                    "          FROM acad_results r5 WHERE r5.regno=s.regno),0) cgpa, " +
-                    "  EXISTS(SELECT 1 FROM acad_grad_review v WHERE v.regno=s.regno AND v.verdict='HELD' AND v.superseded_at IS NULL) is_held " +
-                    where + notListed + " ) z", c))
+                "SELECT COUNT(*), SUM(a.fails>0), SUM(a.cgpa<2.0), SUM(h.held IS NOT NULL), " +
+                " SUM(a.fails>0 OR a.cgpa<2.0 OR h.held IS NOT NULL), " +
+                " SUM(NOT (a.fails>0 OR a.cgpa<2.0 OR h.held IS NOT NULL) " +
+                "     AND (a.zero_marks>0 OR a.no_score>0)) " +
+                where + notListed, c))
             {
                 foreach (KeyValuePair<string, object> kv in p) cmd.Parameters.AddWithValue(kv.Key, kv.Value);
                 using (var r = cmd.ExecuteReader())
@@ -665,36 +647,33 @@ public static class GraduationEngine
                         int warnMarks = RI(r, 5);
                         o.ready = o.candidates - o.blocked - warnMarks;
                         if (o.ready < 0) o.ready = 0;
-                        // The blocker table overlaps on purpose - a student can appear in two
-                        // rows of it - because the question it answers is "how many candidates
-                        // would this one problem release", not "how do they partition".
+                        // The blocker table overlaps on purpose — it answers "how many would this
+                        // one problem release", not "how do they partition".
                         AddGc(o.blockers, "Failed papers (1-49)", blkFail);
-                        AddGc(o.blockers, "CGPA below 2.0", blkCgpa);
+                        AddGc(o.blockers, "CGPA below " + N(CGPA_FLOOR, 1), blkCgpa);
                         AddGc(o.blockers, "Marks of zero, or no mark at all", warnMarks);
                         AddGc(o.blockers, "Held by a reviewer", o.held);
                     }
             }
 
-            // On the list for the selected year, and overall.
+            // On the graduation list for the selected year.
             using (var cmd = new MySqlCommand(
                 "SELECT COUNT(*) FROM acad_graduands g JOIN acad_student s ON s.regno=g.regno " +
                 "JOIN acad_programme p ON p.progcode=s.progid WHERE 1=1 " +
                 (f.acadYear == "" ? "" : " AND g.acadyear=@ay ") + extra, c))
             {
                 if (f.acadYear != "") cmd.Parameters.AddWithValue("@ay", f.acadYear);
-                foreach (KeyValuePair<string, object> kv in p) cmd.Parameters.AddWithValue(kv.Key, kv.Value);
+                foreach (KeyValuePair<string, object> kv in p)
+                    if (kv.Key != "@cy1" && kv.Key != "@cy0") cmd.Parameters.AddWithValue(kv.Key, kv.Value);
                 object v = cmd.ExecuteScalar();
                 o.listed = v == null || v == DBNull.Value ? 0 : Convert.ToInt32(v);
             }
 
             // Per-programme progress. A Dean's week before Senate is spent in this table.
             using (var cmd = new MySqlCommand(
-                "SELECT TRIM(s.progid) pc, MAX(IFNULL(p.progname,'')) pn, MAX(IFNULL(p.faculty_code,'')) fc, " +
-                " COUNT(*) cand, " +
-                " SUM(EXISTS(SELECT 1 FROM acad_graduands g WHERE g.regno=s.regno)) listed, " +
-                " SUM(EXISTS(SELECT 1 FROM acad_grad_review v WHERE v.regno=s.regno AND v.verdict='HELD' AND v.superseded_at IS NULL)) held, " +
-                " SUM((SELECT COUNT(*) FROM acad_results r2 WHERE r2.regno=s.regno AND r2.score>0 AND r2.score<50)>0) blocked " +
-                where + CycleClause(f, p) + " GROUP BY pc ORDER BY cand DESC LIMIT 60", c))
+                "SELECT a.progcode, MAX(IFNULL(p.progname,'')), MAX(IFNULL(p.faculty_code,'')), " +
+                " COUNT(*), SUM(a.on_list), SUM(h.held IS NOT NULL), SUM(a.fails>0) " +
+                where + extra2(f, p) + " GROUP BY a.progcode ORDER BY 4 DESC LIMIT 60", c))
             {
                 foreach (KeyValuePair<string, object> kv in p) cmd.Parameters.AddWithValue(kv.Key, kv.Value);
                 using (var r = cmd.ExecuteReader())
@@ -702,7 +681,8 @@ public static class GraduationEngine
                     {
                         var pp = new ProgProgress();
                         pp.progcode = RS(r, 0); pp.progname = RS(r, 1); pp.faculty = RS(r, 2);
-                        pp.candidates = RI(r, 3); pp.listed = RI(r, 4); pp.held = RI(r, 5); pp.blocked = RI(r, 6);
+                        pp.candidates = RI(r, 3); pp.listed = RI(r, 4); pp.held = RI(r, 5);
+                        pp.blocked = RI(r, 6);
                         o.programmes.Add(pp);
                     }
             }
@@ -712,10 +692,11 @@ public static class GraduationEngine
             try
             {
                 using (var cmd = new MySqlCommand(
-                    "SELECT COUNT(*) FROM acad_graduands g JOIN acad_student s ON s.regno=g.regno " +
+                    "SELECT COUNT(*) FROM acad_graduands g " +
+                    "JOIN " + GraduationStats.TABLE + " a ON a.regno=g.regno " +
+                    "JOIN acad_student s ON s.regno=g.regno " +
                     "JOIN acad_programme p ON p.progcode=s.progid " +
-                    "WHERE IFNULL((SELECT MAX(r.studyyear) FROM acad_results r WHERE r.regno=g.regno),0) " +
-                    " < IFNULL(NULLIF(p.couselength,0),3)" + extra, c))
+                    "WHERE a.is_candidate=0" + extra, c))
                 {
                     foreach (KeyValuePair<string, object> kv in p) cmd.Parameters.AddWithValue(kv.Key, kv.Value);
                     object v = cmd.ExecuteScalar();

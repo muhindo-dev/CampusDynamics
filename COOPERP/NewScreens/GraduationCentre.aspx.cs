@@ -18,12 +18,26 @@ public partial class COOPERP_NewScreens_GraduationCentre : System.Web.UI.Page
 {
     private static readonly JavaScriptSerializer J = new JavaScriptSerializer();
 
+    /// <summary>
+    /// The first paint, rendered into the page.
+    ///
+    /// The module used to open by firing GetBootstrap, waiting, then firing GetOverview and
+    /// waiting again - two sequential round trips before anything appeared, each carrying
+    /// PageMethod overhead and each taking the per-session lock in turn. Both answers are
+    /// available at render time, so the page now ships with them and paints immediately.
+    /// AJAX is kept for what it is good at: the filter changes that come afterwards.
+    /// </summary>
+    public string BootJson = "null";
+    public string DataJson = "null";
+    public string StatsAge = "";
+
+
     protected void Page_Load(object sender, EventArgs e)
     {
         // Exports are a form post rather than an AJAX call, so the browser saves the file in
         // the normal way with the name the server chose.
         string fmt = Request.Form["gradExport"];
-        if (string.IsNullOrEmpty(fmt)) return;
+        if (string.IsNullOrEmpty(fmt)) { Prime(); return; }
 
         MarksScope scope = MarksScopeResolver.Resolve();
         if (!scope.HasAccess) return;
@@ -78,8 +92,51 @@ public partial class COOPERP_NewScreens_GraduationCentre : System.Web.UI.Page
             GraduationExport.Workbook(Response, file, "Graduation Overview", scope.Label, cover, sheets);
     }
 
+    /// <summary>Builds the first paint into the page. See BootJson.</summary>
+    private void Prime()
+    {
+        try
+        {
+            MarksScope sc = MarksScopeResolver.Resolve();
+            StatsAge = GraduationStats.Freshness();
+            if (!sc.HasAccess) return;
+
+            BootJson = GraduationBootstrap.ForScriptBlock(GraduationBootstrap.Bootstrap(false));
+
+            // The filter the page will open on, resolved here so the figures shipped with the
+            // page are the figures its controls will show.
+            var f = new GraduationEngine.GradFilter();
+            f.acadYear = Q("year");
+            f.focus = Q("focus") == "" ? "cycle" : Q("focus");
+            f.faculty = Q("faculty");
+            f.department = Q("dept");
+            f.programme = Q("prog");
+            if (f.acadYear == "")
+            {
+                try { f.acadYear = AcademicYearHelper.GetCurrentAcademicYear(); } catch { }
+            }
+            DataJson = GraduationBootstrap.ForScriptBlock(
+                J.Serialize(new { success = true, overview = GraduationEngine.Overview(sc, f) }));
+        }
+        catch { BootJson = "null"; DataJson = "null"; }
+    }
+
+    private string Q(string k) { return (Request.QueryString[k] ?? "").Trim(); }
+
     [WebMethod(EnableSession = true)]
     public static string GetBootstrap() { return GraduationBootstrap.Bootstrap(false); }
+
+    /// <summary>
+    /// Rebuilds the per-student summary. Roughly five seconds over the whole results table,
+    /// paid deliberately and on demand rather than silently on every page load.
+    /// </summary>
+    [WebMethod(EnableSession = true)]
+    public static string RefreshStats()
+    {
+        MarksScope scope = MarksScopeResolver.Resolve();
+        if (!scope.HasAccess) return GraduationBootstrap.Denied();
+        return GraduationStats.Rebuild();
+    }
 
     [WebMethod(EnableSession = true)]
     public static string GetOverview(string configJson)
