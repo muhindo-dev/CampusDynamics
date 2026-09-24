@@ -420,8 +420,8 @@
                             </ul>
                         </li>
                         <%-- Graduation is its own thing, not a footnote to Exam. The module is
-                             GET-driven (?tab=…), so each section below is a real destination
-                             rather than a link to the same landing page four times.
+                             four independent pages, one per queue, so each carries only its own
+                             code and a slow screen can never hold up a fast one.
 
                              Everything here carries data-roles="all", which makes the role filter
                              stand aside and leaves the decision to the slug grant — the sidebar's
@@ -442,19 +442,19 @@
                                     </asp:HyperLink>
                                 </li>
                                 <li class="cd-sidebar__subitem" data-roles="all">
-                                    <asp:HyperLink ID="lnkGradCandidates" runat="server" NavigateUrl="~/COOPERP/NewScreens/GraduationCentre.aspx?tab=candidates" CssClass="cd-sidebar__sublink">
+                                    <asp:HyperLink ID="lnkGradCandidates" runat="server" NavigateUrl="~/COOPERP/NewScreens/GraduationCandidates.aspx" CssClass="cd-sidebar__sublink">
                                         <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"></path><circle cx="9" cy="7" r="4"></circle><path d="M23 21v-2a4 4 0 0 0-3-3.87"></path></svg>
                                         <span>Candidates</span>
                                     </asp:HyperLink>
                                 </li>
                                 <li class="cd-sidebar__subitem" data-roles="all">
-                                    <asp:HyperLink ID="lnkGradList" runat="server" NavigateUrl="~/COOPERP/NewScreens/GraduationCentre.aspx?tab=list" CssClass="cd-sidebar__sublink">
+                                    <asp:HyperLink ID="lnkGradList" runat="server" NavigateUrl="~/COOPERP/NewScreens/GraduationList.aspx" CssClass="cd-sidebar__sublink">
                                         <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 11l3 3L22 4"></path><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"></path></svg>
                                         <span>Graduation List</span>
                                     </asp:HyperLink>
                                 </li>
                                 <li class="cd-sidebar__subitem" data-roles="all">
-                                    <asp:HyperLink ID="lnkGradHeld" runat="server" NavigateUrl="~/COOPERP/NewScreens/GraduationCentre.aspx?tab=held" CssClass="cd-sidebar__sublink">
+                                    <asp:HyperLink ID="lnkGradHeld" runat="server" NavigateUrl="~/COOPERP/NewScreens/GraduationHeld.aspx" CssClass="cd-sidebar__sublink">
                                         <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><line x1="10" y1="15" x2="10" y2="9"></line><line x1="14" y1="15" x2="14" y2="9"></line></svg>
                                         <span>Held Candidates</span>
                                     </asp:HyperLink>

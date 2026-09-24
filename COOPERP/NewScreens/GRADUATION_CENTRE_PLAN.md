@@ -761,6 +761,93 @@ year and only a human can say where it belongs.
 **12 of the 14 names** on it have not reached the final year of their programme. The integrity
 notice now says so on the Overview, scoped to the year on screen.
 
+## 9f. Split into four pages — 2026-09-24
+
+One tabbed page became four independent ones, because a tab strip duplicates what the sidebar
+already says and because a single page had to carry the code for all four queues whether you
+wanted them or not.
+
+| page | endpoints it carries |
+|---|---|
+| `GraduationCentre.aspx` — overview | 2 |
+| `GraduationCandidates.aspx` — the queue | 7 |
+| `GraduationList.aspx` — the output | 4 |
+| `GraduationHeld.aspx` — the held queue | 6 |
+
+Shared code lives in exactly one place: `css/graduation.css`, `js/graduation.js` (both cached
+once by the browser), and in App_Code `GraduationBootstrap` (the filter lists),
+`GraduationStudent` (the evidence payload) and `GraduationExport` (the workbook writer). The
+evidence panel is rendered by the shared script and each page supplies only its own buttons, so
+a reviewer never meets two layouts for the same question.
+
+### Space
+
+The navy banner and the tab strip are gone — together about 90px of the only screen a Registrar
+has, spent restating what the sidebar already says. Everything above the table is now one
+wrapping toolbar. Type sizes came down a step throughout (12.5px base, 11.5px in tables).
+
+### The modal moved to the top
+
+A drawer down the right edge fights the sidebar and makes the eye travel the full width of the
+screen. It is now centred and anchored near the top, so the evidence appears under the row that
+was clicked. It closes on Escape, on the X, or on a click on the backdrop — but only a click
+that *starts* on the backdrop, so dragging to select text inside the card does not dismiss it.
+
+### Photographs, and why they needed a handler first
+
+Faces make identification instant, but the photos on disk have a **median size of 469 KB and 89%
+exceed 300 KB** — most are uncompressed bitmaps saved with a `.jpg` extension. Fifty rows would
+have pulled about **23 MB**.
+
+`StudentThumb.ashx` serves a 72px square at JPEG quality 82 — roughly 4 KB — and writes it beside
+the originals so the resize happens **once per student, ever**. The box is CPU-bound, so paying
+once beats an output cache that re-resizes.
+
+It takes a student number, never a filename; the name comes from `acad_student.photofile` and is
+stripped to its base name before it touches the filesystem. Verified: an unauthenticated request,
+an unknown student, an empty parameter and `?r=../../../web.config` all return the same 1,594-byte
+placeholder — never a photograph, never an error.
+
+| candidates in the 2026/2027 cycle | with a photo | without |
+|---|---|---|
+| 1,001 | 875 | 126 (placeholder) |
+
+### Exports
+
+One writer, `GraduationExport`, so every file that leaves the module is branded and laid out the
+same way. Each workbook opens with a **Cover** sheet carrying the university, the report, the
+scope it was produced for, every filter behind it and the timestamp — a spreadsheet with no
+provenance is one nobody can defend in a meeting. Data sheets have a navy header row, frozen
+panes, right-aligned numerics typed as numbers, and a footer stating that every name was cleared
+by a named reviewer.
+
+- **Overview** → Summary, By programme, Data integrity
+- **Candidates** → the whole queue, not the page on screen, with credits, source of the
+  requirement, CGPA, class and every count behind the readiness
+- **Graduation list** → numbered **within each programme**, the way a list is read out and signed,
+  plus a By-programme tally sheet
+- **Held** → with a *Still blocked* column, so a hold whose reason no longer applies is visible at
+  a glance
+
+CSV output carries the same provenance in comment lines, and any cell starting `=`, `+`, `-` or
+`@` is prefixed so a student name can never execute as a formula in someone else's spreadsheet.
+
+### Menu
+
+The sidebar entries now point at the four real pages. The three new ones were registered in
+`sys_menu_items` with grants mirroring **exactly** the roles that already hold
+`system.more.graduation_centre` — admissions, dean, exam_officer, faculty_staff, hod, registrar,
+student_services — because an unmapped page is treated as *always visible*, which would have been
+more permissive than the page they were split out of. `COOPERP/sql/academics/graduation_menu.sql`
+records it with the undo.
+
+### Verified
+
+All four pages compile; all four scripts parse; every id each script references exists in its own
+markup or is injected by `G.mount()`; **all 19 endpoints across the four pages deny an anonymous
+caller**, as do all four export posts (302, 130 bytes, no data); and `acad_graduands` is still
+1,621 rows with 0 review rows afterwards.
+
 ## 10. The five open questions — answered
 
 They were policy, not arithmetic, so each is now a **named constant at the top of
