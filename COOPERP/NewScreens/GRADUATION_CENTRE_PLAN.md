@@ -111,7 +111,7 @@ most important rule in the module: *one source of arithmetic*.
 | # | Check | BLOCK when | WARN when | Evidence carried |
 |---|---|---|---|---|
 | C1 | **Already graduated** | a row exists in `acad_graduands` for this student | — | the year and list it is on |
-| C2 | **Outstanding papers** | any published result with `score < 50` | any result with `score IS NULL` | count + the course codes |
+| C2 | **Outstanding papers** | a mark of **1–49** | a mark of **exactly 0**, or no mark at all | counts of each, and the course codes |
 | C3 | **Credits earned** | earned < required × 0.90 | earned < required | earned, required, shortfall, source of "required" |
 | C4 | **Programme coverage** | — | a required course has no result at all | how many required courses unmatched, and which |
 | C5 | **Unpublished marks** | — | registrations at a stage below PUBLISHED in the portal | count by stage |
@@ -154,11 +154,33 @@ But `acad_student.specialisation` is a placeholder for almost everyone:
 | `0` | 1,035 |
 | real values (136 others) | ~2,200 |
 
-**Decision:** when the student's specialisation resolves to a real `acad_specialisation` row for
-their programme, use that variant's total. Otherwise use the **median** total across that
-programme's active specialisations and label it *"programme typical"*. Never the sum, never the
-max. The UI shows which of the two was used, and a specialisation that is a placeholder is
-reported as such on the student's evidence panel.
+**Decision (revised 2026-09-24 after measuring the variants — the original "median across
+specialisations" rule did not survive contact with the data):**
+
+The spread *within* one programme is too wide for any average to mean anything. BAED has 47
+variants ranging 15–211 CU; BED(S) has 10 ranging 2–856. Most of the low ones are stubs — a
+specialisation with two courses attached — and some of the high ones are duplicated structures.
+A median over that is a number with no defensible meaning, and a graduation decision is not the
+place for one.
+
+Required CU is therefore resolved as:
+
+1. **Structure**, *only if credible* — the student's specialisation resolves to a real
+   `acad_specialisation` row for their programme AND that variant carries at least 20 courses.
+   Source `STRUCTURE`. This is the only source strong enough to **block**.
+2. **Declared minimum**, *only if credible for the level* — `acad_programme.mincredit` within the
+   band observed for that `levelCode`/`couselength` (Certificate 1yr 20–40, Diploma 2yr 40–130,
+   Bachelors 100–220, Masters 30–60, Postgraduate 40–200). Source `DECLARED`. **Warns only.**
+3. **Nothing** — source `NONE`, reported as *Not assessable*. Never a silent pass.
+
+The credibility band matters because `acad_programme` contains junk rows whose `progcode` is
+actually a **course** code — `BEE1101`, `DCS1101`, `HRP 1101`, `SDB1101` — each carrying
+`mincredit = 3`. Without the band, a student on one of those would be "short of 3 credits" and
+cleared. With it, they are Not assessable and a human looks.
+
+> **The governing principle:** credits *inform* the decision; they do not gate it, unless the
+> requirement came from a real curriculum. The user asked for no room for error, and blocking a
+> graduation on a number this data cannot support would be exactly that error.
 
 ### 3.5 Credits earned
 
@@ -480,6 +502,59 @@ Students who have reached their final year and are on **no** graduation list at 
 This is the single largest thing the module will surface. Most of the 13,460 will have
 outstanding papers or credit shortfalls — that is what the checks are for — but they have never
 been looked at as a queue, because until now there was nowhere to look at them.
+
+## 9b. Engine verification — run 2026-09-24
+
+### CGPA is identical to the authoritative function
+
+The engine computes CGPA as `SUM(CU × gradept) / SUM(CU)`. `acad_CGPAFinder`, which every
+transcript in the system uses, computes the same thing. Compared across **1,999 students**:
+
+| compared | agree | differ | worst gap |
+|---|---|---|---|
+| 1,999 | **1,999** | 0 | **0.00** |
+
+If these ever diverge, the engine is wrong and the transcripts are right.
+
+### The checks, calibrated against students who really graduated
+
+Run over the 522 students on the 2024/2025 graduation list, with C1 (already listed) suppressed
+so the other checks can be judged on their own:
+
+| | students |
+|---|---|
+| clean on every check | **505** (96.7%) |
+| flagged for a human | 17 |
+| blocked on CGPA | 0 |
+| blocked on final year | 0 |
+
+Zero false blocks on CGPA and on duration. The 17 were all C2 — and looking at them changed the
+check.
+
+### A mark of zero is a gap, not a failure
+
+Of those 17, only **2** had a mark between 1 and 49. The other 15 had marks of exactly **0** —
+`ICT2206=0`, `ICT2219B=0`, and so on — which in this database means a paper that was never
+marked far more often than a paper that was failed:
+
+| across all 648,785 results | rows | students |
+|---|---|---|
+| no score at all (NULL) | 216 | 151 |
+| **exactly 0** | **5,380** | 1,692 |
+| 1–49 — a real fail | 6,793 | 3,089 |
+
+So C2 blocks on 1–49 and warns on 0, with a message that says which fix is needed: a zero needs a
+mark entered, a 41 needs a retake. The effect on the calibration cohort:
+
+| | before | after |
+|---|---|---|
+| would block | 17 | **2** |
+| would warn | 0 | 15 |
+| clean | 505 | 505 |
+
+Both remaining blocks are correct. `MRU2023000649` (DME) is on the 2024/2025 graduation list with
+**five** failed papers — 28, 31, 33, 34 and 44. That is precisely the name this module exists to
+stop, and it is already on a list.
 
 ## 10. Open questions for the MIS Manager
 
