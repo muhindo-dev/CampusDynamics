@@ -1,4 +1,4 @@
-<%@ Page Language="C#" MasterPageFile="~/COOPERP/NewScreens/SidebarMaster.master" AutoEventWireup="true" CodeFile="GraduationHeld.aspx.cs" Inherits="COOPERP_NewScreens_GraduationHeld" Title="Held Candidates - Campus Dynamics" %>
+<%@ Page Language="C#" MasterPageFile="~/COOPERP/NewScreens/SidebarMaster.master" AutoEventWireup="true" CodeFile="GraduationHeld.aspx.cs" Inherits="COOPERP_NewScreens_GraduationHeld" Title="Students on Hold - Campus Dynamics" %>
 
 <asp:Content ID="HeadContent" ContentPlaceHolderID="HeadContent" runat="server">
 <link rel="stylesheet" href="css/graduation.css" />
@@ -8,7 +8,7 @@
 <div class="g">
 
   <div class="g-bar" id="gToolbar">
-    <div class="g-bar__id"><b>Held candidates</b><span id="gScope">&nbsp;</span>
+    <div class="g-bar__id"><b>Students on hold</b><span id="gScope">&nbsp;</span>
       <span class="g-age" id="gAge">&nbsp;</span></div>
     <div class="g-f" style="flex:0 0 122px;"><label for="fYear">Graduation year</label><select id="fYear"></select></div>
     <div class="g-f" style="flex:1 1 150px;"><label for="fFac">Faculty</label><select id="fFac"></select></div>
@@ -32,7 +32,7 @@
   </div>
 
   <div class="g-card">
-    <div class="g-card__h"><span>Held</span><small id="gMeta">&nbsp;</small></div>
+    <div class="g-card__h"><span>On hold</span><small id="gMeta">&nbsp;</small></div>
     <div class="g-wrap">
       <table class="g-tbl"><thead><tr>
         <th>Student</th><th>Programme</th><th>Why</th><th>Held by</th><th class="g-num">When</th><th></th>
@@ -101,7 +101,7 @@ function load() {
     G.qs('gBody').innerHTML = '<tr><td colspan="6" class="g-load">Loading&hellip;</td></tr>';
     G.qs('gPager').innerHTML = '';
     G.ajax(PAGE, 'GetHeld', { configJson: cfg() }, function (d) {
-        if (!d || !d.success) { G.toast((d && d.message) || 'Could not load held candidates.', false); return; }
+        if (!d || !d.success) { G.toast((d && d.message) || 'Could not load students on hold.', false); return; }
         rows = d.rows || [];
         // "Nothing is blocking them any more" is decided per student in C#, not in SQL, so this
         // one narrowing has to happen here.
@@ -121,7 +121,7 @@ function load() {
                 '<td class="g-num g-sub">' + G.esc(g.holdAt) + '</td>' +
                 '<td><button type="button" class="g-btn g-btn--sm" data-open="' + G.esc(g.regno) + '">Review</button></td></tr>';
         }
-        G.qs('gBody').innerHTML = h || '<tr><td colspan="6" class="g-empty">Nobody is held in this scope.</td></tr>';
+        G.qs('gBody').innerHTML = h || '<tr><td colspan="6" class="g-empty">Nobody is on hold in this scope.</td></tr>';
 
         G.qs('gMeta').textContent = G.qs('fStale').value === 'stale'
             ? 'holds nothing is blocking any more' : 'oldest first';
@@ -146,7 +146,7 @@ function openExport() {
     }
     G.exportDialog({
         page: PAGE,
-        title: 'Export held candidates',
+        title: 'Export students on hold',
         subtitle: 'Oldest hold first, with the reason and who wrote it.',
         cfg: cfg(),
         columns: window.G_COLS || [],
@@ -181,15 +181,15 @@ function openExport() {
         ],
         groupDefault: 'prog',
         sheets: [
-            { k: 'stale', t: 'Holds that can be lifted', d: 'Nothing is blocking these students any more', on: true }
+            { k: 'stale', t: 'Holds that can be removed', d: 'Nothing is blocking these students any more', on: true }
         ]
     });
 }
 
 function footer(g) {
-    return '<button type="button" class="g-btn g-btn--p" id="mRelease">Lift the hold</button>' +
+    return '<button type="button" class="g-btn g-btn--p" id="mRelease">Remove the hold</button>' +
            '<button type="button" class="g-btn" id="mEdit">Edit the reason</button>' +
-           '<button type="button" class="g-btn" id="mClear">Clear for graduation</button>' +
+           '<button type="button" class="g-btn" id="mClear">Approve for graduation</button>' +
            '<label class="g-auto" title="After a decision, open the next hold in this filter">' +
              '<input type="checkbox" id="mAuto"' + (G.autoAdvance() ? ' checked' : '') + ' />' +
              'Move to the next' +
@@ -226,8 +226,8 @@ function doRelease() {
     var cur = G.currentStudent(); if (!cur) return;
     var g = cur.student;
     G.ajax(PAGE, 'ReleaseStudent', { regno: g.regno, acadYear: year(), note: '' }, function (d) {
-        if (d && d.success) { G.toast(d.message, true); afterDecision(g.regno, 'Released'); }
-        else G.toast((d && d.message) || 'Could not lift that hold.', false);
+        if (d && d.success) { G.toast(d.message, true); afterDecision(g.regno, 'Hold removed'); }
+        else G.toast((d && d.message) || 'Could not remove that hold.', false);
     });
 }
 
@@ -238,7 +238,7 @@ function doEdit() {
     var g = cur.student;
     G.reasonDialog({
         page: PAGE, regno: g.regno,
-        title: 'Update why ' + g.name + ' is held',
+        title: 'Update why ' + g.name + ' is on hold',
         subtitle: 'The original is kept in the decision history.',
         verb: 'Update the reason',
         initial: g.holdReason || '',
@@ -265,7 +265,7 @@ function doClear() {
             { regno: g.regno, acadYear: year(), note: note || '', overrideBlock: g.readiness === 'BLOCKED' },
             function (d) {
                 if (d && d.success) { G.toast(d.message, true); afterDecision(g.regno, 'On ' + year()); }
-                else G.toast((d && d.message) || 'Could not clear that candidate.', false);
+                else G.toast((d && d.message) || 'Could not approve that candidate.', false);
             });
     }
 
@@ -275,11 +275,11 @@ function doClear() {
             if (g.findings[i].level === 'BLOCK') b.push(g.findings[i].detail);
         G.reasonDialog({
             page: PAGE, regno: g.regno,
-            title: 'Clear ' + g.name + ' anyway',
+            title: 'Approve ' + g.name + ' anyway',
             subtitle: g.regno + '  ·  ' + (g.progname || g.progcode),
             warn: 'Still blocked: ' + b.join('; ') +
-                  ' Clearing is recorded against your name and shown on the graduation list.',
-            verb: 'Clear anyway',
+                  ' Approving is recorded against your name and shown on the graduation list.',
+            verb: 'Approve anyway',
             onSubmit: send
         });
     } else if (confirm('Put ' + g.name + ' on the ' + year() + ' graduation list?')) send('');

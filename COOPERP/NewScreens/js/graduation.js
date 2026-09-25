@@ -73,9 +73,9 @@ window.G = (function () {
 
     function chip(g) {
         if (g.graduatedYear) return '<span class="g-chip g-chip--listed">On ' + esc(g.graduatedYear) + '</span>';
-        if (g.holdReason) return '<span class="g-chip g-chip--held">Held</span>';
+        if (g.holdReason) return '<span class="g-chip g-chip--held">On hold</span>';
         if (g.readiness === 'BLOCKED') return '<span class="g-chip g-chip--blocked">Blocked</span>';
-        if (g.readiness === 'WARN') return '<span class="g-chip g-chip--warn">Needs a look</span>';
+        if (g.readiness === 'WARN') return '<span class="g-chip g-chip--warn">Needs checking</span>';
         return '<span class="g-chip g-chip--ready">Ready</span>';
     }
 
@@ -573,10 +573,10 @@ window.G = (function () {
         //  way, so this is not something to find further down.
         if (g.graduatedYear)
             h += '<div class="g-note g-note--info"><b>Already on the ' + esc(g.graduatedYear) +
-                 ' graduation list.</b>' + (g.clearedActor ? ' Cleared by ' + esc(g.clearedActor) +
+                 ' graduation list.</b>' + (g.clearedActor ? ' Approved by ' + esc(g.clearedActor) +
                  (g.clearedAt ? ' on ' + esc(g.clearedAt) : '') + '.' : '') + '</div>';
         if (g.holdReason)
-            h += '<div class="g-note g-note--warn"><b>Held by ' + esc(g.holdActor) + ' on ' +
+            h += '<div class="g-note g-note--warn"><b>Put on hold by ' + esc(g.holdActor) + ' on ' +
                  esc(g.holdAt) + '.</b><br>' + esc(g.holdReason) + '</div>';
 
         // ── The results, first ──────────────────────────────────────────────
@@ -667,7 +667,7 @@ window.G = (function () {
                       (blocks.length
                          ? 'Blocked: ' + blocks[0].detail
                          : (warns.length ? 'Flagged: ' + warns[0].detail
-                                         : 'Checking the record before clearing.'));
+                                         : 'Checking the record before approving.'));
             h += '<a class="g-fix" target="_blank" rel="noopener" href="StudentRearrangeManage.aspx?auto=1' +
                  '&regno=' + encodeURIComponent(g.regno) +
                  '&reason=' + encodeURIComponent(why) + '">' +
@@ -1392,14 +1392,14 @@ window.G = (function () {
             '<div class="g-ov" id="gRov">' +
               '<div class="g-modal g-modal--r" role="dialog" aria-modal="true" aria-labelledby="gRtitle">' +
                 '<div class="g-modal__h">' +
-                  '<div class="g-modal__t"><b id="gRtitle">Hold</b><span id="gRsub"></span></div>' +
+                  '<div class="g-modal__t"><b id="gRtitle">Put on hold</b><span id="gRsub"></span></div>' +
                   '<button type="button" class="g-modal__x" id="gRx" aria-label="Close">&times;</button>' +
                 '</div>' +
                 '<div class="g-modal__b" id="gRbody"></div>' +
                 '<div class="g-modal__f">' +
                   '<span class="g-hint" id="gRcount"></span>' +
                   '<button type="button" class="g-btn" id="gRcancel">Cancel</button>' +
-                  '<button type="button" class="g-btn g-btn--p" id="gRgo" disabled="disabled">Hold</button>' +
+                  '<button type="button" class="g-btn g-btn--p" id="gRgo" disabled="disabled">Put on hold</button>' +
                 '</div>' +
               '</div>' +
             '</div>';
@@ -1438,9 +1438,9 @@ window.G = (function () {
         RD = o || {};
         RD.min = RD.min === undefined ? 10 : RD.min;
 
-        qs('gRtitle').textContent = RD.title || 'Hold this candidate';
+        qs('gRtitle').textContent = RD.title || 'Put this candidate on hold';
         qs('gRsub').textContent = RD.subtitle || '';
-        qs('gRgo').textContent = RD.verb || 'Hold';
+        qs('gRgo').textContent = RD.verb || 'Put on hold';
 
         qs('gRbody').innerHTML =
             (RD.warn ? '<div class="g-note g-note--warn">' + esc(RD.warn) + '</div>' : '') +
@@ -1462,7 +1462,7 @@ window.G = (function () {
                 ? 'That will be recorded against your name.'
                 : (RD.min - n) + ' more character' + (RD.min - n === 1 ? '' : 's') + ' needed.';
             qs('gRcount').textContent = RD.count > 1
-                ? (RD.count + ' candidates will be held under this reason.') : '';
+                ? (RD.count + ' candidates will be put on hold for this reason.') : '';
         }
         ta.addEventListener('input', grade);
         // Ctrl+Enter submits: a reviewer working a queue keeps their hands on the keyboard.

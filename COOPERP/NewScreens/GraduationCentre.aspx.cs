@@ -78,7 +78,7 @@ public partial class COOPERP_NewScreens_GraduationCentre : System.Web.UI.Page
             cover.Add(new KeyValuePair<string, string>("Candidates", N(o.candidates)));
             cover.Add(new KeyValuePair<string, string>("Ready", N(o.ready)));
             cover.Add(new KeyValuePair<string, string>("Blocked", N(o.blocked)));
-            cover.Add(new KeyValuePair<string, string>("Held", N(o.held)));
+            cover.Add(new KeyValuePair<string, string>("On hold", N(o.held)));
             cover.Add(new KeyValuePair<string, string>("On the list", N(o.listed)));
             GraduationPdf.Send(Response, file, "Graduation Overview", f.acadYear, scope.Label, cover,
                                GraduationExport.PdfCols(flat),
@@ -99,7 +99,7 @@ public partial class COOPERP_NewScreens_GraduationCentre : System.Web.UI.Page
         s.Rows.Add(new[] { "Candidates in scope", N(o.candidates) });
         s.Rows.Add(new[] { "Ready - nothing outstanding", N(o.ready) });
         s.Rows.Add(new[] { "Blocked by at least one check", N(o.blocked) });
-        s.Rows.Add(new[] { "Held by a reviewer", N(o.held) });
+        s.Rows.Add(new[] { "On hold", N(o.held) });
         s.Rows.Add(new[] { "On the graduation list", N(o.listed) });
         if (o.backlogEarlier > 0)
             s.Rows.Add(new[] { "Finished earlier and still on no list", N(o.backlogEarlier) });
@@ -114,7 +114,7 @@ public partial class COOPERP_NewScreens_GraduationCentre : System.Web.UI.Page
         var s = new GraduationExport.Sheet();
         s.Name = "By programme";
         s.Columns = new[] { "Code", "Programme", "Faculty", "Candidates", "On a list",
-                            "Held", "Failed papers", "To review" };
+                            "On hold", "Failed papers", "To review" };
         for (int i = 3; i <= 7; i++) s.NumericColumns.Add(i);
         foreach (GraduationEngine.ProgProgress p in o.programmes)
         {
@@ -133,7 +133,7 @@ public partial class COOPERP_NewScreens_GraduationCentre : System.Web.UI.Page
     {
         var s = new GraduationExport.Sheet();
         s.Name = "By faculty";
-        s.Columns = new[] { "Faculty", "Programmes", "Candidates", "On a list", "Held",
+        s.Columns = new[] { "Faculty", "Programmes", "Candidates", "On a list", "On hold",
                             "Failed papers", "To review" };
         for (int i = 1; i <= 6; i++) s.NumericColumns.Add(i);
 

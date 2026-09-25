@@ -747,7 +747,7 @@ public static class GraduationEngine
                         AddGc(o.blockers, "Failed papers (1-49)", blkFail);
                         AddGc(o.blockers, "CGPA below " + N(CGPA_FLOOR, 1), blkCgpa);
                         AddGc(o.blockers, "Marks of zero, or no mark at all", warnMarks);
-                        AddGc(o.blockers, "Held by a reviewer", o.held);
+                        AddGc(o.blockers, "On hold", o.held);
                     }
             }
 
@@ -863,8 +863,8 @@ public static class GraduationEngine
 
         // C8: an open hold
         if (g.holdReason != "")
-            Add(g, "C8", "Held by a reviewer", "BLOCK",
-                "Held by " + g.holdActor + " on " + g.holdAt + ": " + g.holdReason);
+            Add(g, "C8", "On hold", "BLOCK",
+                "Put on hold by " + g.holdActor + " on " + g.holdAt + ": " + g.holdReason);
 
         // C2, outstanding papers.
         //

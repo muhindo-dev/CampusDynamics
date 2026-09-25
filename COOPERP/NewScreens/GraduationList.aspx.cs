@@ -147,8 +147,8 @@ public partial class COOPERP_NewScreens_GraduationList : System.Web.UI.Page
         c.Add(new GraduationExport.Col<Row>("class", "Class of Award", AW, F_class));
         c.Add(new GraduationExport.Col<Row>("year", "Graduation Year", AW, F_year));
 
-        c.Add(new GraduationExport.Col<Row>("by", "Cleared By", GV, F_by));
-        c.Add(new GraduationExport.Col<Row>("on", "Cleared On", GV, F_on));
+        c.Add(new GraduationExport.Col<Row>("by", "Approved By", GV, F_by));
+        c.Add(new GraduationExport.Col<Row>("on", "Approved On", GV, F_on));
 
         c.Add(new GraduationExport.Col<Row>("trans", "Transcript", DOC, F_trans).Off());
         c.Add(new GraduationExport.Col<Row>("cert", "Certificate", DOC, F_cert).Off());
@@ -352,14 +352,14 @@ public partial class COOPERP_NewScreens_GraduationList : System.Web.UI.Page
     private static GraduationExport.Sheet ByApprover(List<Row> rows)
     {
         var sh = new GraduationExport.Sheet();
-        sh.Name = "Who cleared whom";
-        sh.Columns = new[] { "Cleared By", "Names Cleared" };
+        sh.Name = "Who approved whom";
+        sh.Columns = new[] { "Approved By", "Names Approved" };
         sh.NumericColumns.Add(1);
         var tally = new Dictionary<string, int>();
         var order = new List<string>();
         foreach (Row r in rows)
         {
-            string k = r.clearedBy == "" ? "(cleared before this module existed)" : r.clearedBy;
+            string k = r.clearedBy == "" ? "(approved before this module existed)" : r.clearedBy;
             if (!tally.ContainsKey(k)) { tally[k] = 0; order.Add(k); }
             tally[k]++;
         }

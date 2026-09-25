@@ -8,9 +8,9 @@ The module lives in the sidebar under **Graduation**, and has five tabs:
 | Tab | What it is for |
 |---|---|
 | Graduation Centre | Where the cycle stands. Numbers only, no decisions. |
-| Candidates | The queue. Where clearing and holding happen. |
+| Candidates | The queue. Where approving and holding happen. |
 | Graduation List | Who has been approved. The finished list. |
-| Held Candidates | Everyone stopped for a reason, and why. |
+| On Hold | Everyone stopped for a reason, and why. |
 | Graduation Analysis | History and statistics, for reports. |
 
 ---
@@ -21,8 +21,8 @@ The module lives in the sidebar under **Graduation**, and has five tabs:
 
 The system finds candidates, checks them and sorts them, but it never adds anyone by
 itself. A name reaches the list only when a member of staff opens that student, reads
-the checks and presses **Clear**. That is the whole design, and everything below follows
-from it.
+the checks and presses **Approve for graduation**. That is the whole design, and
+everything below follows from it.
 
 So an empty list at the start of a cycle is correct, not broken. It fills as you work
 through the queue.
@@ -34,7 +34,7 @@ which finds students by reading this same table, and which predates the approval
 means a student can appear on the list without anyone approving them, including a student
 who is not in their final year. Until that is separated, check the list before you publish
 it, and remove anything you did not put there. A row added this way has no entry against
-it on the Held tab and no decision recorded, which is how you can tell.
+it on the On Hold tab and no decision recorded, which is how you can tell.
 
 ## What you can see
 
@@ -58,12 +58,12 @@ Pick the graduation year at the top. You then see, for that year:
 
 * **Ready**, candidates with nothing outstanding
 * **Blocked**, candidates stopped by at least one check
-* **Held**, candidates a reviewer has parked
+* **On hold**, candidates a reviewer has parked
 * **On the list**, candidates already approved
 
 Below that, **Where the blockers are** shows which check is stopping the most people, and
 **Progress by programme** shows every programme with its candidates, how many are on the
-list, held, blocked, and how many are still to be looked at.
+list, on hold, blocked, and how many are still to be looked at.
 
 Clicking a programme takes you into the Candidates tab already filtered to it.
 
@@ -79,13 +79,13 @@ This is where the work happens.
 
 The filter bar across the top narrows the queue:
 
-* **Graduation year**, the cycle you are clearing for
+* **Graduation year**, the cycle you are approving for
 * **Who to show**, either *This cycle, finishing now* or *Everyone not yet graduated*
 * **Faculty**, **Department**, **Programme**, which cascade: choosing a faculty limits
   the departments, and choosing a department limits the programmes
 * **Intake**, the year the student joined
 * **Graduation list**, either *Not yet on a list*, *Already on the list*, or *Both*
-* **Readiness**, either *Ready*, *Needs a look*, or *Blocked*
+* **Readiness**, either *Ready*, *Needs checking*, or *Blocked*
 * **Order** and **Search**
 
 The default is the pending queue for the current cycle, which is what you want on most days.
@@ -103,34 +103,34 @@ Open any student and you see eight checks. Each one passes, warns, or blocks.
 | C5 | Marks not yet published | Warns while marks are still with a lecturer, a head of department, or approved but not yet published. Their position may still change. |
 | C6 | Programme duration | Blocks if the student has not reached the final year of their programme. |
 | C7 | Class of award | Blocks if the CGPA is below 2.0, the floor below which no class is awarded at any level. |
-| C8 | Held by a reviewer | Blocks while a hold is open, and shows who held them, when, and why. |
+| C8 | On hold | Blocks while a hold is open, and shows who put them on hold, when, and why. |
 
 The student's overall state is the worst of the eight:
 
 * **Ready**, every check passed
-* **Needs a look**, at least one warning, nothing blocking
+* **Needs checking**, at least one warning, nothing blocking
 * **Blocked**, at least one check blocking
 
 A warning is not a refusal. It is a request that someone look before approving.
 
 ### The four decisions
 
-**Clear** puts the student on the graduation list for the selected year. If they are
-blocked, the system stops and tells you which checks are blocking. You may still go
-ahead, but you must confirm the override and type a justification of at least ten
-characters. That justification is kept.
+**Approve for graduation** puts the student on the graduation list for the selected
+year. If they are blocked, the system stops and tells you which checks are blocking. You
+may still go ahead, but you must confirm the override and type a justification of at
+least ten characters. That justification is kept.
 
-**Hold** stops a candidate until something is investigated. The reason is required and
-must be at least ten characters. The reason box is not a blank field: it suggests the
-reasons drawn from this student's own failing checks first, then the reasons your
-colleagues have used most often, then the standing ones such as financial clearance or
-unverified documents. Most holds are two clicks. A held candidate stays visible, with the
-reason attached, rather than quietly disappearing.
+**Put on hold** stops a candidate until something is investigated. The reason is
+required and must be at least ten characters. The reason box is not a blank field: it
+suggests the reasons drawn from this student's own failing checks first, then the reasons
+your colleagues have used most often, then the standing ones such as financial clearance
+or unverified documents. Most holds are two clicks. A candidate on hold stays visible,
+with the reason attached, rather than quietly disappearing.
 
-**Release** lifts a hold and returns the student to the queue.
+**Remove the hold** returns the student to the queue.
 
-**Remove** takes a student off the graduation list. It needs a reason of at least ten
-characters.
+**Remove from the list** takes a student off the graduation list. It needs a reason of
+at least ten characters.
 
 ### Working through the queue
 
@@ -139,8 +139,9 @@ set**, so you can work through a programme without going back to the table. It f
 your filter across page boundaries. The table behind the modal updates when you close it,
 not between decisions, so the row numbering does not shift under you mid-run.
 
-You can also select several rows and clear or hold them together. Any student the batch
-could not act on is listed back to you with the reason, rather than failing silently.
+You can also select several rows and approve them, or put them on hold, together. Any
+student the batch could not act on is listed back to you with the reason, rather than
+failing silently.
 
 ### Adding someone the system missed
 
@@ -164,16 +165,16 @@ This tab is also what students see in the portal, so treat it as published.
 
 ---
 
-## Tab 4: Held Candidates
+## Tab 4: On Hold
 
 Everyone currently stopped, with the reason, who set it and when.
 
 Work this tab down to empty before a cycle closes. Every row is either something to fix
-or something to release. A hold nobody revisits is a student who quietly never graduates,
-which is exactly what this tab exists to prevent.
+or something to release. A hold nobody comes back to is a student who quietly never
+graduates, which is exactly what this tab exists to prevent.
 
-From here you can release a student, change the reason, or clear them once the problem is
-resolved.
+From here you can remove the hold, change the reason, or approve the student once the
+problem is resolved.
 
 ---
 
@@ -252,8 +253,8 @@ Under the count, the list says when it was last updated and that names appear as
 Registry approves them, so a student who does not see their name yet understands the list
 is still being worked through rather than finished.
 
-**This means clearing a student is visible to them almost at once.** Clear when you are
-sure.
+**This means approving a student is visible to them almost at once.** Approve when you
+are sure.
 
 ---
 
@@ -262,26 +263,26 @@ sure.
 Every decision is written down. Nothing in this module is anonymous.
 
 * `acad_graduands` is the graduation list itself, the official record of who graduated.
-* `acad_grad_review` holds every decision ever made, cleared, held or released, with who
+* `acad_grad_review` holds every decision ever made, approved, held or released, with who
   made it, when, in what role, and the reason or justification they typed. Decisions are
   kept even after a student is removed from the list.
 * `acad_activity_log` carries the same events into the system-wide audit trail.
 
-A clearance made over a block is recorded as such, with the justification, and is
-distinguishable from an ordinary clearance for ever.
+An approval made over a block is recorded as such, with the justification, and is
+distinguishable from an ordinary approval for ever.
 
 ---
 
 ## Running a cycle
 
 1. **Graduation Centre.** Choose the year. See where you stand.
-2. **Candidates**, filtered to *Ready*. Work through the queue, clearing as you go.
+2. **Candidates**, filtered to *Ready*. Work through the queue, approving as you go.
    These are the straightforward ones.
-3. **Candidates**, filtered to *Needs a look*. Read the warnings and decide each one.
-   Hold anything that needs someone else to act.
+3. **Candidates**, filtered to *Needs checking*. Read the warnings and decide each one.
+   Put anything that needs someone else to act on hold.
 4. **Candidates**, filtered to *Blocked*. Most of these are genuine. Fix what can be
-   fixed, hold the rest with a reason.
-5. **Held Candidates.** Work it down to empty.
+   fixed, put the rest on hold with a reason.
+5. **On Hold.** Work it down to empty.
 6. **Graduation List.** Check it, then export the PDF for the Registrar.
 7. **Graduation Analysis.** Generate the summary for the Senate paper.
 
@@ -298,7 +299,7 @@ Registry or the relevant dean.
 
 **A student is blocked but should graduate.**
 Fix the underlying record if you can, because that is better for everyone. If it cannot
-be fixed in time, clear over the block and write the justification. It is kept, and it is
+be fixed in time, approve over the block and write the justification. It is kept, and it is
 visible.
 
 **Someone is on the list who should not be.**
@@ -307,8 +308,8 @@ list is published, because students can see the list.
 
 **A student asks why they are not on the list.**
 Search for them on the Candidates tab. Their checks say exactly what is outstanding. If
-they are held, the Held tab gives the reason and who set it.
+they are on hold, the On Hold tab gives the reason and who set it.
 
-**Will clearing someone change their marks or their CGPA?**
+**Will approving someone change their marks or their CGPA?**
 No. This module reads results and never writes them. Marks are corrected in the marks
 screens, and the checks pick up the correction next time you open the student.

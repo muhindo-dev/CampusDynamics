@@ -162,7 +162,7 @@ function openExport() {
         sheets: [
             { k: 'byprog', t: 'Summary by programme', d: 'How a Senate paper opens', on: true },
             { k: 'byclass', t: 'By class of award', d: 'The distribution table that always gets asked for', on: true },
-            { k: 'bywho', t: 'Who cleared whom', d: 'Names cleared, by reviewer', on: false }
+            { k: 'bywho', t: 'Who approved whom', d: 'Names approved, by reviewer', on: false }
         ]
     });
 }
@@ -247,8 +247,8 @@ function doPrint() {
         h += '</tbody></table>';
     }
 
-    h += '<div class="foot">Prepared from the Graduation Centre. Every name on this list was cleared by a ' +
-         'named reviewer against the results on record at the time of clearing; the evidence behind each ' +
+    h += '<div class="foot">Prepared from the Graduation Centre. Every name on this list was approved by a ' +
+         'named reviewer against the results on record at the time of approval; the evidence behind each ' +
          'decision is retained and can be produced on request.</div>' +
          '<div class="sig"><div>Academic Registrar</div><div>Chairperson, Senate</div></div></body></html>';
     w.document.open(); w.document.write(h); w.document.close();

@@ -43,7 +43,7 @@
     <div class="g-wrap" style="max-height:460px;">
       <table class="g-tbl"><thead><tr>
         <th>Programme</th><th class="g-num">Candidates</th><th class="g-num">On a list</th>
-        <th class="g-num">Held</th><th class="g-num">Failed papers</th><th class="g-num">To review</th>
+        <th class="g-num">On hold</th><th class="g-num">Failed papers</th><th class="g-num">To review</th>
       </tr></thead><tbody id="gProg"></tbody></table>
     </div>
   </div>
@@ -124,7 +124,7 @@ function openExport() {
         sheets: [
             { k: 'summary', t: 'Summary', d: 'The five figures, and what is stopping the rest', on: true },
             { k: 'byfac', t: 'By faculty', d: 'The same table rolled up', on: true },
-            { k: 'byprog', t: 'By programme', d: 'Candidates, listed, held, blocked, to review', on: true },
+            { k: 'byprog', t: 'By programme', d: 'Candidates, approved, on hold, blocked, to review', on: true },
             { k: 'integrity', t: 'Data integrity', d: 'Anything the engine refused to assume', on: true }
         ]
     });

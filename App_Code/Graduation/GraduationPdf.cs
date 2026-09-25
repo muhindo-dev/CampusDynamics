@@ -336,8 +336,8 @@ public static class GraduationPdf
         foot.HeightF = 92;
         rep.Bands.Add(foot);
 
-        foot.Controls.Add(L("Every name on this list was cleared by a named reviewer against the results on " +
-                            "record at the time of clearing. The evidence behind each decision is retained in " +
+        foot.Controls.Add(L("Every name on this list was approved by a named reviewer against the results on " +
+                            "record at the time of approval. The evidence behind each decision is retained in " +
                             "full and can be produced on request.",
                             0, 8, page, 24, 7.5f, FontStyle.Italic, MUTE));
 

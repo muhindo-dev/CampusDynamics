@@ -358,7 +358,7 @@ public static class GraduationExport
             Row(sb, "sCell", Truncation);
             Blank(sb);
         }
-        Row(sb, "sFoot", "Every name on a graduation list produced here was cleared by a named reviewer");
+        Row(sb, "sFoot", "Every name on a graduation list produced here was approved by a named reviewer");
         Row(sb, "sFoot", "against the results on record at the time. The evidence behind each decision is");
         Row(sb, "sFoot", "retained in full and can be produced on request.");
         sb.AppendLine("</Table></Worksheet>");

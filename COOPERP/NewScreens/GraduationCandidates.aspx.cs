@@ -101,9 +101,9 @@ public partial class COOPERP_NewScreens_GraduationCandidates : System.Web.UI.Pag
         c.Add(new GraduationExport.Col<GradCandidate>("status", "Status", DC, F_status));
         c.Add(new GraduationExport.Col<GradCandidate>("blockers", "What Is Blocking Them", DC, F_blockers));
         c.Add(new GraduationExport.Col<GradCandidate>("warnings", "Points To Check", DC, F_warnings).Off());
-        c.Add(new GraduationExport.Col<GradCandidate>("holdWhy", "Reason Held", DC, F_holdWhy).Off());
-        c.Add(new GraduationExport.Col<GradCandidate>("holdWho", "Held By", DC, F_holdWho).Off());
-        c.Add(new GraduationExport.Col<GradCandidate>("holdWhen", "Held On", DC, F_holdWhen).Off());
+        c.Add(new GraduationExport.Col<GradCandidate>("holdWhy", "Hold Reason", DC, F_holdWhy).Off());
+        c.Add(new GraduationExport.Col<GradCandidate>("holdWho", "On Hold By", DC, F_holdWho).Off());
+        c.Add(new GraduationExport.Col<GradCandidate>("holdWhen", "On Hold Since", DC, F_holdWhen).Off());
         return c;
     }
 
@@ -145,11 +145,11 @@ public partial class COOPERP_NewScreens_GraduationCandidates : System.Web.UI.Pag
     private static string F_cover(GradCandidate g)
     { return g.coverageChecked ? g.coverageMissing.ToString(CultureInfo.InvariantCulture) : ""; }
     private static string F_ready(GradCandidate g)
-    { return g.readiness == "READY" ? "Ready" : g.readiness == "WARN" ? "Needs a look" : "Blocked"; }
+    { return g.readiness == "READY" ? "Ready" : g.readiness == "WARN" ? "Needs checking" : "Blocked"; }
     private static string F_status(GradCandidate g)
     {
         return g.graduatedYear != "" ? ("On the " + g.graduatedYear + " list")
-             : (g.holdReason != "" ? "Held" : "Under review");
+             : (g.holdReason != "" ? "On hold" : "Under review");
     }
     private static string F_blockers(GradCandidate g) { return Findings(g, "BLOCK"); }
     private static string F_warnings(GradCandidate g) { return Findings(g, "WARN"); }
@@ -398,7 +398,7 @@ public partial class COOPERP_NewScreens_GraduationCandidates : System.Web.UI.Pag
         var sh = new GraduationExport.Sheet();
         sh.Name = "By programme";
         sh.Columns = new[] { "Programme Code", "Programme", "Faculty", "Candidates",
-                             "Ready", "Needs a look", "Blocked" };
+                             "Ready", "Needs checking", "Blocked" };
         for (int i = 3; i <= 6; i++) sh.NumericColumns.Add(i);
 
         var keys = new List<string>();
@@ -444,9 +444,9 @@ public partial class COOPERP_NewScreens_GraduationCandidates : System.Web.UI.Pag
         sh.NumericColumns.Add(1);
         int n = rows.Count;
         sh.Rows.Add(Pc("Ready, nothing outstanding", ready, n));
-        sh.Rows.Add(Pc("Needs a look", warn, n));
+        sh.Rows.Add(Pc("Needs checking", warn, n));
         sh.Rows.Add(Pc("Blocked", blocked, n));
-        sh.Rows.Add(Pc("Of those, held by a reviewer", held, n));
+        sh.Rows.Add(Pc("Of those, on hold", held, n));
         sh.Rows.Add(new[] { "Total", n.ToString(CultureInfo.InvariantCulture), "100%" });
         return sh;
     }
@@ -520,7 +520,7 @@ public partial class COOPERP_NewScreens_GraduationCandidates : System.Web.UI.Pag
         foreach (string x in (regnos ?? "").Split(','))
         { string t = x.Trim(); if (t != "" && !ids.Contains(t)) ids.Add(t); }
         if (ids.Count == 0) return J.Serialize(new { success = false, message = "Nothing was selected." });
-        if (ids.Count > 300) return J.Serialize(new { success = false, message = "Hold at most 300 at a time." });
+        if (ids.Count > 300) return J.Serialize(new { success = false, message = "Put at most 300 on hold at a time." });
 
         int done = 0;
         var skipped = new List<string>();
@@ -548,7 +548,7 @@ public partial class COOPERP_NewScreens_GraduationCandidates : System.Web.UI.Pag
             success = true,
             held = done,
             skipped = skipped,
-            message = done + (done == 1 ? " candidate was" : " candidates were") + " held" +
+            message = done + (done == 1 ? " candidate was" : " candidates were") + " put on hold" +
                       (skipped.Count > 0 ? "; " + skipped.Count + " skipped." : ".")
         });
     }
@@ -684,7 +684,7 @@ public partial class COOPERP_NewScreens_GraduationCandidates : System.Web.UI.Pag
         foreach (string x in (regnos ?? "").Split(','))
         { string t = x.Trim(); if (t != "" && !ids.Contains(t)) ids.Add(t); }
         if (ids.Count == 0) return J.Serialize(new { success = false, message = "Nothing was selected." });
-        if (ids.Count > 300) return J.Serialize(new { success = false, message = "Clear at most 300 at a time." });
+        if (ids.Count > 300) return J.Serialize(new { success = false, message = "Approve at most 300 at a time." });
 
         int done = 0;
         var skipped = new List<string>();

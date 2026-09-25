@@ -225,7 +225,7 @@ public static class GraduationBootstrap
         if (f.readiness != "")
             l.Add(new KeyValuePair<string, string>("Readiness",
                 f.readiness == "ready" ? "Ready - nothing outstanding"
-                : f.readiness == "warn" ? "Needs a look"
+                : f.readiness == "warn" ? "Needs checking"
                 : f.readiness == "blocked" ? "Blocked by at least one check" : f.readiness));
         if (f.award != "") l.Add(new KeyValuePair<string, string>("Class of award", f.award));
         if (f.search != "") l.Add(new KeyValuePair<string, string>("Search", f.search));

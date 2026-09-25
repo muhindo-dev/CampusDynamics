@@ -296,7 +296,7 @@ public static class GraduationService
                     });
                 }
                 if (g.readiness == "BLOCKED" && note.Length < 10)
-                    return Fail("Clearing a blocked candidate needs a written justification of at least 10 characters.");
+                    return Fail("Approving a blocked candidate needs a written justification of at least 10 characters.");
 
                 using (var tx = c.BeginTransaction())
                 {
@@ -322,8 +322,8 @@ public static class GraduationService
                         GraduationStats.Touch(c, tx, g.regno);
                         Audit(c, tx, actor, g.regno, g.name, g.progcode, acadYear,
                               g.readiness == "BLOCKED"
-                                ? "Cleared onto the graduation list OVER a block: " + note
-                                : "Cleared onto the graduation list");
+                                ? "Approved onto the graduation list OVER a block: " + note
+                                : "Approved onto the graduation list");
                         tx.Commit();
                     }
                     catch { try { tx.Rollback(); } catch { } throw; }
@@ -348,7 +348,7 @@ public static class GraduationService
         if (regno == "") return Fail("No student was given.");
         if (acadYear == "") return Fail("Choose the graduation year first.");
         if (reason.Length < 10)
-            return Fail("Say why this candidate is being held: at least 10 characters. " +
+            return Fail("Say why this candidate is being put on hold: at least 10 characters. " +
                         "Whoever picks this up next has only this sentence to go on.");
         if (reason.Length > 1000) reason = reason.Substring(0, 1000);
 
@@ -364,7 +364,7 @@ public static class GraduationService
                     return Fail(g.progcode + " is outside the programmes you can act on.");
                 if (g.graduatedYear != "")
                     return Fail(regno + " is already on the " + g.graduatedYear +
-                                " graduation list. Remove them from it before holding them.");
+                                " graduation list. Remove them from it before putting them on hold.");
 
                 using (var tx = c.BeginTransaction())
                 {
@@ -372,12 +372,12 @@ public static class GraduationService
                     {
                         Supersede(c, tx, g.regno);
                         WriteVerdict(c, tx, g, acadYear, "HELD", reason, actor, scope.RoleNote);
-                        Audit(c, tx, actor, g.regno, g.name, g.progcode, acadYear, "Held: " + reason);
+                        Audit(c, tx, actor, g.regno, g.name, g.progcode, acadYear, "On hold: " + reason);
                         tx.Commit();
                     }
                     catch { try { tx.Rollback(); } catch { } throw; }
                 }
-                return Ok(g.name + " is held. They stay off the " + acadYear + " list until released.");
+                return Ok(g.name + " is on hold. They stay off the " + acadYear + " list until the hold is removed.");
             }
         }
         catch (Exception ex) { return Fail(ex.Message); }
@@ -399,7 +399,7 @@ public static class GraduationService
                 if (g == null) return Fail("No student record for " + regno + ".");
                 if (!InScope(scope, g.progcode))
                     return Fail(g.progcode + " is outside the programmes you can act on.");
-                if (g.holdReason == "") return Fail(regno + " is not currently held.");
+                if (g.holdReason == "") return Fail(regno + " is not currently on hold.");
 
                 using (var tx = c.BeginTransaction())
                 {
@@ -407,7 +407,7 @@ public static class GraduationService
                     {
                         Supersede(c, tx, g.regno);
                         WriteVerdict(c, tx, g, acadYear == "" ? "-" : acadYear, "RELEASED", note, actor, scope.RoleNote);
-                        Audit(c, tx, actor, g.regno, g.name, g.progcode, acadYear, "Hold lifted" + (note == "" ? "" : ": " + note));
+                        Audit(c, tx, actor, g.regno, g.name, g.progcode, acadYear, "Hold removed" + (note == "" ? "" : ": " + note));
                         tx.Commit();
                     }
                     catch { try { tx.Rollback(); } catch { } throw; }

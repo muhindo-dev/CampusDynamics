@@ -65,9 +65,9 @@ public partial class COOPERP_NewScreens_GraduationHeld : System.Web.UI.Page
         c.Add(new GraduationExport.Col<GradCandidate>("faculty", "Faculty", ID, F_faculty));
         c.Add(new GraduationExport.Col<GradCandidate>("intake", "Intake", ID, F_intake).Off());
 
-        c.Add(new GraduationExport.Col<GradCandidate>("why", "Reason Held", HD, F_why));
-        c.Add(new GraduationExport.Col<GradCandidate>("who", "Held By", HD, F_who));
-        c.Add(new GraduationExport.Col<GradCandidate>("when", "Held On", HD, F_when));
+        c.Add(new GraduationExport.Col<GradCandidate>("why", "Hold Reason", HD, F_why));
+        c.Add(new GraduationExport.Col<GradCandidate>("who", "On Hold By", HD, F_who));
+        c.Add(new GraduationExport.Col<GradCandidate>("when", "On Hold Since", HD, F_when));
         c.Add(new GraduationExport.Col<GradCandidate>("still", "Still Blocked", HD, F_still));
         c.Add(new GraduationExport.Col<GradCandidate>("blockers", "What Is Blocking Them", HD, F_blockers));
 
@@ -144,34 +144,34 @@ public partial class COOPERP_NewScreens_GraduationHeld : System.Web.UI.Page
 
         GraduationExport.Truncation = truncated
             ? ("The filters matched " + total.ToString(CultureInfo.InvariantCulture) +
-               " held candidates. This file carries the first " +
+               " students on hold. This file carries the first " +
                rows.Count.ToString(CultureInfo.InvariantCulture) + ".")
             : null;
 
         GraduationExport.Sheet sheet = GraduationExport.Build(
-            "Held", "oldest hold first", Catalogue(), rows, Request.Form["gradCols"]);
+            "On hold", "oldest hold first", Catalogue(), rows, Request.Form["gradCols"]);
 
         var sheets = new List<GraduationExport.Sheet> { sheet };
         if (GraduationExport.Wants(Request.Form["gradSheets"] ?? "", "stale")) sheets.Add(Stale(rows));
 
-        var cover = GraduationBootstrap.CoverOf(f, "Held candidates");
+        var cover = GraduationBootstrap.CoverOf(f, "Students on hold");
         cover.Add(new KeyValuePair<string, string>("Holds listed",
             rows.Count.ToString(CultureInfo.InvariantCulture)));
-        string file = GraduationExport.FileName("graduation-held", f.acadYear);
+        string file = GraduationExport.FileName("graduation-on-hold", f.acadYear);
         try
         {
             if (fmt == "csv")
-                GraduationExport.Csv(Response, file, "Held Candidates", scope.Label, cover,
+                GraduationExport.Csv(Response, file, "Students on Hold", scope.Label, cover,
                                      sheet.Columns, sheet.Rows);
             else if (fmt == "xls")
-                GraduationExport.Workbook(Response, file, "Held Candidates", scope.Label, cover, sheets);
+                GraduationExport.Workbook(Response, file, "Students on Hold", scope.Label, cover, sheets);
             else
             {
                 var groups = new List<string>();
                 foreach (GradCandidate g in rows)
                     groups.Add(g.progname == "" ? g.progcode : g.progname + "   (" + g.progcode + ")");
                 GraduationExport.Sheet pdfSheet = GraduationExport.WithoutGroupColumns(sheet, "prog");
-                GraduationPdf.Send(Response, file, "Held Candidates", f.acadYear, scope.Label, cover,
+                GraduationPdf.Send(Response, file, "Students on Hold", f.acadYear, scope.Label, cover,
                                    GraduationExport.PdfCols(pdfSheet),
                                    GraduationExport.ToTable(pdfSheet, groups),
                                    GraduationExport.GROUP_COL, true, GraduationExport.Truncation);
@@ -188,7 +188,7 @@ public partial class COOPERP_NewScreens_GraduationHeld : System.Web.UI.Page
     {
         var sh = new GraduationExport.Sheet();
         sh.Name = "Holds that can be lifted";
-        sh.Columns = new[] { "Student Number", "Name", "Programme", "Reason Held", "Held By", "Held On" };
+        sh.Columns = new[] { "Student Number", "Name", "Programme", "Hold Reason", "On Hold By", "On Hold Since" };
         foreach (GradCandidate g in rows)
             if (g.readiness != "BLOCKED")
                 sh.Rows.Add(new[] { g.regno, g.name, g.progname == "" ? g.progcode : g.progname,

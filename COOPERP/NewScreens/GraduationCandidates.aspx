@@ -22,7 +22,7 @@
         <option value="listed">Already on the list</option>
         <option value="all">Both</option></select></div>
     <div class="g-f" style="flex:0 0 116px;"><label for="fReady">Readiness</label>
-      <select id="fReady"><option value="">Any</option><option value="ready">Ready</option><option value="warn">Needs a look</option><option value="blocked">Blocked</option></select></div>
+      <select id="fReady"><option value="">Any</option><option value="ready">Ready</option><option value="warn">Needs checking</option><option value="blocked">Blocked</option></select></div>
     <div class="g-f" style="flex:0 0 108px;"><label for="fSort">Order</label>
       <select id="fSort"><option value="regno">Student number</option><option value="name">Name</option>
         <option value="prog">Programme</option><option value="entry">Newest intake</option></select></div>
@@ -157,10 +157,10 @@ function render(d) {
         h += '<tr class="is-click' + (g.graduatedYear ? ' is-listed' : '') +
              '" data-reg="' + G.esc(g.regno) + '">' +
             '<td>' + (pick ? '<input type="checkbox" class="ck" data-reg="' + G.esc(g.regno) + '" />'
-                           : '<span class="g-sub" title="Only candidates with nothing outstanding can be bulk-cleared">&ndash;</span>') + '</td>' +
+                           : '<span class="g-sub" title="Only candidates with nothing outstanding can be approved in bulk">&ndash;</span>') + '</td>' +
             '<td>' + G.photoCell(g.regno, g.name,
                  g.graduatedYear ? ('on the ' + g.graduatedYear + ' list' +
-                     (g.clearedActor ? ', cleared by ' + g.clearedActor : '')) : '') + '</td>' +
+                     (g.clearedActor ? ', approved by ' + g.clearedActor : '')) : '') + '</td>' +
             '<td>' + G.esc(g.progname || g.progcode) + '<div class="g-sub">' + G.esc(g.progcode) + '</div></td>' +
             '<td class="g-num g-sub">' + G.esc(g.entryyear) + '</td>' +
             '<td>' + G.credits(g) + '</td>' +
@@ -206,8 +206,8 @@ function syncBulk() {
     bar.style.display = 'flex';
     bar.innerHTML =
         '<span class="g-batch__n">' + n + ' selected</span>' +
-        '<button type="button" class="g-btn g-btn--p g-btn--sm" id="bClear">Clear ' + n + ' for graduation</button>' +
-        '<button type="button" class="g-btn g-btn--d g-btn--sm" id="bHold">Hold ' + n + '&hellip;</button>' +
+        '<button type="button" class="g-btn g-btn--p g-btn--sm" id="bClear">Approve ' + n + ' for graduation</button>' +
+        '<button type="button" class="g-btn g-btn--d g-btn--sm" id="bHold">Put ' + n + ' on hold&hellip;</button>' +
         '<button type="button" class="g-btn g-btn--sm g-batch__x" id="bNone">Deselect</button>';
     G.qs('bClear').addEventListener('click', doBulkClear);
     G.qs('bHold').addEventListener('click', doBulkHold);
@@ -226,9 +226,9 @@ function doBulkClear() {
                  G.qs('fYear').value + ' graduation list?\n\nEach one is re-checked on the server before it is added.')) return;
     G.qs('bClear').disabled = true;
     G.ajax(PAGE, 'ClearMany', { regnos: regs.join(','), acadYear: G.qs('fYear').value }, function (d) {
-        if (!d || !d.success) { G.toast((d && d.message) || 'The bulk clear did not run.', false); syncBulk(); return; }
+        if (!d || !d.success) { G.toast((d && d.message) || 'The bulk approval did not run.', false); syncBulk(); return; }
         G.toast(d.message, d.cleared > 0);
-        report(d.skipped, 'cleared');
+        report(d.skipped, 'approved');
         load();
     });
 }
@@ -244,16 +244,16 @@ function doBulkHold() {
         page: PAGE,
         regno: '',
         count: regs.length,
-        title: 'Hold ' + regs.length + ' candidate' + (regs.length === 1 ? '' : 's'),
+        title: 'Put ' + regs.length + ' candidate' + (regs.length === 1 ? '' : 's'),
         subtitle: 'One reason, recorded separately against each of them.',
-        verb: 'Hold ' + regs.length,
+        verb: 'Put ' + regs.length + ' on hold',
         onSubmit: function (reason) {
             G.ajax(PAGE, 'HoldMany',
                 { regnos: regs.join(','), acadYear: G.qs('fYear').value, reason: reason },
                 function (d) {
-                    if (!d || !d.success) { G.toast((d && d.message) || 'The bulk hold did not run.', false); return; }
+                    if (!d || !d.success) { G.toast((d && d.message) || 'Putting them on hold did not run.', false); return; }
                     G.toast(d.message, d.held > 0);
-                    report(d.skipped, 'held');
+                    report(d.skipped, 'put on hold');
                     load();
                 });
         }
@@ -347,19 +347,19 @@ function openExport() {
 function footer(g) {
     if (g.graduatedYear) return '<span class="g-sub">Already on the ' + G.esc(g.graduatedYear) + ' list.</span>';
     if (g.holdReason)
-        return '<button type="button" class="g-btn g-btn--p" id="mRelease">Lift the hold</button>' +
-               '<button type="button" class="g-btn" id="mClear">Clear for graduation</button>';
-    return '<button type="button" class="g-btn g-btn--p" id="mClear">Clear for graduation</button>' +
-           '<button type="button" class="g-btn g-btn--d" id="mHold">Hold&hellip;</button>' +
+        return '<button type="button" class="g-btn g-btn--p" id="mRelease">Remove the hold</button>' +
+               '<button type="button" class="g-btn" id="mClear">Approve for graduation</button>';
+    return '<button type="button" class="g-btn g-btn--p" id="mClear">Approve for graduation</button>' +
+           '<button type="button" class="g-btn g-btn--d" id="mHold">Put on hold&hellip;</button>' +
            // The switch belongs beside the decision it changes, not in a settings menu.
            '<label class="g-auto" title="After a decision, open the next candidate in this filter">' +
              '<input type="checkbox" id="mAuto"' + (G.autoAdvance() ? ' checked' : '') + ' />' +
              'Move to the next candidate' +
            '</label>' +
            '<span class="g-hint">' +
-           (g.readiness === 'BLOCKED' ? 'Blocked, clearing will ask you to justify it in writing.'
-            : g.readiness === 'WARN' ? 'Read the points above before clearing.'
-            : 'Nothing outstanding, safe to clear.') + '</span>';
+           (g.readiness === 'BLOCKED' ? 'Blocked, approving will ask you to justify it in writing.'
+            : g.readiness === 'WARN' ? 'Read the points above before approving.'
+            : 'Nothing outstanding, safe to approve.') + '</span>';
 }
 
 // The footer only exists once the record has come back, so it is wired from the callback
@@ -409,7 +409,7 @@ function doClear() {
             { regno: g.regno, acadYear: year, note: note || '', overrideBlock: g.readiness === 'BLOCKED' },
             function (d) {
                 if (d && d.success) { G.toast(d.message, true); afterDecision(g.regno, 'On ' + year); }
-                else G.toast((d && d.message) || 'Could not clear that candidate.', false);
+                else G.toast((d && d.message) || 'Could not approve that candidate.', false);
             });
     }
 
@@ -419,11 +419,11 @@ function doClear() {
             if (g.findings[i].level === 'BLOCK') b.push(g.findings[i].detail);
         G.reasonDialog({
             page: PAGE, regno: g.regno,
-            title: 'Clear ' + g.name + ' anyway',
+            title: 'Approve ' + g.name + ' anyway',
             subtitle: g.regno + '  \\u00b7  ' + (g.progname || g.progcode),
             warn: 'This candidate is blocked: ' + b.join('; ') +
-                  ' Clearing them is recorded against your name and shown on the graduation list.',
-            verb: 'Clear anyway',
+                  ' Approving them is recorded against your name and shown on the graduation list.',
+            verb: 'Approve anyway',
             onSubmit: send
         });
     } else if (confirm('Put ' + g.name + ' on the ' + year + ' graduation list?')) send('');
@@ -435,13 +435,13 @@ function doHold() {
     if (!year) { G.toast('Choose the graduation year first.', false); return; }
     G.reasonDialog({
         page: PAGE, regno: g.regno,
-        title: 'Hold ' + g.name,
+        title: 'Put ' + g.name + ' on hold',
         subtitle: g.regno + '  \\u00b7  ' + (g.progname || g.progcode),
-        verb: 'Hold',
+        verb: 'Put on hold',
         onSubmit: function (reason) {
             G.ajax(PAGE, 'HoldStudent', { regno: g.regno, acadYear: year, reason: reason }, function (d) {
-                if (d && d.success) { G.toast(d.message, true); afterDecision(g.regno, 'Held'); }
-                else G.toast((d && d.message) || 'Could not hold that candidate.', false);
+                if (d && d.success) { G.toast(d.message, true); afterDecision(g.regno, 'On hold'); }
+                else G.toast((d && d.message) || 'Could not put that candidate on hold.', false);
             });
         }
     });
@@ -451,8 +451,8 @@ function doRelease() {
     var cur = G.currentStudent(); if (!cur) return;
     var g = cur.student;
     G.ajax(PAGE, 'ReleaseStudent', { regno: g.regno, acadYear: G.qs('fYear').value, note: '' }, function (d) {
-        if (d && d.success) { G.toast(d.message, true); afterDecision(g.regno, 'Released'); }
-        else G.toast((d && d.message) || 'Could not lift that hold.', false);
+        if (d && d.success) { G.toast(d.message, true); afterDecision(g.regno, 'Hold removed'); }
+        else G.toast((d && d.message) || 'Could not remove that hold.', false);
     });
 }
 
