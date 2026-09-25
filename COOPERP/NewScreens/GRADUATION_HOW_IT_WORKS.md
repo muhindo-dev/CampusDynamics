@@ -27,6 +27,15 @@ from it.
 So an empty list at the start of a cycle is correct, not broken. It fills as you work
 through the queue.
 
+**There is one exception, and you should know about it.** Printing an academic document
+adds that student to the list for their current registration year if they are not on it
+already. This is not the Graduation Centre doing it. It is the older transcript printing,
+which finds students by reading this same table, and which predates the approval rule. It
+means a student can appear on the list without anyone approving them, including a student
+who is not in their final year. Until that is separated, check the list before you publish
+it, and remove anything you did not put there. A row added this way has no entry against
+it on the Held tab and no decision recorded, which is how you can tell.
+
 ## What you can see
 
 The module shows you your own area and no more.
