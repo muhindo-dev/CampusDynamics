@@ -156,10 +156,14 @@ window.G = (function () {
         return true;
     }
 
-    function combo(selectId, placeholder) {
+    /// opts.key shows each option's value in front of its text, which is worth the room for a
+    /// programme (the code is how staff refer to it) and is noise for a department, whose value
+    /// is a row id nobody has ever seen.
+    function combo(selectId, placeholder, opts) {
         var sel = qs(selectId);
         if (!sel || sel.getAttribute('data-combo')) return;
         sel.setAttribute('data-combo', '1');
+        opts = opts || {};
 
         var box = document.createElement('div');
         box.className = 'g-cb';
@@ -181,7 +185,14 @@ window.G = (function () {
             var o = sel.options[sel.selectedIndex];
             return o ? o.text.replace(/\s+/g, ' ').trim() : '';
         }
-        function sync() { input.value = label(); input.classList.toggle('is-set', !!sel.value); }
+        // The field is narrow and a programme name is long, so what will not fit in the box is
+        // put on the box, where hovering reveals it.
+        function sync() {
+            var t = label();
+            input.value = t;
+            input.title = t;
+            input.classList.toggle('is-set', !!sel.value);
+        }
 
         function draw(q) {
             var words = norm(q).split(' ').filter(function (w) { return w !== ''; });
@@ -202,7 +213,9 @@ window.G = (function () {
                 h += '<button type="button" class="g-cb__o' +
                      (i === active ? ' is-active' : '') +
                      (op.index === sel.selectedIndex ? ' is-sel' : '') +
-                     '" data-i="' + shown[i] + '">' + esc(op.text) + '</button>';
+                     '" data-i="' + shown[i] + '" title="' + esc(op.text) + '">' +
+                     (opts.key && op.value ? '<span class="g-cb__k">' + esc(op.value) + '</span>' : '') +
+                     '<span class="g-cb__t">' + esc(op.text) + '</span></button>';
             }
             list.innerHTML = h;
             var b = list.querySelectorAll('.g-cb__o');
@@ -213,8 +226,21 @@ window.G = (function () {
                 });
         }
 
-        function show() { open = true; box.classList.add('is-open'); active = -1; draw(''); input.select(); }
-        function hide() { open = false; box.classList.remove('is-open'); sync(); }
+        // The panel is wider than the field so a full programme name fits. For the last filter
+        // in the bar that would run off the right of the screen, so it hangs from the right edge
+        // instead. Measured rather than guessed, because the bar wraps at narrow widths and which
+        // field is last changes with it.
+        function place() {
+            box.classList.remove('is-flip');
+            var r = list.getBoundingClientRect();
+            if (r.right > document.documentElement.clientWidth - 8) box.classList.add('is-flip');
+        }
+
+        function show() {
+            open = true; box.classList.add('is-open'); active = -1;
+            draw(''); place(); input.select();
+        }
+        function hide() { open = false; box.classList.remove('is-open', 'is-flip'); sync(); }
 
         function pick(i) {
             sel.selectedIndex = i;
@@ -224,7 +250,7 @@ window.G = (function () {
         }
 
         input.addEventListener('focus', show);
-        input.addEventListener('input', function () { active = -1; draw(input.value); });
+        input.addEventListener('input', function () { active = -1; draw(input.value); place(); });
         input.addEventListener('blur', function () { setTimeout(hide, 120); });
         input.addEventListener('keydown', function (e) {
             if (!open && (e.key === 'ArrowDown' || e.key === 'Enter')) { show(); return; }
@@ -239,9 +265,13 @@ window.G = (function () {
             if (el && el.scrollIntoView) el.scrollIntoView({ block: 'nearest' });
         }
 
-        // The cascade rewrites the option list; the box has to follow it.
+        // The cascade rewrites the option list; the box has to follow it. If it is open at the
+        // time, the list on screen is now wrong and has to be redrawn, not just the input.
         sel.addEventListener('change', sync);
-        sel.addEventListener('g-refill', sync);
+        sel.addEventListener('g-refill', function () {
+            sync();
+            if (open) { active = -1; draw(input.value === label() ? '' : input.value); place(); }
+        });
         sync();
         return { sync: sync };
     }
@@ -1189,7 +1219,7 @@ window.G = (function () {
         cascade('gXfac', 'gXdep', 'gXprog');
 
         // 130 programmes is not a list anyone should scroll.
-        combo('gXprog', 'Type a code or part of the name\u2026');
+        combo('gXprog', 'Type a code or part of the name\u2026', { key: true });
         combo('gXdep', 'Type a department\u2026');
         combo('gXfac', 'Type a faculty\u2026');
 

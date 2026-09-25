@@ -36,7 +36,7 @@
     <div class="g-wrap">
       <table class="g-tbl"><thead><tr>
         <th>Student</th><th>Programme</th><th class="g-num">CGPA</th><th>Class of award</th>
-        <th>Cleared by</th><th>Transcript</th><th></th>
+        <th>Approved by</th><th>Transcript</th><th></th>
       </tr></thead><tbody id="gBody"></tbody></table>
     </div>
   </div>
@@ -342,7 +342,7 @@ document.addEventListener('DOMContentLoaded', function () {
             G.qs('fAward').value = pre.award;
         }
         G.cascade('fFac', 'fDep', 'fProg');
-        G.combo('fProg', 'Type a code or part of the name\u2026');
+        G.combo('fProg', 'Type a code or part of the name\u2026', { key: true });
         chips();
         load();
     }

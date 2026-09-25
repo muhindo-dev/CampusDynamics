@@ -43,7 +43,7 @@
   <div class="g-card">
     <div class="g-card__h">
       <span id="gTitle">Candidates</span><small id="gMeta">&nbsp;</small>
-      <small style="margin-left:auto;">Only candidates with nothing outstanding can be selected for bulk clearing.</small>
+      <small style="margin-left:auto;">Only candidates with nothing outstanding can be selected for bulk approval.</small>
     </div>
     <div class="g-wrap">
       <table class="g-tbl"><thead><tr>
@@ -534,7 +534,7 @@ document.addEventListener('DOMContentLoaded', function () {
         page = parseInt(pre.page || '1', 10) || 1;
         G.cascade('fFac', 'fDep', 'fProg');
         // 130 programmes is not a list anyone should scroll through.
-        G.combo('fProg', 'Type a code or part of the name\u2026');
+        G.combo('fProg', 'Type a code or part of the name\u2026', { key: true });
         syncFocusEnabled();
         chips();
         load();

@@ -35,7 +35,7 @@
     <div class="g-card__h"><span>On hold</span><small id="gMeta">&nbsp;</small></div>
     <div class="g-wrap">
       <table class="g-tbl"><thead><tr>
-        <th>Student</th><th>Programme</th><th>Why</th><th>Held by</th><th class="g-num">When</th><th></th>
+        <th>Student</th><th>Programme</th><th>Why</th><th>On hold by</th><th class="g-num">When</th><th></th>
       </tr></thead><tbody id="gBody"></tbody></table>
     </div>
     <div class="g-pager" id="gPager"></div>
@@ -334,7 +334,7 @@ document.addEventListener('DOMContentLoaded', function () {
         if (pre.stale) G.qs('fStale').value = pre.stale;
         page = parseInt(pre.page || '1', 10) || 1;
         G.cascade('fFac', 'fDep', 'fProg');
-        G.combo('fProg', 'Type a code or part of the name\u2026');
+        G.combo('fProg', 'Type a code or part of the name\u2026', { key: true });
         chips();
         load();
     }

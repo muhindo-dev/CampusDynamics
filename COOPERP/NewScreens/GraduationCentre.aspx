@@ -266,6 +266,9 @@ document.addEventListener('DOMContentLoaded', function () {
         if (pre.dept) G.qs('fDep').value = pre.dept;
         if (pre.prog) G.qs('fProg').value = pre.prog;
         G.cascade('fFac', 'fDep', 'fProg');
+        // This page was the only one left with a bare select here, so a programme whose name
+        // runs past the field was unreadable and unsearchable.
+        G.combo('fProg', 'Type a code or part of the name…', { key: true });
         chips();
         // The overview arrived with the page; render it without a round trip.
         if (window.G_DATA && window.G_DATA.success) render(window.G_DATA.overview);

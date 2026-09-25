@@ -565,15 +565,27 @@
 .g-cb__in.is-set{color:var(--ink);}
 .g-cb__in:focus{outline:none;border-color:var(--accent);color:var(--ink);}
 
-.g-cb__l{display:none;position:absolute;z-index:40;left:0;right:0;top:100%;margin-top:1px;
+/* The field is as narrow as the filter bar can afford; the list it drops is not. Pinning the
+   panel to left:0;right:0 made it exactly as wide as the field, so every programme longer than
+   about twenty characters was cut to an ellipsis, which is most of them. It now takes the width
+   its content needs, up to a ceiling, and hangs from the right edge when that would overflow. */
+.g-cb__l{display:none;position:absolute;z-index:40;left:0;right:auto;top:100%;margin-top:1px;
+    min-width:100%;width:max-content;max-width:min(430px,86vw);
     background:#fff;border:1px solid var(--accent);border-radius:0 0 3px 3px;
-    max-height:230px;overflow-y:auto;box-shadow:0 10px 26px rgba(5,39,92,.18);}
+    max-height:280px;overflow-y:auto;box-shadow:0 10px 26px rgba(5,39,92,.18);}
+.g-cb.is-flip .g-cb__l{left:auto;right:0;}
 .g-cb.is-open .g-cb__l{display:block;}
-.g-cb__o{display:block;width:100%;text-align:left;border:0;background:none;font:inherit;
-    font-size:11.5px;padding:4px 8px;cursor:pointer;color:var(--ink);
-    white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.g-cb__o{display:flex;align-items:baseline;gap:6px;width:100%;text-align:left;border:0;
+    background:none;font:inherit;font-size:11.5px;padding:4px 8px;cursor:pointer;color:var(--ink);
+    white-space:normal;line-height:1.35;}
 .g-cb__o:hover,.g-cb__o.is-active{background:#eef5ff;color:var(--accent);}
 .g-cb__o.is-sel{font-weight:700;}
+.g-cb__t{flex:1 1 auto;min-width:0;}
+/* The code, because it is how staff say the programme out loud. Fixed width so the names
+   beside it start on one line down the list instead of stepping in and out. */
+.g-cb__k{flex:0 0 58px;font-size:9.5px;letter-spacing:.3px;color:var(--mute);
+    text-transform:uppercase;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.g-cb__o:hover .g-cb__k,.g-cb__o.is-active .g-cb__k{color:var(--accent);}
 .g-cb__none{padding:8px;font-size:11px;color:var(--mute);}
 
 /* The export dialog's own filter row. These are the filter now, not a read-out of one. */

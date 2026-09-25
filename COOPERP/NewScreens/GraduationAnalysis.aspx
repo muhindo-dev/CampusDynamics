@@ -397,7 +397,7 @@ document.addEventListener('DOMContentLoaded', function () {
 
         lensSwap();
         G.cascade('fFac', 'fDep', 'fProg');
-        G.combo('fProg', 'Type a code or part of the name…');
+        G.combo('fProg', 'Type a code or part of the name…', { key: true });
         G.combo('fCer', 'Type a ceremony…');
         chips();
 
