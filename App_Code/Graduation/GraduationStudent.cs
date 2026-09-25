@@ -98,7 +98,7 @@ public static class GraduationStudent
                                 note = onList != ""
                                     ? "Already on the " + onList + " graduation list"
                                     : (cand ? "Already a candidate"
-                                            : "Not a candidate \u2014 reached year " + maxsy +
+                                            : "Not a candidate, reached year " + maxsy +
                                               " of " + plen)
                             });
                         }

@@ -1006,10 +1006,10 @@ window.G = (function () {
         //    for a meeting, not data for a spreadsheet. ──
         var fmt = saved.fmt || 'pdf';
         h += '<div class="g-xs"><div class="g-xs__h">Format</div><div class="g-xr">' +
-             xRadio('gxf', 'pdf', 'PDF \u2014 the formal document: crest, certification block, ' +
+             xRadio('gxf', 'pdf', 'PDF. The formal document: crest, certification block, ' +
                                   'grouped by programme, signature block', fmt === 'pdf') +
-             xRadio('gxf', 'xls', 'Excel workbook \u2014 cover sheet, frozen headings, extra summary tabs', fmt === 'xls') +
-             xRadio('gxf', 'csv', 'CSV \u2014 one flat sheet, for loading elsewhere', fmt === 'csv') +
+             xRadio('gxf', 'xls', 'Excel workbook: cover sheet, frozen headings, extra summary tabs', fmt === 'xls') +
+             xRadio('gxf', 'csv', 'CSV: one flat sheet, for loading elsewhere', fmt === 'csv') +
              '</div></div>';
 
         // ── columns, folded. Almost nobody changes these, and thirty checkboxes between the
@@ -1074,7 +1074,7 @@ window.G = (function () {
                        (sheets[i].d ? '<small>' + esc(sheets[i].d) + '</small>' : '') + '</span></label>';
             }
             adv += '</div><div class="g-xnote" id="gXcsvnote" style="display:none;">' +
-                   'A CSV is a single sheet, and a PDF is a document \u2014 these are included ' +
+                   'A CSV is a single sheet, and a PDF is a document. These are included ' +
                    'in the Excel workbook only.</div></div>';
         }
         if (adv !== '') h += xFold('adv', 'Advanced', '', adv);
@@ -1175,7 +1175,7 @@ window.G = (function () {
         fill('gXyear', (f.years || []).map(function (y) { return { v: y, t: y }; }),
              f.allowAllYears === false ? null : 'All years');
         if (qs('gXfocus'))
-            fill('gXfocus', [{ v: 'cycle', t: 'This cycle \u2014 finishing now' },
+            fill('gXfocus', [{ v: 'cycle', t: 'This cycle, finishing now' },
                              { v: 'all', t: 'Everyone not yet graduated' }], null);
         fill('gXfac', f.faculties || [], 'All faculties');
         fill('gXdep', f.departments || [], 'All departments');

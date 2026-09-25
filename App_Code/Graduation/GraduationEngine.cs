@@ -917,12 +917,12 @@ public static class GraduationEngine
         //  not a verdict.
         if (!g.coverageChecked)
             Add(g, "C4", "Programme coverage", "NA",
-                "Cannot be checked \u2014 this student carries no real specialisation, so there is no " +
+                "Cannot be checked: this student carries no real specialisation, so there is no " +
                 "curriculum to match their courses against.");
         else if (g.coverageMissing > 0)
             Add(g, "C4", "Programme coverage", "WARN",
                 g.coverageMissing + " of " + g.coverageRequired + " courses in their curriculum have no " +
-                "result on record. Check the structure below \u2014 an equivalent may have been taken " +
+                "result on record. Check the structure below: an equivalent may have been taken " +
                 "under another code.");
         else
             Add(g, "C4", "Programme coverage", "PASS",
@@ -937,7 +937,7 @@ public static class GraduationEngine
             if (g.unpubApproved > 0) bits.Add(g.unpubApproved + " approved but not published");
             Add(g, "C5", "Marks not yet published", "WARN",
                 g.UnpubTotal + " course" + (g.UnpubTotal == 1 ? " is" : "s are") +
-                " still in the marks pipeline \u2014 " + string.Join(", ", bits.ToArray()) +
+                " still in the marks pipeline: " + string.Join(", ", bits.ToArray()) +
                 ". Their final position may change.");
         }
         else

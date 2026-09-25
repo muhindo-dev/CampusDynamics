@@ -604,7 +604,7 @@ public static class GraduationAnalytics
             var p3 = new Para("Who they are");
             if (women + men > 0)
             {
-                p3.Add(N(women) + " women and " + N(men) + " men \u2014 " + Pct(women, total) +
+                p3.Add(N(women) + " women and " + N(men) + " men. " + Pct(women, total) +
                        " of this cohort is female" +
                        (women + men < total ? ", with " + N(total - women - men) +
                         " whose gender is not recorded" : "") + ".");
@@ -619,8 +619,8 @@ public static class GraduationAnalytics
                 p3.Add("Mean CGPA " + N2(avg) + ", ranging from " + N2(Convert.ToDouble(H["minCgpa"])) +
                        " to " + N2(Convert.ToDouble(H["maxCgpa"])) + ".");
             int top = Convert.ToInt32(H["top"]);
-            p3.Add(N(top) + " graduand" + (top == 1 ? "" : "s") + " \u2014 " + Pct(top, total) +
-                   " \u2014 took the highest class their award offers (First Class, or Class I " +
+            p3.Add(N(top) + " graduand" + (top == 1 ? "" : "s") + " (" + Pct(top, total) +
+                   ") took the highest class their award offers (First Class, or Class I " +
                    "Distinction for a certificate or diploma).");
             paras.Add(p3);
 
@@ -677,7 +677,7 @@ public static class GraduationAnalytics
                 foreach (Dictionary<string, object> Sp in spread)
                     bits.Add(Convert.ToString(Sp["year"]) + ": " + N(Convert.ToInt32(Sp["n"])));
                 p6.Add("This ceremony draws from " + spread.Count + " academic year" +
-                       (spread.Count == 1 ? "" : "s") + " \u2014 " +
+                       (spread.Count == 1 ? "" : "s") + ": " +
                        string.Join("; ", bits.ToArray()) + ".");
                 paras.Add(p6);
             }

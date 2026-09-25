@@ -536,10 +536,10 @@ public partial class COOPERP_NewScreens_GraduationCandidates : System.Web.UI.Pag
                 if (!ok)
                 {
                     object m; d.TryGetValue("message", out m);
-                    skipped.Add(reg + " \u2014 " + (m == null ? "refused" : m.ToString()));
+                    skipped.Add(reg + ", " + (m == null ? "refused" : m.ToString()));
                 }
             }
-            catch { skipped.Add(reg + " \u2014 could not be read"); }
+            catch { skipped.Add(reg + ", could not be read"); }
             if (ok) done++;
         }
 

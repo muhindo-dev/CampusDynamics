@@ -122,7 +122,7 @@ function syncFocusEnabled() {
     var pending = G.qs('fOnList').value === 'pending';
     G.qs('fFocus').disabled = !pending;
     G.qs('fFocus').title = pending ? ''
-        : 'Applies to the pending queue only \u2014 a graduation list is already narrow by year.';
+        : 'Applies to the pending queue only: a graduation list is already narrow by year.';
 }
 
 function resetFilters() {
@@ -390,7 +390,7 @@ function afterDecision(regno, label) {
     var i = G.queueNext();
     if (i >= 0) { open(G.queueAt(i)); return; }
     if (G.queueHasMorePages()) {
-        G.toast('End of this page \\u2014 fetching the next.', true);
+        G.toast('End of this page, fetching the next.', true);
         G.closeModal();
         page++; sync();
         return;
