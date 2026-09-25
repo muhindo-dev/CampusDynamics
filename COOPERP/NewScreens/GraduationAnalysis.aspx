@@ -42,7 +42,7 @@
        and each carries its own vocabulary. --%>
   <div class="g-card">
     <div class="g-card__h">Awards and classes
-      <small>certificates and diplomas are classed I&ndash;III; degrees First to Third &mdash; the two never mix</small></div>
+      <small>certificates and diplomas are classed I&ndash;III; degrees First to Third, the two never mix</small></div>
     <div class="g-card__b" id="gLevels"><div class="g-load">Loading&hellip;</div></div>
   </div>
 
@@ -307,7 +307,7 @@ function openSummary() {
             G.serverExport(PAGE, 'summary', cfg());
         });
         G.qs('sumCopy').addEventListener('click', function () {
-            var t = d.title + ' — ' + d.subtitle + '\n' + d.scopeLabel + ', ' + d.generated + '\n\n';
+            var t = d.title + ', ' + d.subtitle + '\n' + d.scopeLabel + ', ' + d.generated + '\n\n';
             for (var i = 0; i < d.paragraphs.length; i++) {
                 t += d.paragraphs[i].head.toUpperCase() + '\n';
                 for (var j = 0; j < d.paragraphs[i].lines.length; j++)
@@ -330,7 +330,7 @@ function copy(text) {
         document.execCommand('copy');
         document.body.removeChild(ta);
         G.toast('The summary has been copied.', true);
-    } catch (e) { G.toast('Could not copy — select the text and copy it by hand.', false); }
+    } catch (e) { G.toast('Could not copy, select the text and copy it by hand.', false); }
 }
 
 function openExport() {

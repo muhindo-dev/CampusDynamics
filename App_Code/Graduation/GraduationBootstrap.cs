@@ -5,7 +5,7 @@ using System.Web.Script.Serialization;
 using MySql.Data.MySqlClient;
 
 // =====================================================================
-//  Graduation Centre — the filter lists every page starts from.
+//  Graduation Centre, the filter lists every page starts from.
 //
 //  The four pages are independent, but they must offer the SAME years,
 //  faculties, departments and programmes, resolved through the same

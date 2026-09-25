@@ -5,7 +5,7 @@ using System.Web.Script.Serialization;
 using System.Web.Services;
 
 // =====================================================================
-//  Graduation Centre — Overview.
+//  Graduation Centre, Overview.
 //
 //  One of four independent pages. It carries only the two endpoints it
 //  uses; the candidate queue, the list and the held queue are separate

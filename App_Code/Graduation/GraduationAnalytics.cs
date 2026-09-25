@@ -7,7 +7,7 @@ using System.Web.Script.Serialization;
 using MySql.Data.MySqlClient;
 
 // =====================================================================
-//  Graduation Analysis — the figures behind the screen.
+//  Graduation Analysis, the figures behind the screen.
 //
 //  Everything the analysis page shows is computed here, from
 //  acad_graduands, which is the system of record for who has graduated.

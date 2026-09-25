@@ -6,7 +6,7 @@ using System.Web.Script.Serialization;
 using System.Web.Services;
 
 // =====================================================================
-//  Graduation Centre — held candidates.
+//  Graduation Centre, held candidates.
 //
 //  The queue nobody had before: students a reviewer stopped, with the
 //  reason, oldest first. An independent page carrying only its own
@@ -50,7 +50,7 @@ public partial class COOPERP_NewScreens_GraduationHeld : System.Web.UI.Page
     }
 
     // =================================================================
-    //  The column catalogue — declared once, used by both the export
+    //  The column catalogue, declared once, used by both the export
     //  dialog's checkboxes and the sheet that comes back.
     // =================================================================
     private const string ID = "Identity", HD = "The hold", PR = "Where they stand";

@@ -4,7 +4,7 @@ using System.Web;
 using MySql.Data.MySqlClient;
 
 // =====================================================================
-//  Graduation Centre — the per-student summary, and keeping it honest.
+//  Graduation Centre, the per-student summary, and keeping it honest.
 //
 //  Reading acad_results on every page load meant aggregating 639,185
 //  rows to draw five numbers: 4.7s for the overview alone, 8.7s for a

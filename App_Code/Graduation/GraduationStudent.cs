@@ -5,7 +5,7 @@ using System.Web.Script.Serialization;
 using MySql.Data.MySqlClient;
 
 // =====================================================================
-//  Graduation Centre — the evidence behind one student.
+//  Graduation Centre, the evidence behind one student.
 //
 //  Three of the four pages open a student, and they must all show the
 //  same thing: a Registrar should not have to learn two layouts for the

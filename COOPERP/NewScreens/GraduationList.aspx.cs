@@ -7,7 +7,7 @@ using System.Web.Services;
 using MySql.Data.MySqlClient;
 
 // =====================================================================
-//  Graduation Centre — the graduation list.
+//  Graduation Centre, the graduation list.
 //
 //  The output of the module: the acad_graduands rows for a year, with
 //  who cleared each name and when, which nothing recorded before this.
@@ -26,7 +26,7 @@ public partial class COOPERP_NewScreens_GraduationList : System.Web.UI.Page
         public double cgpa;
         public string degclass = "", year = "", gender = "", nationality = "";
         public string transStatus = "", certStatus = "", clearedBy = "", clearedAt = "";
-        /// <summary>Position within the student's own programme — the way a graduation list is
+        /// <summary>Position within the student's own programme, the way a graduation list is
         /// read out and signed off. Filled in once the rows are in their final order.</summary>
         public int seq;
     }
@@ -126,7 +126,7 @@ public partial class COOPERP_NewScreens_GraduationList : System.Web.UI.Page
     }
 
     // =================================================================
-    //  The column catalogue — one list behind both the export dialog's
+    //  The column catalogue, one list behind both the export dialog's
     //  checkboxes and the workbook that comes back.
     // =================================================================
     private const string ID = "Identity", AW = "The award", GV = "Who signed it off", DOC = "Documents";
@@ -322,7 +322,7 @@ public partial class COOPERP_NewScreens_GraduationList : System.Web.UI.Page
             || cls.IndexOf("Distinction", StringComparison.OrdinalIgnoreCase) >= 0;
     }
 
-    /// <summary>The class distribution — the table that always gets asked for.</summary>
+    /// <summary>The class distribution, the table that always gets asked for.</summary>
     private static GraduationExport.Sheet ByClass(List<Row> rows)
     {
         var sh = new GraduationExport.Sheet();
@@ -346,7 +346,7 @@ public partial class COOPERP_NewScreens_GraduationList : System.Web.UI.Page
     }
 
     /// <summary>
-    /// Who approved whom — one of the questions this module was built to answer, and one
+    /// Who approved whom, one of the questions this module was built to answer, and one
     /// nothing in the system could answer before it.
     /// </summary>
     private static GraduationExport.Sheet ByApprover(List<Row> rows)

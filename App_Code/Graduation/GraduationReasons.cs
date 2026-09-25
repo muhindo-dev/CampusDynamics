@@ -5,7 +5,7 @@ using System.Web.Script.Serialization;
 using MySql.Data.MySqlClient;
 
 // =====================================================================
-//  Graduation Centre — what to suggest when someone holds a candidate.
+//  Graduation Centre, what to suggest when someone holds a candidate.
 //
 //  A static list of reasons would be a dropdown nobody reads. These are
 //  chosen for the candidate in front of the reviewer: the engine has
@@ -169,7 +169,7 @@ public static class GraduationReasons
 
     /// <summary>
     /// Suggestions for a batch. There is no single candidate to read, so only the standing
-    /// reasons and the wording already in use are offered — inventing a per-student reason for
+    /// reasons and the wording already in use are offered, inventing a per-student reason for
     /// forty students at once would be a lie on thirty-nine of them.
     /// </summary>
     public static string ForBatch()

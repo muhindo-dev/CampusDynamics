@@ -148,7 +148,7 @@ function openExport() {
         sorts: [
             { k: 'name', t: 'Name' },
             { k: 'regno', t: 'Student number' },
-            { k: 'cgpa', t: 'Performance — highest CGPA first' },
+            { k: 'cgpa', t: 'Performance, highest CGPA first' },
             { k: 'class', t: 'Class of award' },
             { k: 'prog', t: 'Programme, then name' }
         ],
@@ -203,7 +203,7 @@ function load() {
 function doPrint() {
     if (!rows.length) { G.toast('There is nothing on this list to print.', false); return; }
     var w = window.open('', '_blank');
-    if (!w) { G.toast('Pop-up blocked — allow pop-ups to open the print view.', false); return; }
+    if (!w) { G.toast('Pop-up blocked: allow pop-ups to open the print view.', false); return; }
 
     var groups = {}, order = [], i;
     for (i = 0; i < rows.length; i++) {

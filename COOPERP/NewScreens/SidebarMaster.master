@@ -42,7 +42,7 @@
                     <ul class="cd-sidebar__menu">
 
                         <!-- ══════════════════════════════════════════════
-                             HOME — visible to all roles
+                             HOME, visible to all roles
                              ══════════════════════════════════════════════ -->
                         <li class="cd-sidebar__item" data-roles="all">
                             <asp:HyperLink ID="lnkDashboard" runat="server" NavigateUrl="~/COOPERP/NewScreens/NewDashboard.aspx" CssClass="cd-sidebar__link">
@@ -65,7 +65,7 @@
                             </asp:HyperLink>
                         </li>
 
-                        <!-- (standalone Leave Applications removed — available under HR ▸ Leave Management) -->
+                        <!-- (standalone Leave Applications removed: available under HR ▸ Leave Management) -->
                         <!-- ══════════════════════════════════════════════
                              ② ACADEMICS
                              Roles: dean | registrar | faculty_staff | admin
@@ -424,7 +424,7 @@
                              code and a slow screen can never hold up a fast one.
 
                              Everything here carries data-roles="all", which makes the role filter
-                             stand aside and leaves the decision to the slug grant — the sidebar's
+                             stand aside and leaves the decision to the slug grant, the sidebar's
                              own single source of truth. A second hand-written gate is what hid this
                              module from every Dean and HOD in the first place. If a user has no
                              graduation grant at all, collapseEmptyGroups() removes the group. --%>
@@ -565,7 +565,7 @@
                         <!-- ══════════════════════════════════════════════
                              ④ SCHOOL FEES
                              Roles: fees_officer | bursar | admin
-                             Task focus: Everything income-side — collect, track, bursaries.
+                             Task focus: Everything income-side, collect, track, bursaries.
                              Cross-links: Student Lists & Register New Student repeated here.
                              ══════════════════════════════════════════════ -->
                         <li class="cd-sidebar__heading" data-roles="fees_officer bursar admin">School Fees</li>
@@ -703,7 +703,7 @@
                         <!-- ══════════════════════════════════════════════
                              ⑤ EXPENDITURE & ACCOUNTS
                              Roles: finance_officer | accountant | admin
-                             Task focus: Everything spend-side — ledgers, payments, reporting.
+                             Task focus: Everything spend-side, ledgers, payments, reporting.
                              ══════════════════════════════════════════════ -->
                         <li class="cd-sidebar__heading" data-roles="finance_officer accountant admin">Expenditure &amp; Accounts</li>
 
@@ -904,7 +904,7 @@
                         <!-- ══════════════════════════════════════════════
                              ⑥ HUMAN RESOURCE
                              Roles: hr_manager | admin
-                             Task focus: People lifecycle — recruit, pay, manage, configure.
+                             Task focus: People lifecycle, recruit, pay, manage, configure.
                              ══════════════════════════════════════════════ -->
                         <li class="cd-sidebar__heading" data-roles="hr_manager admin">Human Resource</li>
 
@@ -1614,7 +1614,7 @@
             // decision as page access). Show a menu item  ⇔  the user can open
             // its page. Fail-safe everywhere: admins ('*'), users with NO role
             // (empty slug set), the kill-switch (cdMenuFilter=false), unmapped
-            // links, and any error all leave the full menu visible — so menu
+            // links, and any error all leave the full menu visible, so menu
             // filtering can never lock anyone out. Filtering only "bites" once a
             // user has a role assigned.
             function fileFromHref(href){

@@ -15,7 +15,7 @@
       <span class="g-age" id="gAge">&nbsp;</span></div>
     <div class="g-f" style="flex:0 0 122px;"><label for="fYear">Graduation year</label><select id="fYear"></select></div>
     <div class="g-f" style="flex:0 0 196px;"><label for="fFocus">Who to show</label>
-      <select id="fFocus"><option value="cycle">This cycle &mdash; finishing now</option><option value="all">Everyone not yet graduated</option></select></div>
+      <select id="fFocus"><option value="cycle">This cycle, finishing now</option><option value="all">Everyone not yet graduated</option></select></div>
     <div class="g-f" style="flex:1 1 150px;"><label for="fFac">Faculty</label><select id="fFac"></select></div>
     <div class="g-f" style="flex:1 1 150px;"><label for="fDep">Department</label><select id="fDep"></select></div>
     <div class="g-f" style="flex:1 1 170px;"><label for="fProg">Programme</label><select id="fProg"></select></div>
@@ -208,7 +208,7 @@ function render(o) {
     var ig = '';
     for (i = 0; i < (o.integrity || []).length; i++)
         ig += '<div class="g-note g-note--bad"><b>Data integrity.</b> ' + G.esc(o.integrity[i]) +
-              ' Nothing has been changed &mdash; that is a decision for the Registrar.</div>';
+              ' Nothing has been changed, that is a decision for the Registrar.</div>';
     G.qs('gIntegrity').innerHTML = ig;
 }
 

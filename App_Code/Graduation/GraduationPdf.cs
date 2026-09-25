@@ -10,7 +10,7 @@ using DevExpress.XtraPrinting;
 using DevExpress.XtraReports.UI;
 
 // =====================================================================
-//  Graduation Centre — the PDF.
+//  Graduation Centre, the PDF.
 //
 //  Built on the server with XtraReport.ExportToPdf, which is how every
 //  other PDF on this system is produced (TransactionAuditTrail,
@@ -65,7 +65,7 @@ public static class GraduationPdf
     /// Adds the numbering columns the report binds to.
     ///
     /// Done here, over the rows in their final order, because the number printed beside a name
-    /// has to mean "nth in this programme on this list" — which is only true once the sort and
+    /// has to mean "nth in this programme on this list", which is only true once the sort and
     /// the grouping have both been settled.
     /// </summary>
     public static void Number(DataTable t, string groupField, bool numberInGroup)
@@ -207,7 +207,7 @@ public static class GraduationPdf
         head.Controls.Add(L("Office of the Academic Registrar", textLeft, 23, page - textLeft, 14,
                             8.5f, FontStyle.Regular, MUTE));
         head.Controls.Add(L(reportTitle.ToUpperInvariant() +
-                            (acadYear == "" ? "" : "   —   " + acadYear),
+                            (acadYear == "" ? "" : ", " + acadYear),
                             textLeft, 39, page - textLeft, 17, 10.5f, FontStyle.Bold, ACCENT));
 
         var rule = new XRLine();
@@ -384,7 +384,7 @@ public static class GraduationPdf
     /// The navy heading strip.
     ///
     /// The background is painted on the labels themselves rather than on a panel behind them.
-    /// A panel wider than the printable area makes XtraReports split the report HORIZONTALLY —
+    /// A panel wider than the printable area makes XtraReports split the report HORIZONTALLY,
     /// a first attempt used a 10000-unit panel as a convenient full-bleed background and turned
     /// a 60-row list into 21 pages.
     /// </summary>

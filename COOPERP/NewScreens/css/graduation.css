@@ -1,12 +1,12 @@
 /* =====================================================================
-   Graduation module — shared styling for the four pages.
+   Graduation module, shared styling for the four pages.
 
    One stylesheet, cached once, rather than a copy inside every page. The
    pages themselves are independent: each loads this, its own script, and
    nothing belonging to its siblings.
 
    Space is the scarce resource here. There is no page banner and no tab
-   strip — the sidebar already says where you are, and repeating it costs
+   strip, the sidebar already says where you are, and repeating it costs
    ~90px of the only screen a Registrar has. Everything above the table
    is one wrapping row.
 
@@ -17,7 +17,7 @@
 /* The tokens live on :root, NOT on .g.
 
    This matters more than it looks. G.mount() appends the modal and the toast to
-   document.body, which is OUTSIDE .g — so while these were scoped to .g every
+   document.body, which is OUTSIDE .g, so while these were scoped to .g every
    var(--navy) inside the modal resolved to nothing. The primary button lost its navy
    background and kept its white text: white on white. "Clear for graduation" was
    rendered, correctly positioned, and invisible.
@@ -300,7 +300,7 @@
 /* ════════════════════════════════════════════════════════════════════
    The export dialog.
 
-   Export used to be a button that guessed — it chose the columns, took
+   Export used to be a button that guessed, it chose the columns, took
    the current filter, and silently produced fifty rows of it. This is
    the conversation that replaces it: what is included, how many rows
    that really is, which columns, which extra sheets, what format.
@@ -316,7 +316,7 @@
 .g-xlink+.g-xlink{margin-left:0;}
 .g-xlink:hover{color:var(--navy);}
 
-/* what's included — the filter restated in words, not codes */
+/* what's included, the filter restated in words, not codes */
 .g-xkv{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:8px 14px;padding:9px 10px;}
 .g-xkv>div{min-width:0;}
 .g-xkv span{display:block;font-size:9px;text-transform:uppercase;letter-spacing:.4px;color:var(--mute);}
@@ -372,7 +372,7 @@
     font-size:12px;font-weight:700;color:var(--navy);
     padding:2px 0 4px;border-bottom:2px solid var(--navy);margin-bottom:6px;}
 .g-year__a{font-size:10px;font-weight:600;color:var(--mute);}
-/* A year of study whose semesters sit in different academic years is real and common — the
+/* A year of study whose semesters sit in different academic years is real and common, the
    rearrangement screen found 704 students like it. Flag it rather than printing one and
    hiding the rest. */
 .g-year__split{font-size:10px;font-weight:700;color:var(--warn);background:#fef3c7;padding:1px 5px;
@@ -454,8 +454,8 @@
 .g-rs__h{font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:.45px;
     color:var(--mute);margin-bottom:5px;}
 
-/* A suggestion fills the box rather than submitting: the specifics — which paper, which
-   document — are what make a reason worth reading later. */
+/* A suggestion fills the box rather than submitting: the specifics, which paper, which
+   document: are what make a reason worth reading later. */
 .g-sug{display:block;width:100%;text-align:left;background:#f8fbff;border:1px solid #cddffa;
     border-radius:3px;padding:5px 8px;margin-bottom:4px;cursor:pointer;font:inherit;}
 .g-sug:hover{border-color:var(--accent);background:#eef5ff;}
@@ -518,7 +518,7 @@
 
 /* ── the photograph, opened ──────────────────────────────────────────────
    A 48px avatar identifies a person only if you already know them. Clicking it opens the
-   photograph as large as the screen allows — which costs the panel no room, because nothing
+   photograph as large as the screen allows, which costs the panel no room, because nothing
    moves until it is asked for. The large render is not centre-cropped (see StudentThumb.ashx):
    cropping a portrait square cuts off the head at the moment identification matters most. */
 .g-phbtn{position:relative;flex:0 0 auto;padding:0;border:0;background:none;cursor:zoom-in;
@@ -538,7 +538,7 @@
 .g-lb__f{margin:0;display:flex;flex-direction:column;align-items:center;gap:10px;max-width:100%;}
 /* Sized deliberately rather than left at natural size. 99% of the photographs on this system
    are 300x400, so "full size" would otherwise open a 300px image on a 1400px screen and feel
-   like nothing happened. 420px is about 1.4x — plainly bigger, and well inside what a 300px
+   like nothing happened. 420px is about 1.4x, plainly bigger, and well inside what a 300px
    source carries for recognising a face, which is the only thing this view is for. The rare
    larger originals are capped at 480 by the handler and simply fill the box. */
 .g-lb__f img{width:min(420px,82vw);max-height:78vh;height:auto;display:block;

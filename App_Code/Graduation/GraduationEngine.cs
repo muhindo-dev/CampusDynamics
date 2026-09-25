@@ -7,7 +7,7 @@ using System.Web;
 using MySql.Data.MySqlClient;
 
 // =====================================================================
-//  Graduation Centre — the eligibility engine.
+//  Graduation Centre, the eligibility engine.
 //  Plan: COOPERP/NewScreens/GRADUATION_CENTRE_PLAN.md
 //
 //  One source of arithmetic. Every number the interface shows about a
@@ -46,13 +46,13 @@ public class GradCandidate
 
     public int failedPapers = 0, zeroMarks = 0, missingScores = 0, coursesTaken = 0;
 
-    // C4 — how many courses the programme structure requires that the student has no result
+    // C4, how many courses the programme structure requires that the student has no result
     // for at all. Only meaningful when a real specialisation resolves, hence the flag: a
     // structure belonging to somebody else's curriculum is worse than no structure.
     public bool coverageChecked = false;
     public int coverageMissing = 0, coverageRequired = 0;
 
-    // C5 — marks sitting in the portal pipeline below PUBLISHED. Not a fault of the student's,
+    // C5, marks sitting in the portal pipeline below PUBLISHED. Not a fault of the student's,
     // but a candidate whose marks are still with a Dean is not finished being assessed.
     public int unpubEntered = 0, unpubCaptured = 0, unpubApproved = 0;
     public int UnpubTotal { get { return unpubEntered + unpubCaptured + unpubApproved; } }
@@ -74,8 +74,8 @@ public static class GraduationEngine
     private const string YEAR_RX = "'^[0-9]{4}/[0-9]{4}$'";
 
     /// <summary>
-    /// A well-formed year that is also a believable one. `acad_results` holds `2202/2203` — four
-    /// rows, one student, a transposed digit — and because these are CHARACTER columns it sorts
+    /// A well-formed year that is also a believable one. `acad_results` holds `2202/2203`, four
+    /// rows, one student, a transposed digit: and because these are CHARACTER columns it sorts
     /// above every real year. Ranking or comparing against it silently exiles a genuine
     /// candidate: MRU2021001253 is a BED(P) student who reached year 3 with 53 results, and that
     /// single slip put their "last year sat" in the twenty-third century.
@@ -162,7 +162,7 @@ public static class GraduationEngine
 
     // ── Required credits ─────────────────────────────────────────────
     //  The weakest data in the system, so the rule is conservative and the SOURCE travels with
-    //  the number everywhere it is displayed. See the plan, §3.3/§3.4 — the original
+    //  the number everywhere it is displayed. See the plan, §3.3/§3.4, the original
     //  "median across specialisations" rule was discarded after measuring the variants:
     //  BAED alone has 47 of them ranging 15 to 211 credits.
     private class Req { public double cu; public string src = "NONE"; public string label = ""; }
@@ -240,7 +240,7 @@ public static class GraduationEngine
         progcode = (progcode ?? "").Trim();
 
         // A real specialisation gives the strongest answer. '13' is the placeholder 30,009 of
-        // 33,253 students carry, and '0' is "none recorded" — neither identifies a curriculum.
+        // 33,253 students carry, and '0' is "none recorded", neither identifies a curriculum.
         string sp = (specialisation ?? "").Trim();
         if (sp != "" && sp != "0" && sp != "13")
         {
@@ -267,7 +267,7 @@ public static class GraduationEngine
 
         /// <summary>
         /// "cycle" (the default) narrows to the people actually being graduated in the selected
-        /// year — those who finished in it or the year before. "all" opens it to everyone who
+        /// year, those who finished in it or the year before. "all" opens it to everyone who
         /// has ever reached a final year and never graduated, which is the historical backlog.
         ///
         /// The default matters: without it the queue opens on 14,548 students, 13,460 of whom
@@ -409,7 +409,7 @@ public static class GraduationEngine
     /// <summary>
     /// A page of candidates, fully assessed. Two phases: identify and page the students
     /// (0.010s), then aggregate their results by explicit id list (0.082s for 100). The
-    /// alternative — aggregating the whole results table — costs 10.3s and is what makes this
+    /// alternative: aggregating the whole results table, costs 10.3s and is what makes this
     /// kind of screen unusable.
     /// </summary>
     public static List<GradCandidate> Page(MarksScope scope, GradFilter f, out int total)
@@ -565,7 +565,7 @@ public static class GraduationEngine
                 if (byReg.TryGetValue(RS(r, 0), out g)) g.graduatedYear = RS(r, 1);
             }
 
-        // C4 — required courses with no result, for the students on this page whose
+        // C4, required courses with no result, for the students on this page whose
         // specialisation is real. Set-based: one query for the page, not one per student.
         try
         {
@@ -590,7 +590,7 @@ public static class GraduationEngine
         }
         catch { /* coverage is advisory; never let it take the whole list down */ }
 
-        // C5 — marks still in the portal pipeline.
+        // C5, marks still in the portal pipeline.
         try
         {
             using (var cmd = new MySqlCommand(
@@ -699,7 +699,7 @@ public static class GraduationEngine
         {
             c.Open();
 
-            // The candidacy predicate, shared with the list so the two cannot disagree — and
+            // The candidacy predicate, shared with the list so the two cannot disagree: and
             // now a stored column rather than an aggregate. See GraduationStats.
             string from =
                 " FROM " + GraduationStats.TABLE + " a " +
@@ -742,7 +742,7 @@ public static class GraduationEngine
                         int warnMarks = RI(r, 5);
                         o.ready = o.candidates - o.blocked - warnMarks;
                         if (o.ready < 0) o.ready = 0;
-                        // The blocker table overlaps on purpose — it answers "how many would this
+                        // The blocker table overlaps on purpose, it answers "how many would this
                         // one problem release", not "how do they partition".
                         AddGc(o.blockers, "Failed papers (1-49)", blkFail);
                         AddGc(o.blockers, "CGPA below " + N(CGPA_FLOOR, 1), blkCgpa);
@@ -811,7 +811,7 @@ public static class GraduationEngine
                 }
 
                 // Results filed under a year that cannot exist. The module now ignores such a
-                // year when it ranks or compares, so nobody is hidden by one — but the mark is
+                // year when it ranks or compares, so nobody is hidden by one, but the mark is
                 // still filed in the wrong place and only a human can say where it belongs.
                 using (var cmd = new MySqlCommand(
                     "SELECT COUNT(DISTINCT r.regno), COUNT(*), GROUP_CONCAT(DISTINCT r.acad ORDER BY r.acad SEPARATOR ', ') " +
@@ -844,7 +844,7 @@ public static class GraduationEngine
     /// <summary>
     /// Runs every check and settles the readiness. BLOCK anywhere means not ready; the order
     /// of the findings is the order a human should read them, so the membership facts (already
-    /// graduated, already held) come first — the list must never offer an action that
+    /// graduated, already held) come first, the list must never offer an action that
     /// contradicts something further down the panel.
     /// </summary>
     public static void Assess(MySqlConnection c, GradCandidate g)
@@ -854,19 +854,19 @@ public static class GraduationEngine
         g.cuRequired = req.cu; g.cuSource = req.src; g.cuSourceLabel = req.label;
         g.degClass = AwardFor(c, g.cgpa, g.levelCode);
 
-        // C1 — already on a graduation list
+        // C1: already on a graduation list
         if (g.graduatedYear != "")
             Add(g, "C1", "Already on a graduation list", "BLOCK",
                 "This student is already on the " + g.graduatedYear + " graduation list.");
         else
             Add(g, "C1", "Already on a graduation list", "PASS", "Not on any graduation list.");
 
-        // C8 — an open hold
+        // C8: an open hold
         if (g.holdReason != "")
             Add(g, "C8", "Held by a reviewer", "BLOCK",
                 "Held by " + g.holdActor + " on " + g.holdAt + ": " + g.holdReason);
 
-        // C2 — outstanding papers.
+        // C2, outstanding papers.
         //
         //  A mark of exactly zero is treated as a GAP, not a failure, and that distinction was
         //  measured rather than assumed. Of the 522 students who really graduated in 2024/2025,
@@ -881,21 +881,21 @@ public static class GraduationEngine
         if (g.failedPapers > 0)
             Add(g, "C2", "Outstanding papers", "BLOCK",
                 g.failedPapers + (g.failedPapers == 1 ? " paper is" : " papers are") +
-                " marked between 1 and 49 — below the pass mark.");
+                " marked between 1 and 49, below the pass mark.");
         else if (g.zeroMarks > 0)
             Add(g, "C2", "Outstanding papers", "WARN",
                 g.zeroMarks + " course" + (g.zeroMarks == 1 ? " is" : "s are") +
-                " recorded as zero. That is usually a paper never marked rather than a paper failed — check before clearing.");
+                " recorded as zero. That is usually a paper never marked rather than a paper failed, check before clearing.");
         else if (g.missingScores > 0)
             Add(g, "C2", "Outstanding papers", "WARN",
                 g.missingScores + " course" + (g.missingScores == 1 ? " has" : "s have") + " no score at all.");
         else
             Add(g, "C2", "Outstanding papers", "PASS", "Every course carries a passing mark.");
 
-        // C3 — credits
+        // C3, credits
         if (g.cuSource == "NONE")
             Add(g, "C3", "Credits earned", "NA",
-                "Cannot be assessed — " + req.label + ". " + N(g.cuEarned, 0) + " credits earned.");
+                "Cannot be assessed, " + req.label + ". " + N(g.cuEarned, 0) + " credits earned.");
         else if (g.cuEarned >= g.cuRequired)
             Add(g, "C3", "Credits earned", "PASS",
                 N(g.cuEarned, 0) + " of " + N(g.cuRequired, 0) + " credits, against " + req.label + ".");
@@ -905,11 +905,11 @@ public static class GraduationEngine
             // Only a real curriculum is trusted enough to stop a graduation on a credit count.
             string lvl = (g.cuSource == "STRUCTURE" && g.cuEarned < g.cuRequired * CREDIT_BLOCK_RATIO) ? "BLOCK" : "WARN";
             Add(g, "C3", "Credits earned", lvl,
-                "Short by " + N(shortBy, 0) + " credits — " + N(g.cuEarned, 0) + " of " +
+                "Short by " + N(shortBy, 0) + " credits, " + N(g.cuEarned, 0) + " of " +
                 N(g.cuRequired, 0) + ", against " + req.label + ".");
         }
 
-        // C4 — coverage against the programme structure.
+        // C4, coverage against the programme structure.
         //
         //  Never blocks. A gap here can mean a genuinely unsat course, but it can equally mean
         //  the student took an equivalent under a different code, or that the curriculum on
@@ -928,7 +928,7 @@ public static class GraduationEngine
             Add(g, "C4", "Programme coverage", "PASS",
                 "All " + g.coverageRequired + " courses in their curriculum have a result.");
 
-        // C5 — marks still moving through the pipeline.
+        // C5, marks still moving through the pipeline.
         if (g.UnpubTotal > 0)
         {
             var bits = new List<string>();
@@ -943,7 +943,7 @@ public static class GraduationEngine
         else
             Add(g, "C5", "Marks not yet published", "PASS", "Nothing outstanding in the marks pipeline.");
 
-        // C6 — reached the final year (the candidacy rule itself, restated as evidence)
+        // C6, reached the final year (the candidacy rule itself, restated as evidence)
         if (g.maxStudyYear >= g.progLength)
             Add(g, "C6", "Programme duration", "PASS",
                 "Reached year " + g.maxStudyYear + " of a " + g.progLength + "-year programme" +
@@ -952,7 +952,7 @@ public static class GraduationEngine
             Add(g, "C6", "Programme duration", "BLOCK",
                 "Only reached year " + g.maxStudyYear + " of a " + g.progLength + "-year programme.");
 
-        // C7 — CGPA floor
+        // C7, CGPA floor
         if (g.cgpa <= 0)
             Add(g, "C7", "Class of award", "WARN", "CGPA could not be computed from the marks on record.");
         else if (g.cgpa < CGPA_FLOOR)
@@ -961,7 +961,7 @@ public static class GraduationEngine
                 ", the floor below which acad_gs_award maps no class at any level.");
         else
             Add(g, "C7", "Class of award", "PASS",
-                "CGPA " + N(g.cgpa, 2) + " — " + (g.degClass == "" ? "no class mapped" : g.degClass) + ".");
+                "CGPA " + N(g.cgpa, 2) + ", " + (g.degClass == "" ? "no class mapped" : g.degClass) + ".");
 
         // Readiness is the worst finding. NA is not a pass and not a block: it is a question.
         bool block = false, warn = false;

@@ -1,5 +1,5 @@
 /* =====================================================================
-   Graduation module — shared behaviour for the four pages.
+   Graduation module, shared behaviour for the four pages.
 
    Everything here is on window.G. Each page loads this once, then adds
    only its own logic. Nothing in here knows which page it is on: the
@@ -40,7 +40,7 @@ window.G = (function () {
         };
         x.onerror = function () { cb({ success: false, message: 'Network error.' }); };
         x.ontimeout = function () {
-            cb({ success: false, message: 'That took too long — narrow the filters and try again.' });
+            cb({ success: false, message: 'That took too long, narrow the filters and try again.' });
         };
         x.send(JSON.stringify(params || {}));
     }
@@ -57,7 +57,7 @@ window.G = (function () {
     }
 
     /* A cached thumbnail, not the 469KB original. See StudentThumb.ashx, which renders only
-       72, 144 and 480 — 72 for a row, 144 so the modal's avatar stays sharp on a high-density
+       72, 144 and 480: 72 for a row, 144 so the modal's avatar stays sharp on a high-density
        screen, 480 for the full view. */
     function photo(regno, size) {
         return 'StudentThumb.ashx?r=' + encodeURIComponent(regno || '') +
@@ -365,7 +365,7 @@ window.G = (function () {
         onClose = afterClose || null;
         var ov = qs('gOv');
         if (!ov) return;
-        // Only a click on the backdrop itself closes it — not a click that happened to
+        // Only a click on the backdrop itself closes it, not a click that happened to
         // start inside the card and drifted out while selecting text.
         ov.addEventListener('mousedown', function (e) { if (e.target === ov) closeModal(); });
         var x = qs('gModalX');
@@ -385,7 +385,7 @@ window.G = (function () {
     var current = null;
 
     /// The footer is written inside the AJAX callback, so a caller that wires its buttons
-    /// with setTimeout(fn, 0) wires nothing — the timer fires long before the response lands.
+    /// with setTimeout(fn, 0) wires nothing, the timer fires long before the response lands.
     /// onReady is called after the footer exists, which is the only moment the buttons are
     /// there to be wired.
     function openStudent(page, regno, buildFooter, onReady) {
@@ -519,7 +519,7 @@ window.G = (function () {
         }
         acads.sort();
 
-        // A year of study whose semesters sit in different academic years is real and common —
+        // A year of study whose semesters sit in different academic years is real and common,
         // the rearrangement screen found 704 students like it. Say so, rather than printing one
         // of them and hiding the rest.
         multi = acads.length > 1;
@@ -582,7 +582,7 @@ window.G = (function () {
         // ── The results, first ──────────────────────────────────────────────
         //  What the student actually did is the evidence; everything else on this panel is a
         //  conclusion drawn from it. Laid out by study year, two years to a row, because that
-        //  is how a degree is read — not as one long list sorted by academic year.
+        //  is how a degree is read, not as one long list sorted by academic year.
         var byYear = {}, years = [];
         for (i = 0; i < (d.results || []).length; i++) {
             var r = d.results[i];
@@ -612,7 +612,7 @@ window.G = (function () {
         }
 
         // ── Then the verdict ────────────────────────────────────────────────
-        //  What is blocking them stays on the face of it — that is the decision. What merely
+        //  What is blocking them stays on the face of it, that is the decision. What merely
         //  wants a look is folded away, because on this data most candidates carry several
         //  warnings and an open list of them buries the two lines that decide the case.
         var kind = blocks.length ? 'bad' : (warns.length ? 'warn' : 'ok');
@@ -620,7 +620,7 @@ window.G = (function () {
             ? (blocks.length === 1 ? 'One thing is blocking this candidate' : blocks.length + ' things are blocking this candidate')
             : (warns.length
                 ? (warns.length === 1 ? 'Ready, with one thing to look at' : 'Ready, with ' + warns.length + ' things to look at')
-                : 'Ready — nothing outstanding');
+                : 'Ready, nothing outstanding');
 
         h += '<div class="g-verdict g-verdict--' + kind + '">' +
              '<div class="g-verdict__h">' + esc(head) + '</div>';
@@ -657,7 +657,7 @@ window.G = (function () {
             '</div>';
 
         // ── the way out of a problem, not just a description of it ──────────
-        //  Most of what blocks a candidate is a records fault — a mark in the wrong semester, a
+        //  Most of what blocks a candidate is a records fault: a mark in the wrong semester, a
         //  course registered twice, an unmarked paper. The reviewer who finds it is the one who
         //  should be able to act on it, so the link carries the student and a reason composed
         //  from this very screen, and the rearrangement session opens already started.
@@ -755,7 +755,7 @@ window.G = (function () {
 
     var folds = {};
     /// A remembered fold beats its default, in BOTH directions. The old form read the stored
-    /// value, then forced any default-open section back open whenever it was stored closed —
+    /// value, then forced any default-open section back open whenever it was stored closed,
     /// so a section you deliberately collapsed reopened on the next student, every time.
     function foldState(key, def) {
         if (folds[key] === undefined) {
@@ -819,7 +819,7 @@ window.G = (function () {
         var h = '<span class="g-chips__l">Filtered by</span>';
         for (i = 0; i < live.length; i++)
             h += '<button type="button" class="g-fchip" data-k="' + esc(live[i].k) + '" ' +
-                 'title="' + esc(live[i].label + ': ' + live[i].value) + ' — click to remove">' +
+                 'title="' + esc(live[i].label + ': ' + live[i].value) + ', click to remove">' +
                  '<span class="g-fchip__k">' + esc(live[i].label) + '</span>' +
                  '<span class="g-fchip__v">' + esc(live[i].value) + '</span>' +
                  '<em>&times;</em></button>';
@@ -833,7 +833,7 @@ window.G = (function () {
 
     /* ── Pagination ───────────────────────────────────────────────────
        "Page 2 of 20" tells a reviewer nothing they can act on. Which records am I looking at,
-       and how many are there altogether — that is the question a queue raises, so the range and
+       and how many are there altogether, that is the question a queue raises, so the range and
        the total lead, and the page number follows as a secondary fact.
 
        First and Last matter here because the queues are long: 996 candidates is 20 pages, and
@@ -1311,7 +1311,7 @@ window.G = (function () {
         xSave(XKEY, { cols: cols, sheets: sheets, fmt: fmt, rows: mode, sort: ord, group: grp });
 
         // Order and grouping travel inside the filter, so the server applies them to the rows
-        // themselves — "sort by performance" means CGPA descending in the PDF, the workbook and
+        // themselves, "sort by performance" means CGPA descending in the PDF, the workbook and
         // the CSV alike, not a label on one of them.
         var cfg = xConfig();
         try {
@@ -1379,7 +1379,7 @@ window.G = (function () {
        are about to hold, and on a batch of forty it gives no clue what the forty are.
 
        The suggestions come from the server, chosen for THIS candidate out of the findings the
-       engine has just produced — so a student with an unpublished mark is offered a sentence
+       engine has just produced, so a student with an unpublished mark is offered a sentence
        about unpublished marks, not a dropdown of everything anyone has ever written. Clicking
        one fills the box rather than submitting, because the reviewer should add the specifics:
        which paper, which document. */

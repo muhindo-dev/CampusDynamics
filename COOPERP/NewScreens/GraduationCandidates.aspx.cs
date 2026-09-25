@@ -8,7 +8,7 @@ using System.Web.Services;
 using MySql.Data.MySqlClient;
 
 // =====================================================================
-//  Graduation Centre — Candidates.
+//  Graduation Centre, Candidates.
 //
 //  The working queue: who looks ready, the evidence behind each one, and
 //  the two decisions a reviewer can take. An independent page carrying
@@ -300,7 +300,7 @@ public partial class COOPERP_NewScreens_GraduationCandidates : System.Web.UI.Pag
                 { return string.Compare(a.regno, b.regno, StringComparison.OrdinalIgnoreCase); };
                 break;
             case "cgpa":
-                // Highest first — "sort by performance" means the best at the top.
+                // Highest first, "sort by performance" means the best at the top.
                 cmp = delegate(GradCandidate a, GradCandidate b)
                 {
                     int d = b.cgpa.CompareTo(a.cgpa);
@@ -392,7 +392,7 @@ public partial class COOPERP_NewScreens_GraduationCandidates : System.Web.UI.Pag
         return l;
     }
 
-    /// <summary>How the queue divides across programmes — the tab a Dean opens first.</summary>
+    /// <summary>How the queue divides across programmes, the tab a Dean opens first.</summary>
     private static GraduationExport.Sheet ByProgramme(List<GradCandidate> rows)
     {
         var sh = new GraduationExport.Sheet();
@@ -443,7 +443,7 @@ public partial class COOPERP_NewScreens_GraduationCandidates : System.Web.UI.Pag
         sh.Columns = new[] { "Readiness", "Candidates", "Share" };
         sh.NumericColumns.Add(1);
         int n = rows.Count;
-        sh.Rows.Add(Pc("Ready — nothing outstanding", ready, n));
+        sh.Rows.Add(Pc("Ready, nothing outstanding", ready, n));
         sh.Rows.Add(Pc("Needs a look", warn, n));
         sh.Rows.Add(Pc("Blocked", blocked, n));
         sh.Rows.Add(Pc("Of those, held by a reviewer", held, n));
@@ -483,7 +483,7 @@ public partial class COOPERP_NewScreens_GraduationCandidates : System.Web.UI.Pag
     /// <summary>
     /// Largest candidate set for which the readiness filter is resolved exactly rather than
     /// estimated. Measured on live data: reading and assessing 996 candidates costs about
-    /// 0.75s, while the whole 14,547-strong backlog costs 13s — far too long to hold a dialog
+    /// 0.75s, while the whole 14,547-strong backlog costs 13s, far too long to hold a dialog
     /// open for. Below the threshold the user gets the true number; above it, a plain warning.
     /// </summary>
     private const int EXACT_COUNT_LIMIT = 3000;
@@ -492,7 +492,7 @@ public partial class COOPERP_NewScreens_GraduationCandidates : System.Web.UI.Pag
     /// How many rows an export would really contain, answered before the user commits to it.
     ///
     /// The SQL count is exact for every filter except readiness, which is decided per student
-    /// in C# after the rows are read — so a "Blocked" export of the 2026/2027 cycle matches 996
+    /// in C# after the rows are read, so a "Blocked" export of the 2026/2027 cycle matches 996
     /// candidates in SQL and writes 297. Showing 996 and delivering 297 is the kind of small
     /// dishonesty that makes people stop trusting a screen, so where it is affordable the real
     /// figure is computed, and where it is not, the discrepancy is stated.
@@ -502,7 +502,7 @@ public partial class COOPERP_NewScreens_GraduationCandidates : System.Web.UI.Pag
     ///
     /// Mirrors ClearMany: one student at a time through GraduationService.Hold, so scope is
     /// re-checked per student and every hold lands in acad_grad_review as its own row. A batch
-    /// decision must be exactly as accountable as an individual one — the only thing shared is
+    /// decision must be exactly as accountable as an individual one, the only thing shared is
     /// the wording.
     /// </summary>
     [WebMethod(EnableSession = true)]
@@ -700,10 +700,10 @@ public partial class COOPERP_NewScreens_GraduationCandidates : System.Web.UI.Pag
                 if (!ok)
                 {
                     object m; d.TryGetValue("message", out m);
-                    skipped.Add(reg + " — " + (m == null ? "refused" : m.ToString()));
+                    skipped.Add(reg + ", " + (m == null ? "refused" : m.ToString()));
                 }
             }
-            catch { skipped.Add(reg + " — could not be read"); }
+            catch { skipped.Add(reg + ", could not be read"); }
             if (ok) done++;
         }
 

@@ -172,7 +172,7 @@ function openExport() {
         sorts: [
             { k: 'name', t: 'Name' },
             { k: 'regno', t: 'Student number' },
-            { k: 'cgpa', t: 'Performance — highest CGPA first' }
+            { k: 'cgpa', t: 'Performance, highest CGPA first' }
         ],
         sortDefault: 'name',
         groups: [

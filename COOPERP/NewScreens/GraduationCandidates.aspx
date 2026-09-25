@@ -12,7 +12,7 @@
       <span class="g-age" id="gAge">&nbsp;</span></div>
     <div class="g-f" style="flex:0 0 118px;"><label for="fYear">Graduation year</label><select id="fYear"></select></div>
     <div class="g-f" style="flex:0 0 184px;"><label for="fFocus">Who to show</label>
-      <select id="fFocus"><option value="cycle">This cycle &mdash; finishing now</option><option value="all">Everyone not yet graduated</option></select></div>
+      <select id="fFocus"><option value="cycle">This cycle, finishing now</option><option value="all">Everyone not yet graduated</option></select></div>
     <div class="g-f" style="flex:1 1 130px;"><label for="fFac">Faculty</label><select id="fFac"></select></div>
     <div class="g-f" style="flex:1 1 130px;"><label for="fDep">Department</label><select id="fDep"></select></div>
     <div class="g-f" style="flex:1 1 150px;"><label for="fProg">Programme</label><select id="fProg"></select></div>
@@ -127,7 +127,7 @@ function syncFocusEnabled() {
 
 function resetFilters() {
     ['fFac', 'fDep', 'fProg', 'fIntake', 'fReady'].forEach(function (id) { G.qs(id).value = ''; });
-    // Not '' — the default for this one is the pending queue, which is the page's whole point.
+    // Not '', the default for this one is the pending queue, which is the page's whole point.
     G.qs('fOnList').value = 'pending';
     G.qs('fQ').value = '';
 }
@@ -176,8 +176,8 @@ function render(d) {
         : ' · everyone not yet graduated';
     G.qs('gMeta').textContent = scope.replace(/^ · /, '');
 
-    // The pager carries the numbers now — which records these are, and how many there are
-    // altogether — so the card heading no longer repeats them.
+    // The pager carries the numbers now, which records these are, and how many there are
+    // altogether, so the card heading no longer repeats them.
     G.pager('gPager', { page: d.page, size: 50, total: d.total, shown: rows.length },
             function (n) { page = n; sync(); });
 
@@ -325,7 +325,7 @@ function openExport() {
         sorts: [
             { k: 'name', t: 'Name' },
             { k: 'regno', t: 'Student number' },
-            { k: 'cgpa', t: 'Performance — highest CGPA first' },
+            { k: 'cgpa', t: 'Performance, highest CGPA first' },
             { k: 'class', t: 'Class of award' }
         ],
         sortDefault: 'name',
@@ -357,9 +357,9 @@ function footer(g) {
              'Move to the next candidate' +
            '</label>' +
            '<span class="g-hint">' +
-           (g.readiness === 'BLOCKED' ? 'Blocked — clearing will ask you to justify it in writing.'
+           (g.readiness === 'BLOCKED' ? 'Blocked, clearing will ask you to justify it in writing.'
             : g.readiness === 'WARN' ? 'Read the points above before clearing.'
-            : 'Nothing outstanding — safe to clear.') + '</span>';
+            : 'Nothing outstanding, safe to clear.') + '</span>';
 }
 
 // The footer only exists once the record has come back, so it is wired from the callback
@@ -488,7 +488,7 @@ document.addEventListener('DOMContentLoaded', function () {
     G.qs('fDep').addEventListener('change', function () { G.cascade('fFac', 'fDep', 'fProg'); page = 1; sync(); });
     G.qs('fSort').addEventListener('change', function () { page = 1; sync(); });
     // "This cycle" narrows by when somebody last sat a paper, which the engine applies only to
-    // the pending queue — a graduation list is already narrow by year. Disabling it says so
+    // the pending queue: a graduation list is already narrow by year. Disabling it says so
     // rather than leaving a control that silently does nothing.
     G.qs('fOnList').addEventListener('change', syncFocusEnabled);
     // Typing is enough. Requiring Enter meant a filter that looked applied and was not.

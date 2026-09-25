@@ -6,7 +6,7 @@ using System.Text;
 using System.Web;
 
 // =====================================================================
-//  Graduation Centre — exports.
+//  Graduation Centre, exports.
 //
 //  One writer, used by all four pages, so every file that leaves this
 //  module is branded and laid out the same way. A graduation list goes
@@ -190,7 +190,7 @@ public static class GraduationExport
     /// every row of that group. Grouping by programme prints
     /// "BACHELOR OF INFORMATION TECHNOLOGY   (BIT)" above the rows; printing the same two
     /// values again in every row costs about a third of the page width and tells the reader
-    /// nothing. The data is not lost — it is in the heading.
+    /// nothing. The data is not lost, it is in the heading.
     /// </summary>
     public static Sheet WithoutGroupColumns(Sheet sh, string groupBy)
     {

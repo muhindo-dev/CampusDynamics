@@ -6,15 +6,15 @@ using System.Web.Script.Serialization;
 using MySql.Data.MySqlClient;
 
 // =====================================================================
-//  Graduation Centre — the write path.
+//  Graduation Centre, the write path.
 //  Plan: COOPERP/NewScreens/GRADUATION_CENTRE_PLAN.md §6
 //
 //  Two tables move together or neither moves:
-//    acad_graduands    — the system of record. Nineteen stored procedures
+//    acad_graduands, the system of record. Nineteen stored procedures
 //                        and ten code files read it, including every
 //                        transcript procedure. A student is "on the
 //                        graduation list" iff they have a row here.
-//    acad_grad_review  — the decision. Who, when, why, and the evidence
+//    acad_grad_review, the decision. Who, when, why, and the evidence
 //                        as it stood at the time.
 //
 //  A graduand with no verdict, or a verdict with no graduand, is exactly
@@ -253,12 +253,12 @@ public static class GraduationService
     /// <summary>
     /// Puts a candidate on the graduation list.
     ///
-    /// Idempotent: a student already on a list is reported, not duplicated — acad_graduands has
+    /// Idempotent: a student already on a list is reported, not duplicated: acad_graduands has
     /// no unique key on regno (it already carries one duplicate from before this module), so the
     /// guard has to be here.
     ///
     /// Clearing a candidate the engine BLOCKS is allowed, because a Registrar may know something
-    /// the data does not — but only with a written justification, which is stored on the verdict
+    /// the data does not, but only with a written justification, which is stored on the verdict
     /// and shown on the graduation list beside the name. Silently clearing a student with five
     /// failed papers is the exact failure this module was built to stop.
     /// </summary>
@@ -329,7 +329,7 @@ public static class GraduationService
                     catch { try { tx.Rollback(); } catch { } throw; }
                 }
                 return Ok(g.name + " is on the " + acadYear + " graduation list" +
-                          (g.degClass == "" ? "." : " — " + g.degClass + "."));
+                          (g.degClass == "" ? "." : ", " + g.degClass + "."));
             }
         }
         catch (Exception ex) { return Fail(ex.Message); }
@@ -348,7 +348,7 @@ public static class GraduationService
         if (regno == "") return Fail("No student was given.");
         if (acadYear == "") return Fail("Choose the graduation year first.");
         if (reason.Length < 10)
-            return Fail("Say why this candidate is being held — at least 10 characters. " +
+            return Fail("Say why this candidate is being held: at least 10 characters. " +
                         "Whoever picks this up next has only this sentence to go on.");
         if (reason.Length > 1000) reason = reason.Substring(0, 1000);
 
@@ -419,7 +419,7 @@ public static class GraduationService
     }
 
     /// <summary>
-    /// Takes a student off the graduation list. The verdict history is NOT deleted — a name
+    /// Takes a student off the graduation list. The verdict history is NOT deleted: a name
     /// having been on a list, and come off it, is exactly the kind of thing an audit later needs.
     /// </summary>
     public static string RemoveFromList(MarksScope scope, string regno, string reason)
@@ -428,7 +428,7 @@ public static class GraduationService
         reason = (reason ?? "").Trim();
         if (regno == "") return Fail("No student was given.");
         if (reason.Length < 10)
-            return Fail("Say why this name is coming off the graduation list — at least 10 characters.");
+            return Fail("Say why this name is coming off the graduation list: at least 10 characters.");
         string actor = Actor();
         try
         {
@@ -449,7 +449,7 @@ public static class GraduationService
                         int n;
                         using (var cmd = new MySqlCommand("DELETE FROM acad_graduands WHERE regno=@r", c, tx))
                         { cmd.Parameters.AddWithValue("@r", g.regno); n = cmd.ExecuteNonQuery(); }
-                        if (n == 0) { tx.Rollback(); return Fail("Nothing was removed — the list may have changed."); }
+                        if (n == 0) { tx.Rollback(); return Fail("Nothing was removed, the list may have changed."); }
 
                         Supersede(c, tx, g.regno);
                         g.graduatedYear = "";
