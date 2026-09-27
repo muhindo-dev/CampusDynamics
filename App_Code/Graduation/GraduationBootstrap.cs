@@ -190,6 +190,10 @@ public static class GraduationBootstrap
                 hasAccess = true,
                 scopeLabel = scope.Label,
                 roleNote = scope.RoleNote,
+                // Whether this user may decide, as opposed to merely look. The server refuses
+                // either way; this is so the page does not offer a button it knows will fail.
+                canDecide = GraduationRights.CanDecide(scope),
+                decideNote = GraduationRights.RightNote(scope),
                 years = years,
                 currentYear = currentYear,
                 previousYear = GraduationEngine.PreviousYear(currentYear),

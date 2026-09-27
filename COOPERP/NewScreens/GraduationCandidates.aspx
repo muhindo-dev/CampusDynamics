@@ -204,6 +204,14 @@ function syncBulk() {
     var n = selected().length, bar = G.qs('gBatch');
     if (!n) { bar.style.display = 'none'; bar.innerHTML = ''; return; }
     bar.style.display = 'flex';
+    if (BOOT && BOOT.canDecide === false) {
+        bar.innerHTML = '<span class="g-batch__n">' + n + ' selected</span>' +
+            '<span class="g-sub">Approving and holding is for the head of department, the ' +
+            'dean or the Academic Registrar.</span>' +
+            '<button type="button" class="g-btn g-btn--sm g-batch__x" id="bNone">Deselect</button>';
+        G.qs('bNone').addEventListener('click', deselectAll);
+        return;
+    }
     bar.innerHTML =
         '<span class="g-batch__n">' + n + ' selected</span>' +
         '<button type="button" class="g-btn g-btn--p g-btn--sm" id="bClear">Approve ' + n + ' for graduation</button>' +
@@ -211,12 +219,13 @@ function syncBulk() {
         '<button type="button" class="g-btn g-btn--sm g-batch__x" id="bNone">Deselect</button>';
     G.qs('bClear').addEventListener('click', doBulkClear);
     G.qs('bHold').addEventListener('click', doBulkHold);
-    G.qs('bNone').addEventListener('click', function () {
-        var b = document.querySelectorAll('#gBody .ck');
-        for (var i = 0; i < b.length; i++) b[i].checked = false;
-        G.qs('ckAll').checked = false;
-        syncBulk();
-    });
+    G.qs('bNone').addEventListener('click', deselectAll);
+}
+function deselectAll() {
+    var b = document.querySelectorAll('#gBody .ck');
+    for (var i = 0; i < b.length; i++) b[i].checked = false;
+    G.qs('ckAll').checked = false;
+    syncBulk();
 }
 function doBulkClear() {
     var regs = selected();
@@ -346,6 +355,12 @@ function openExport() {
 /* ── the evidence modal's actions ── */
 function footer(g) {
     if (g.graduatedYear) return '<span class="g-sub">Already on the ' + G.esc(g.graduatedYear) + ' list.</span>';
+    // A reviewer without the right still reads the whole record; they just are not shown a
+    // button the server would refuse. The reason names what the decision needs, not what they
+    // lack, so it reads as a routing instruction rather than a rebuke.
+    if (BOOT && BOOT.canDecide === false)
+        return '<span class="g-sub">Review only. Approving or holding is for the head of ' +
+               'department, the dean or the Academic Registrar.</span>';
     if (g.holdReason)
         return '<button type="button" class="g-btn g-btn--p" id="mRelease">Remove the hold</button>' +
                '<button type="button" class="g-btn" id="mClear">Approve for graduation</button>';

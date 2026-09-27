@@ -6718,11 +6718,32 @@ public partial class COOPERP_NewScreens_NewStudentInfo : System.Web.UI.Page
                 return;
             }
 
+            // ── The graduation gate ──────────────────────────────────────────────────
+            // Both routes out of this method produce a graduation document, so the check sits
+            // above the fork rather than being written twice and drifting. A batch where some
+            // students are approved and some are not prints the approved ones and reports the
+            // rest by name: refusing the whole selection because of one unapproved student
+            // would make the Registry re-select by hand to find out which.
+            string printActor = ResolveDocumentActor();
+            GraduationPrintGate.Outcome gate = GraduationPrintGate.Check(regnos, documentType);
+
+            if (gate.AnyBlocked)
+            {
+                // The refusal is recorded whether or not the operator goes on with the rest,
+                // because the fact worth keeping is that a document was sought for somebody who
+                // has not been approved.
+                GraduationPrintGate.Record(gate, documentType, null, printActor, RoleAccessService.GetRoleName());
+                WriteGraduationBlockAndComplete(gate, documentType);
+                return;
+            }
+
             // Print-optimized HTML transcript (adaptive layout engine) instead of the fixed PDF.
             if (documentType.Equals("TranscriptHTML", StringComparison.OrdinalIgnoreCase)
                 || documentType.Equals("HTML", StringComparison.OrdinalIgnoreCase)
                 || documentType.Equals("PrintTranscript", StringComparison.OrdinalIgnoreCase))
             {
+                GraduationPrintGate.Record(gate, documentType, "TranscriptPrint.aspx", printActor,
+                                           RoleAccessService.GetRoleName());
                 string url = ResolveUrl("~/COOPERP/NewScreens/TranscriptPrint.aspx?reg="
                     + Server.UrlEncode(regnos[0]) + "&autoprint=1");
                 Response.Redirect(url, false);
@@ -6738,6 +6759,12 @@ public partial class COOPERP_NewScreens_NewStudentInfo : System.Web.UI.Page
                 WriteHtmlErrorAndComplete(result != null ? result.Message : "The academic document could not be generated.");
                 return;
             }
+
+            // Recorded only once the document exists. Writing it earlier would log prints that
+            // never happened, and the graduation list would show a transcript as issued when
+            // the generator had in fact failed.
+            GraduationPrintGate.Record(gate, documentType, result.FileName, printActor,
+                                       RoleAccessService.GetRoleName());
 
             WriteBinaryFileAndComplete(result.Content, result.ContentType, result.FileName);
         }
@@ -8716,6 +8743,94 @@ public partial class COOPERP_NewScreens_NewStudentInfo : System.Web.UI.Page
         Response.BinaryWrite(content);
         Response.Flush();
         HttpContext.Current.ApplicationInstance.CompleteRequest();
+    }
+
+    /// <summary>
+    /// A refusal that tells the operator what to do next rather than only what went wrong.
+    ///
+    /// Three ways forward, in the order they are usually wanted: approve the named students in
+    /// the Graduation Centre, carry on with the ones who are approved, or go back. The middle
+    /// one matters most in practice: a batch of forty with two unapproved should not send
+    /// anybody back to re-tick thirty-eight boxes, so the link carries the approved list.
+    /// </summary>
+    private void WriteGraduationBlockAndComplete(GraduationPrintGate.Outcome gate, string documentType)
+    {
+        Response.Clear();
+        Response.Buffer = true;
+        Response.ContentType = "text/html";
+        Response.Cache.SetCacheability(System.Web.HttpCacheability.NoCache);
+        Response.Cache.SetNoStore();
+
+        bool some = gate.Allowed.Count > 0;
+        string kind = GraduationPrintGate.KindOf(documentType) == GraduationPrintGate.CERTIFICATE
+                    ? "certificate" : "transcript";
+
+        StringBuilder rows = new StringBuilder();
+        foreach (GraduationPrintGate.Verdict v in gate.Blocked)
+        {
+            rows.Append("<li><b>")
+                .Append(HttpUtility.HtmlEncode(v.Name == "" ? v.RegNo : v.Name))
+                .Append("</b> <span class='r'>").Append(HttpUtility.HtmlEncode(v.RegNo)).Append("</span><br>")
+                .Append("<span class='w'>").Append(HttpUtility.HtmlEncode(v.Reason)).Append("</span></li>");
+        }
+
+        string carryOn = "";
+        if (some)
+        {
+            string url = ResolveUrl("~/COOPERP/NewScreens/NewStudentInfo.aspx?action=GenerateAcademicDocument")
+                       + "&documentType=" + Server.UrlEncode(documentType)
+                       + "&regnos=" + Server.UrlEncode(string.Join(",", gate.Allowed.ToArray()));
+            carryOn = "<a class='btn btn--p' href='" + HttpUtility.HtmlEncode(url) + "'>Carry on with the other "
+                    + gate.Allowed.Count + "</a>";
+        }
+
+        string centre = ResolveUrl("~/COOPERP/NewScreens/GraduationCandidates.aspx");
+
+        Response.Write(
+            "<!DOCTYPE html><html><head><title>Not approved for graduation</title><style>" +
+            "body{font-family:Segoe UI,Arial,sans-serif;background:#f5f7fa;padding:24px;color:#1a1a2e;margin:0}" +
+            ".card{max-width:680px;margin:40px auto;background:#fff;border:1px solid #e0e5ed;border-radius:4px;padding:22px 24px}" +
+            "h2{margin:0 0 6px;font-size:18px;color:#05275C}" +
+            ".lead{font-size:13px;line-height:1.6;color:#475467;margin:0 0 14px}" +
+            "ul{list-style:none;padding:0;margin:0 0 16px}" +
+            "li{border:1px solid #f3c9c9;background:#fef5f5;padding:9px 11px;margin-bottom:7px;font-size:12px;line-height:1.55}" +
+            ".r{color:#8a94a6;font-size:11px}.w{color:#7f1d1d}" +
+            ".btns{display:flex;gap:8px;flex-wrap:wrap;margin-top:4px}" +
+            ".btn{display:inline-block;padding:7px 13px;border:1px solid #e0e5ed;background:#fff;color:#05275C;" +
+            "text-decoration:none;font-size:12px}.btn--p{background:#174DA4;border-color:#174DA4;color:#fff}" +
+            "</style></head><body><div class='card'>" +
+            "<h2>" + (gate.Blocked.Count == 1 ? "This student is not on the graduation list"
+                                              : gate.Blocked.Count + " of these students are not on the graduation list") + "</h2>" +
+            "<p class='lead'>From 2026/2027 a " + kind + " is only issued to a student the Academic " +
+            "Registry has approved for graduation. Students who are still studying are not affected, " +
+            "and neither is anything from an earlier year.</p>" +
+            "<ul>" + rows + "</ul><div class='btns'>" + carryOn +
+            "<a class='btn' href='" + HttpUtility.HtmlEncode(centre) + "'>Open the Graduation Centre</a>" +
+            "<a class='btn' href='javascript:history.back()'>Go back</a>" +
+            "</div></div></body></html>");
+        Response.Flush();
+        HttpContext.Current.ApplicationInstance.CompleteRequest();
+    }
+
+    /// <summary>Who is printing, for the document record. Same two signals the auth check uses.</summary>
+    private string ResolveDocumentActor()
+    {
+        try
+        {
+            if (Session != null)
+            {
+                string s = Convert.ToString(Session["username"] ?? Session["usernm"] ?? "").Trim();
+                if (s != "") return s;
+            }
+        }
+        catch { }
+        try
+        {
+            if (User != null && User.Identity != null && User.Identity.IsAuthenticated)
+                return (User.Identity.Name ?? "").Trim();
+        }
+        catch { }
+        return "unknown";
     }
 
     private void WriteHtmlErrorAndComplete(string message)

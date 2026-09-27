@@ -55,8 +55,50 @@ public partial class COOPERP_NewScreens_TranscriptPrint : System.Web.UI.Page
         string reg = (Request["reg"] ?? Request["regno"] ?? "").Trim();
         if (string.IsNullOrEmpty(reg)) { Body = Err("No student registration number supplied. Use ?reg=REGNO."); return; }
 
-        try { Body = Build(reg); }
+        // This page is reachable by its own URL, not only through the students list, so the
+        // graduation check has to stand here too. Checking in one place and redirecting to the
+        // other would leave the door that was typed straight into the address bar open.
+        GraduationPrintGate.Outcome gate =
+            GraduationPrintGate.Check(new string[] { reg }, "Transcript");
+        if (gate.AnyBlocked)
+        {
+            GraduationPrintGate.Record(gate, "TranscriptHTML", null, Actor(), RoleAccessService.GetRoleName());
+            AutoPrint = false;
+            Body = Err(Server.HtmlEncode(GraduationPrintGate.BlockedSummary(gate))
+                       .Replace("\n", "<br>"));
+            return;
+        }
+
+        try
+        {
+            Body = Build(reg);
+            // Recorded after the transcript exists, and this route is a transcript by
+            // definition, so it also moves the graduation list's transcript state forward.
+            GraduationPrintGate.Record(gate, "TranscriptHTML", "TranscriptPrint.aspx",
+                                       Actor(), RoleAccessService.GetRoleName());
+        }
         catch (Exception ex) { Body = Err("Could not build transcript: " + Server.HtmlEncode(ex.Message)); }
+    }
+
+    /// <summary>Who is printing, for the document record.</summary>
+    private string Actor()
+    {
+        try
+        {
+            if (Session != null)
+            {
+                string s = Convert.ToString(Session["username"] ?? Session["usernm"] ?? "").Trim();
+                if (s != "") return s;
+            }
+        }
+        catch { }
+        try
+        {
+            if (User != null && User.Identity != null && User.Identity.IsAuthenticated)
+                return (User.Identity.Name ?? "").Trim();
+        }
+        catch { }
+        return "unknown";
     }
 
     private string Build(string reg)
@@ -196,7 +238,8 @@ public partial class COOPERP_NewScreens_TranscriptPrint : System.Web.UI.Page
                 : ResolveUrl("~/COOPERP/StudentInfo/photos/default.png");
 
             return Render(studnm, regno, entryno, gender, nationality, dob, progname, faculty,
-                          award, cgpa, totalCu, minLoad, sems, keys, levelCode, photoUrl, completion);
+                          award, cgpa, totalCu, minLoad, sems, keys, levelCode, photoUrl, completion,
+                          studySystem);
         }
     }
 
@@ -205,7 +248,8 @@ public partial class COOPERP_NewScreens_TranscriptPrint : System.Web.UI.Page
     // ===================================================================
     private string Render(string studnm, string regno, string entryno, string gender, string nationality,
         string dob, string progname, string faculty, string award, double cgpa, double totalCu, double minLoad,
-        List<Sem> sems, List<string[]> keys, string levelCode, string photoUrl, string completion)
+        List<Sem> sems, List<string[]> keys, string levelCode, string photoUrl, string completion,
+        string studySystem)
     {
         var sb = new StringBuilder();
         sb.Append("<div class='tx' id='tx'>");

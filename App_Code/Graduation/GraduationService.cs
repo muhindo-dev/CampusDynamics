@@ -270,6 +270,11 @@ public static class GraduationService
         if (regno == "") return Fail("No student was given.");
         if (acadYear == "") return Fail("Choose the graduation year first.");
 
+        // Seeing a candidate and signing one off are different authorities: only a head of
+        // department, a dean, the Academic Registrar or an administrator may do this.
+        string notAllowed;
+        if (!GraduationRights.CanDecide(scope, out notAllowed)) return Fail(notAllowed);
+
         string actor = Actor();
         try
         {
@@ -317,7 +322,7 @@ public static class GraduationService
                             cmd.ExecuteNonQuery();
                         }
                         Supersede(c, tx, g.regno);
-                        WriteVerdict(c, tx, g, acadYear, "CLEARED", note, actor, scope.RoleNote);
+                        WriteVerdict(c, tx, g, acadYear, "CLEARED", note, actor, GraduationRights.RightNote(scope));
                         // The summary the queues read must not still show them as outstanding.
                         GraduationStats.Touch(c, tx, g.regno);
                         Audit(c, tx, actor, g.regno, g.name, g.progcode, acadYear,
@@ -352,6 +357,12 @@ public static class GraduationService
                         "Whoever picks this up next has only this sentence to go on.");
         if (reason.Length > 1000) reason = reason.Substring(0, 1000);
 
+        // Seeing a candidate and signing one off are different authorities: only a head of
+        // department, a dean, the Academic Registrar or an administrator may do this.
+        string notAllowed;
+        if (!GraduationRights.CanDecide(scope, out notAllowed)) return Fail(notAllowed);
+
+
         string actor = Actor();
         try
         {
@@ -371,7 +382,7 @@ public static class GraduationService
                     try
                     {
                         Supersede(c, tx, g.regno);
-                        WriteVerdict(c, tx, g, acadYear, "HELD", reason, actor, scope.RoleNote);
+                        WriteVerdict(c, tx, g, acadYear, "HELD", reason, actor, GraduationRights.RightNote(scope));
                         Audit(c, tx, actor, g.regno, g.name, g.progcode, acadYear, "On hold: " + reason);
                         tx.Commit();
                     }
@@ -389,6 +400,12 @@ public static class GraduationService
         regno = (regno ?? "").Trim();
         note = (note ?? "").Trim();
         if (regno == "") return Fail("No student was given.");
+
+        // Seeing a candidate and signing one off are different authorities: only a head of
+        // department, a dean, the Academic Registrar or an administrator may do this.
+        string notAllowed;
+        if (!GraduationRights.CanDecide(scope, out notAllowed)) return Fail(notAllowed);
+
         string actor = Actor();
         try
         {
@@ -406,7 +423,7 @@ public static class GraduationService
                     try
                     {
                         Supersede(c, tx, g.regno);
-                        WriteVerdict(c, tx, g, acadYear == "" ? "-" : acadYear, "RELEASED", note, actor, scope.RoleNote);
+                        WriteVerdict(c, tx, g, acadYear == "" ? "-" : acadYear, "RELEASED", note, actor, GraduationRights.RightNote(scope));
                         Audit(c, tx, actor, g.regno, g.name, g.progcode, acadYear, "Hold removed" + (note == "" ? "" : ": " + note));
                         tx.Commit();
                     }
@@ -429,6 +446,12 @@ public static class GraduationService
         if (regno == "") return Fail("No student was given.");
         if (reason.Length < 10)
             return Fail("Say why this name is coming off the graduation list: at least 10 characters.");
+
+        // Seeing a candidate and signing one off are different authorities: only a head of
+        // department, a dean, the Academic Registrar or an administrator may do this.
+        string notAllowed;
+        if (!GraduationRights.CanDecide(scope, out notAllowed)) return Fail(notAllowed);
+
         string actor = Actor();
         try
         {
@@ -454,7 +477,7 @@ public static class GraduationService
                         Supersede(c, tx, g.regno);
                         g.graduatedYear = "";
                         WriteVerdict(c, tx, g, year, "RELEASED", "Removed from the graduation list: " + reason,
-                                     actor, scope.RoleNote);
+                                     actor, GraduationRights.RightNote(scope));
                         GraduationStats.Touch(c, tx, g.regno);
                         Audit(c, tx, actor, g.regno, g.name, g.progcode, year,
                               "Removed from the graduation list: " + reason);
