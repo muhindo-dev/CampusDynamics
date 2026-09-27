@@ -1991,42 +1991,49 @@ public static class MarksControllerShared
             }
         }
 
-        // ── Step 1b: Refuse to publish one term's mark on top of another ─────────────
+        // ── Step 1b: Take the row over for the term being published ──────────────────
         // acad_results is UNIQUE on (regno, courseid) alone: one result per course code per
-        // student, carrying the latest grade. That is deliberate — it is what lets a retake
-        // show the course once with its new mark (see RetakeService, which snapshots the
-        // original into acad_retake_registrations and republishes into this same row).
+        // student, carrying the latest grade. That is what lets a retake show the course once
+        // with its new mark (see RetakeService, which snapshots the original into
+        // acad_retake_registrations and republishes into this same row).
         //
-        // The hole is that a SECOND ORDINARY REGISTRATION of the same course gets the same
-        // treatment without any of the safeguards: no snapshot, no notice. The UPSERT lands on
-        // the earlier term's row, the older mark is overwritten with nowhere to recover it
-        // from, and the term being published shows the student nothing. 113 registrations
-        // since 2023/2024 are in that state, and only 9 of 246 repeats are flagged as retakes,
-        // so this is mostly ordinary repeat registrations, not the retake feature.
+        // This used to REFUSE whenever the row it landed on belonged to another term, because
+        // the upsert deliberately excluded acad/semester from its UPDATE clause: the mark was
+        // replaced but the row stayed parked in the old term, so the term actually being
+        // published showed the student nothing. Refusing stopped the damage and stopped the
+        // publish with it, which is why every mark in the approved queue was stuck.
         //
-        // Refuse loudly. A blocked publish with an explanation is recoverable; a silent
-        // overwrite destroys one mark and hides another, and the student is the one who
-        // finds out.
+        // Publishing now means what it says. The result moves to the term it is published for,
+        // so that term shows it, and the term it came from stops claiming a course it no longer
+        // holds. Nothing is lost doing so: the acad_results audit trigger records old_total and
+        // old_grade on every update, and the reason written below names the term and the mark
+        // that were replaced, so a wrong takeover can be read back and undone.
+        //
+        // Both terms are queued for a GPA rewrite further down, because a mark leaving one
+        // semester changes that semester's GPA just as much as it changes the new one's.
+        bool   takeover      = false;
+        string vacatedAcad   = null;
+        int    vacatedSem    = 0;
         if (priorScore.HasValue
             && (!string.Equals((effectiveAcad ?? "").Trim(), (requestedAcad ?? "").Trim(), StringComparison.OrdinalIgnoreCase)
                 || effectiveSemester != requestedSemester))
         {
-            result.Message = string.Format(
-                "Cannot publish: {0} already has a published result for {1} under {2} semester {3} " +
-                "(score {4}{5}). A result is stored once per course code, so publishing this {6} " +
-                "semester {7} mark would overwrite that one and this term would still show the " +
-                "student nothing. Choose the right route: if the student is genuinely sitting {1} " +
-                "again, register it through Retake Registration, which keeps the original mark and " +
-                "replaces the grade properly. If this registration is in the wrong term or is a " +
-                "duplicate, fix it in the Course Correction Centre. Only then publish.",
-                regno, courseId,
-                string.IsNullOrEmpty(effectiveAcad) ? "?" : effectiveAcad, effectiveSemester,
-                priorScore.Value, string.IsNullOrEmpty(priorGrade) ? "" : " / " + priorGrade,
-                string.IsNullOrEmpty(requestedAcad) ? "?" : requestedAcad, requestedSemester);
-            return result;
+            takeover    = true;
+            vacatedAcad = effectiveAcad;
+            vacatedSem  = effectiveSemester;
         }
 
+        // The result belongs to the term being published, in every case. Where there was no
+        // prior row these already held the requested term; where there was one they held
+        // wherever that row happened to sit, which is exactly what has to stop being true.
+        effectiveAcad     = requestedAcad;
+        effectiveSemester = requestedSemester;
+        if (studyYear > 0) effectiveStudyYr = studyYear;
+
         // ── Step 2: Build audit comment ──────────────────────────────────────────────
+        // Whoever reads this back later needs the mark that was replaced AND the term it was
+        // taken from, because on a takeover those are the two facts that cannot be recovered
+        // from the row itself once it has moved.
         string overwriteNote = "";
         if (priorScore.HasValue)
         {
@@ -2034,21 +2041,31 @@ public static class MarksControllerShared
                 overwriteNote = string.Format(" [Overwrite: was {0}/{1}]", priorScore.Value, priorGrade ?? "?");
             else
                 overwriteNote = " [Re-publish: score unchanged]";
+
+            if (takeover)
+                overwriteNote += string.Format(" [Moved from {0} semester {1}]",
+                    string.IsNullOrEmpty(vacatedAcad) ? "?" : vacatedAcad, vacatedSem);
         }
         string finalComment = "Published from provisional marks by " + actor + overwriteNote;
 
         // Attribute this final-result change for the acad_results audit trigger (who changed what).
         SetMarkAuditContext(conn, tx, actor, "ProvisionalMarks:publish", finalComment);
 
-        // ── Step 3: Atomic UPSERT — acad/semester/studyyear NOT in UPDATE clause ─────
-        // This means existing rows keep their original placement in the transcript.
-        // Only score/grade/gradept/CU/comment are ever updated.
+        // ── Step 3: Atomic UPSERT, acad/semester/studyyear INCLUDED in the UPDATE ────
+        // These used to be left out so an existing row kept its original placement. That is
+        // what made a cross-term publish silently useless: the mark changed, the row did not
+        // move, and the term being published still showed nothing. Writing them puts the
+        // result in the term it was published for. For a same-term re-publish they are the
+        // values already in the row, so it stays a no-op there.
         using (MySqlCommand upsert = new MySqlCommand(@"
             INSERT INTO acad_results
                 (regno, courseid, acad, semester, studyyear, score, grade, gradept, " + resultsCreditCol + @", result_comment)
             VALUES
                 (@regno, @courseid, @acad, @semester, @studyyear, @score, @grade, @gradept, @cu, @comment)
             ON DUPLICATE KEY UPDATE
+                acad           = COALESCE(NULLIF(VALUES(acad),''), acad),
+                semester       = VALUES(semester),
+                studyyear      = COALESCE(VALUES(studyyear), studyyear),
                 score          = VALUES(score),
                 grade          = VALUES(grade),
                 gradept        = VALUES(gradept),
@@ -2072,6 +2089,12 @@ public static class MarksControllerShared
         string overwriteWarning = (priorScore.HasValue && priorScore.Value != total.Value)
             ? string.Format(" WARNING: previous score {0} ({1}) overwritten with {2}.", priorScore.Value, priorGrade ?? "?", total.Value)
             : "";
+        if (takeover)
+            overwriteWarning += string.Format(
+                " The result was held under {0} semester {1} and has been moved to {2} semester {3}," +
+                " so both terms have been recalculated.",
+                string.IsNullOrEmpty(vacatedAcad) ? "?" : vacatedAcad, vacatedSem,
+                string.IsNullOrEmpty(effectiveAcad) ? "?" : effectiveAcad, effectiveSemester);
 
         // Batch mode: queue this student's semester for ONE recompute after the batch and
         // skip the CGPA aggregate entirely (it is only ever used for the message below, and
@@ -2080,11 +2103,32 @@ public static class MarksControllerShared
         string awardClass = "";
         if (deferGpa != null)
         {
-            deferGpa.Touch(regno, acadYear, ParseIntSafe(semester, 0));
+            // The term the result now sits in, which after a takeover is not the term it was
+            // read from, and which is why this asks effectiveAcad rather than the requested
+            // parameters it used to trust.
+            deferGpa.Touch(regno, effectiveAcad, effectiveSemester);
+            // ...and the term it was taken from, which has just lost a course and whose GPA is
+            // wrong until it is recomputed. Missing this was the quiet half of the problem.
+            if (takeover) deferGpa.Touch(regno, vacatedAcad, vacatedSem);
         }
         else
         {
-            semesterGpa = ComputeSemesterGpa(conn, tx, regno, acadYear, ParseIntSafe(semester, 0));
+            // Interactive publish: the vacated term has to be settled too, and before the
+            // current one so the figure reported back to the operator is the new term's.
+            if (takeover)
+            {
+                decimal vacatedGpa = ComputeSemesterGpa(conn, tx, regno, vacatedAcad, vacatedSem);
+                using (MySqlCommand vg = new MySqlCommand(
+                    "UPDATE acad_results SET gpa=@gpa WHERE regno=@regno AND acad=@acad AND semester=@semester", conn, tx))
+                {
+                    vg.Parameters.AddWithValue("@gpa", vacatedGpa);
+                    vg.Parameters.AddWithValue("@regno", regno);
+                    vg.Parameters.AddWithValue("@acad", vacatedAcad);
+                    vg.Parameters.AddWithValue("@semester", vacatedSem);
+                    vg.ExecuteNonQuery();
+                }
+            }
+            semesterGpa = ComputeSemesterGpa(conn, tx, regno, effectiveAcad, effectiveSemester);
             cgpa = ComputeStudentCgpa(conn, tx, regno);
             awardClass = ComputeAwardClass(cgpa);
 
@@ -2097,8 +2141,10 @@ public static class MarksControllerShared
             {
                 cmd.Parameters.AddWithValue("@gpa", semesterGpa);
                 cmd.Parameters.AddWithValue("@regno", regno);
-                cmd.Parameters.AddWithValue("@acad", acadYear);
-                cmd.Parameters.AddWithValue("@semester", ParseIntSafe(semester, 0));
+                // Where the result now is, not where the caller asked from. Identical unless a
+                // takeover moved it, and wrong in exactly that case if left as the parameter.
+                cmd.Parameters.AddWithValue("@acad", effectiveAcad);
+                cmd.Parameters.AddWithValue("@semester", effectiveSemester);
                 cmd.ExecuteNonQuery();
             }
         }

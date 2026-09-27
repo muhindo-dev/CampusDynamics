@@ -169,12 +169,35 @@ public static class StageAdvanceService
         using (var cmd = new MySqlCommand("", conn))
         {
             string where = BuildWhere(def, scope, cmd, progId, yos, acadYear, semester, failMode);
+
+            // Publishing overwrites: a course already carrying a result gets the new mark, and
+            // where that result was filed under another term it is moved here. Both are correct
+            // and neither should be a surprise, so the preview counts them before the operator
+            // commits rather than leaving them to be discovered in the per-row log afterwards.
+            //
+            // Only PUBLISH writes results, so only PUBLISH pays for the join. CONVERT sits on
+            // the registration side: acad_results is the side being looked up and its columns
+            // have to stay bare or Index_UNQ(regno, courseid) is not used. The two tables are
+            // in different databases with different collations, which is what makes this
+            // necessary at all.
+            bool pub = def.WritesResults;
+            string join = pub
+                ? " LEFT JOIN acad_results ar ON ar.regno = CONVERT(cr.regno USING utf8)" +
+                  " AND ar.courseid = CONVERT(cr.courseID USING utf8) "
+                : "";
+            string extra = pub
+                ? ", SUM(ar.regno IS NOT NULL) replacing" +
+                  ", SUM(ar.regno IS NOT NULL AND (TRIM(ar.acad) <> TRIM(CONVERT(cr.acad_year USING utf8))" +
+                  "                             OR ar.semester <> cr.semester)) takeovers" +
+                  ", SUM(ar.score IS NOT NULL AND cr.provisional_total_marks < ar.score) lowered"
+                : ", 0 replacing, 0 takeovers, 0 lowered";
+
             cmd.CommandText =
                 "SELECT COUNT(*) c, COUNT(DISTINCT cr.regno) studs, COUNT(DISTINCT cr.prog_id) progs," +
                 " ROUND(AVG(cr.provisional_total_marks),1) avg_total," +
                 " SUM(cr.provisional_total_marks>=50) passes, SUM(cr.provisional_total_marks>=80) distinctions," +
-                " SUM(cr.provisional_total_marks<50) fails" +
-                " FROM " + MarkStage.REG + " cr " + where;
+                " SUM(cr.provisional_total_marks<50) fails" + extra +
+                " FROM " + MarkStage.REG + " cr " + join + where;
             using (var r = cmd.ExecuteReader())
             {
                 if (r.Read())
@@ -184,11 +207,14 @@ public static class StageAdvanceService
                         marks = c, students = ToI(r["studs"]), programmes = ToI(r["progs"]),
                         avgTotal = r["avg_total"] == DBNull.Value ? 0 : Convert.ToDouble(r["avg_total"]),
                         passes = passes, passRate = c > 0 ? Math.Round((double)passes * 100 / c, 1) : 0,
-                        distinctions = ToI(r["distinctions"]), fails = ToI(r["fails"]) };
+                        distinctions = ToI(r["distinctions"]), fails = ToI(r["fails"]),
+                        replacing = ToI(r["replacing"]), takeovers = ToI(r["takeovers"]),
+                        lowered = ToI(r["lowered"]) };
                 }
             }
         }
-        return new { marks = 0, students = 0, programmes = 0, avgTotal = 0, passes = 0, passRate = 0, distinctions = 0, fails = 0 };
+        return new { marks = 0, students = 0, programmes = 0, avgTotal = 0, passes = 0, passRate = 0,
+                     distinctions = 0, fails = 0, replacing = 0, takeovers = 0, lowered = 0 };
     }
 
     /// <summary>

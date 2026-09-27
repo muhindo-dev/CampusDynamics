@@ -108,6 +108,12 @@
 .sc-prog__txt{margin-top:7px;font-size:11px;font-weight:700;color:#05275C;}
 /* Why a session moved fewer marks than it matched — shown in the session detail. */
 .sc-warn{margin:10px 0;padding:9px 11px;background:#fef5f5;border:1px solid #f3c9c9;color:#7f1d1d;font-size:11px;line-height:1.5;}
+/* What a publish is about to replace. Informational, not alarming: the red above is kept for
+   the one case that actually costs a student marks. */
+.sc-ovw{margin:10px 0;padding:9px 11px;background:#fbf7ec;border:1px solid #e6d7b0;
+    color:#6b4e12;font-size:11px;line-height:1.5;}
+.sc-ovw b{display:block;color:#513907;}
+.sc-ovw span{display:block;margin-top:4px;}
 .sc-pv-stats{display:grid;grid-template-columns:repeat(3,1fr);gap:6px;margin-bottom:12px;}
 .sc-kpi{background:#f8fafc;border:1px solid #e0e5ed;padding:8px;text-align:center;}
 .sc-kpi__v{font-size:18px;font-weight:800;color:#05275C;}

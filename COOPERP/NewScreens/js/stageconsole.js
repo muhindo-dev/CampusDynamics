@@ -388,7 +388,37 @@ function statsBlock(st) {
     return '<div class="sc-pv-stats">' + kpi('Marks', num(st.marks)) + kpi('Students', num(st.students)) +
         kpi('Programmes', num(st.programmes)) + kpi('Avg total', nz(st.avgTotal)) +
         kpi('Pass rate', (st.passRate || 0) + '%') + kpiFail('Fails (F)', num(st.fails)) +
-        kpi('Distinctions', num(st.distinctions)) + '</div>';
+        kpi('Distinctions', num(st.distinctions)) + '</div>' + overwriteBlock(st);
+}
+
+/* Publishing replaces a result that is already there. That is the intended behaviour, but it
+   is not something anyone should learn from the per-row log after the fact, so the preview
+   says how much of this batch is a replacement before the operator commits to it.
+
+   The three numbers answer three different questions, which is why they are not one figure:
+   how many results get a new mark, how many move term as a result, and how many go DOWN.
+   Only the last of those is alarming, so only the last of those is red. */
+function overwriteBlock(st) {
+    var rep = st.replacing || 0;
+    if (!rep) return '';
+
+    var over = st.takeovers || 0, low = st.lowered || 0, total = st.marks || 0;
+    var h = '<div class="sc-ovw"><b>' + num(rep) + ' of these ' + num(total) +
+            ' already have a result on record. Publishing replaces it.</b>';
+    if (over)
+        h += '<span>' + (over === rep ? 'All ' + num(over) : num(over)) +
+             ' of them are filed under a different term and will be moved to the term you are ' +
+             'publishing, so that term shows the mark. The term each one came from is ' +
+             'recalculated too.</span>';
+    h += '<span>The mark being replaced is kept in the results audit, with who published it ' +
+         'and what it was, so any of this can be read back.</span>';
+    h += '</div>';
+
+    if (low)
+        h += '<div class="sc-warn"><b>' + num(low) + ' would lower a mark the student already has.</b> ' +
+             'That is what publishing does when the new mark is smaller, and it may be exactly ' +
+             'right. Check those rows in the queue before you commit if you are not certain.</div>';
+    return h;
 }
 function kpi(l, v) { return '<div class="sc-kpi"><div class="sc-kpi__v">' + v + '</div><div class="sc-kpi__l">' + l + '</div></div>'; }
 function kpiFail(l, v) { return '<div class="sc-kpi sc-kpi--f"><div class="sc-kpi__v">' + v + '</div><div class="sc-kpi__l">' + l + '</div></div>'; }
