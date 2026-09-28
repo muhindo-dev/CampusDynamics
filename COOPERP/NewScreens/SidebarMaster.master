@@ -1641,14 +1641,33 @@
                     for (var i = 0; i < allowed.length; i++) allow[String(allowed[i]).toLowerCase()] = 1;
                     var map = window.cdUrlSlugMap || {};
 
+                    // A user whose page access is really enforced is filtered against the very
+                    // set the gate uses. For them an unmapped link is not "unknown, so show
+                    // it": it is a page the gate will refuse, so showing it only produces a
+                    // menu of doors that answer 403.
+                    var gated = (window.cdPageGated === true) && window.cdAllowedPages;
+                    var okPage = {};
+                    if (gated)
+                        for (var g = 0; g < window.cdAllowedPages.length; g++)
+                            okPage[String(window.cdAllowedPages[g]).toLowerCase()] = 1;
+
                     var links = document.querySelectorAll('.cd-sidebar__sublink, .cd-sidebar__link');
                     for (var j = 0; j < links.length; j++) {
                         var href = links[j].getAttribute('href') || '';
                         if (!href || href === '#' || href.indexOf('javascript:') === 0) continue;
-                        var slug = map[fileFromHref(href)];
-                        if (!slug) continue;                            // unmapped page → keep visible
-                        if (slug.toLowerCase().indexOf('home') === 0) continue;  // Dashboard always visible
-                        if (!allow[slug.toLowerCase()]) {
+                        var file = fileFromHref(href);
+                        var hide = false;
+
+                        if (gated) {
+                            hide = !okPage[file];
+                        } else {
+                            var slug = map[file];
+                            if (!slug) continue;                        // unmapped page → keep visible
+                            if (slug.toLowerCase().indexOf('home') === 0) continue;  // Dashboard always visible
+                            hide = !allow[slug.toLowerCase()];
+                        }
+
+                        if (hide) {
                             var li = links[j].closest ? links[j].closest('li') : null;
                             if (li) li.style.display = 'none';
                         }

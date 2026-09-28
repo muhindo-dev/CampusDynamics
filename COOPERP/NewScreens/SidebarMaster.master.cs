@@ -95,8 +95,34 @@ public partial class COOPERP_NewScreens_SidebarMaster : System.Web.UI.MasterPage
                 allowedJs = arr.ToString();   // [] when the user has no role
             }
 
+            // For a user whose page access is actually enforced, the menu is filtered against
+            // the very set the gate uses, not against the slug map. Two reasons. The sets
+            // cannot drift into disagreeing about the same page. And a link the slug map
+            // cannot resolve is hidden rather than shown: for a gated user an unmapped link is
+            // guaranteed to answer 403, so offering it is worse than omitting it.
+            string gatedJs = "false", pagesJs = "null";
+            try
+            {
+                if (ReadOnlyGate.IsGated(Context))
+                {
+                    gatedJs = "true";
+                    var sb2 = new StringBuilder("[");
+                    bool f2 = true;
+                    foreach (string pg in ReadOnlyGate.AllowedPageSet(Context))
+                    {
+                        if (!f2) sb2.Append(",");
+                        f2 = false;
+                        sb2.Append("'").Append(pg.Replace("'", "").ToLowerInvariant()).Append("'");
+                    }
+                    pagesJs = sb2.Append("]").ToString();
+                }
+            }
+            catch { gatedJs = "false"; pagesJs = "null"; }
+
             string script = "window.cdMenuFilter=" + (menuFilter ? "true" : "false") +
                             ";window.cdAllowedSlugs=" + allowedJs +
+                            ";window.cdPageGated=" + gatedJs +
+                            ";window.cdAllowedPages=" + pagesJs +
                             ";window.cdUrlSlugMap=" + GetUrlSlugMapJs() + ";";
 
             Page.ClientScript.RegisterStartupScript(GetType(), "rbacMenuData", script, true);

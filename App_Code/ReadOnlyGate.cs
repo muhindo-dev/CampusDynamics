@@ -49,7 +49,12 @@ public static class ReadOnlyGate
         "assign", "merge", "send", "import", "generate", "apply", "revoke", "grant",
         "advance", "sync", "migrate", "purge", "archive", "restore", "upload", "bulk",
         "review", "release", "withdraw", "void", "post", "settle", "close", "lock",
-        "unlock", "enroll", "register", "deregister", "swap", "move", "rename", "add"
+        "unlock", "enroll", "register", "deregister", "swap", "move", "rename", "add",
+        // Added after reading the student list's 27 actions: "edit" catches QuickEditLoad,
+        // whose dialog is useless to a reader anyway, and "set" catches SetPhoto,
+        // SetPassword and CheckStudentForSetPassword. Short words are matched exactly, so
+        // "set" cannot swallow "Settings".
+        "edit", "set"
     };
 
     /// <summary>A name beginning with one of these is a read unless a write word says otherwise.</summary>
@@ -58,6 +63,16 @@ public static class ReadOnlyGate
         "detail", "init", "record", "progress", "export", "report", "summar", "analy",
         "view", "lookup", "fetch", "filter", "chart", "trend", "history", "audit",
         "preview", "log", "dashboard", "print", "download", "read", "page", "options"
+    };
+
+    /// <summary>
+    /// Writes the rules cannot express. ChangeProgInit opens the change-programme dialog: it
+    /// only reads, but it carries "init" and would otherwise be allowed, and a reader has no
+    /// business opening it since the change itself is refused. "change" could not simply be
+    /// made a write word because MarkChanges is a read the auditor genuinely needs.
+    /// </summary>
+    private static readonly string[] DENY = {
+        "changeproginit"
     };
 
     /// <summary>
@@ -186,14 +201,26 @@ public static class ReadOnlyGate
         string n = (op ?? "").Trim().ToLowerInvariant();
         if (n == "") return true;
 
+        foreach (string d in DENY)  if (n == d) return false;
         foreach (string a in ALLOW) if (n == a) return true;
 
-        foreach (string word in Words(op))
+        List<string> words = Words(op);
+
+        foreach (string word in words)
             foreach (string w in WRITES)
                 if (word == w || (w.Length >= 5 && word.StartsWith(w, StringComparison.Ordinal)))
                     return false;
 
-        foreach (string r in READS) if (n.StartsWith(r, StringComparison.Ordinal)) return true;
+        // A read word ANYWHERE in the name, not only at the front. "SpecList" feeds a
+        // dropdown on the student list and a prefix-only rule refused it, which would have
+        // left the page half working with no clue why. Order still protects this: a name
+        // carrying both a write word and a read word was already refused above, so
+        // "DeleteList" never reaches here.
+        foreach (string word in words)
+            foreach (string r in READS)
+                if (word == r || (r.Length >= 3 && word.StartsWith(r, StringComparison.Ordinal)))
+                    return true;
+
         return false;
     }
 
@@ -353,6 +380,26 @@ public static class ReadOnlyGate
         set.Add("AccessDenied.aspx");
         CachePut(SESS_PAGES + ":" + user, set);
         return set;
+    }
+
+    /// <summary>
+    /// Is this user's page access actually enforced? The sidebar asks, so that it can hide
+    /// what the gate would refuse instead of offering doors that answer 403.
+    /// </summary>
+    public static bool IsGated(HttpContext ctx)
+    {
+        try { return IsReadOnlyUser(ctx); } catch { return false; }
+    }
+
+    /// <summary>
+    /// The exact set of page file names this user may open, for the sidebar to filter against.
+    /// Deliberately the SAME set Intercept enforces, read from the same method, so the menu
+    /// and the gate cannot drift apart into two opinions.
+    /// </summary>
+    public static HashSet<string> AllowedPageSet(HttpContext ctx)
+    {
+        try { return AllowedPages(ctx); }
+        catch { return new HashSet<string>(StringComparer.OrdinalIgnoreCase); }
     }
 
     /// <summary>Clears the per-session cache, for when a user's roles change mid-session.</summary>
