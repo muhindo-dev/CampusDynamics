@@ -1,7 +1,7 @@
 # Auditor role: final report
 
 Completed and tested. The role is held by **Mugagga Joseph** (`mugajose@gmail.com`) and now
-covers **60 screens** across every core module.
+covers **67 screens** across every core module.
 
 The design and the reasoning behind it are in [AUDITOR_ROLE.md](AUDITOR_ROLE.md); the plan it
 was built from is in [AUDITOR_ROLE_PLAN.md](AUDITOR_ROLE_PLAN.md). This report covers what
@@ -34,6 +34,25 @@ got its own slug.
 
 **Related screens added alongside**, on the same read-only test: Provisional Marks, Fee Access
 Checker, Chart of Accounts Lifecycle, Appraisal Sessions, Alumni.
+
+### Transactions
+
+Added afterwards, and as a family rather than as the one screen labelled "Transactions".
+Auditing money means following it: **FeesTransactions** is where a payment is captured,
+**GeneralLedger** is where it lands, and **PaymentVouchers**, **JournalEntries** and
+**ContraVouchers** are the instruments that moved it, with **LedgerCategories** for how they
+are classified. Granting one and withholding the rest would leave an auditor able to see an
+entry and unable to see what produced it.
+
+The voucher and journal screens are where those documents are raised, which sounds like the
+wrong thing to hand a read-only role. It is not: the gate refuses every write on them, so what
+the Auditor gets is the register, which is what an audit reads.
+
+`FeesTransactions` also carries four actions, and reading them settled how to treat them:
+`batchdup_scan` (223 lines) and `glsync_scan` (106 lines) contain **no INSERT, UPDATE or
+DELETE at all**, while `batchdup_fix_one` and `glsync_fix` hold the three write statements
+between them. So "scan" became a read word and the two scans work; the two fixes are refused
+on the ordinary rule, having neither a read word nor a name that starts like one.
 
 ## 2. Menu items now match access, for everyone
 
@@ -105,13 +124,16 @@ Against the running site, signed in with a genuine forms ticket.
 | 33 read names allowed, including the student list's own actions | **pass** |
 | 34 write names refused, including all 12 write actions on the student list | **pass** |
 | 3 invented names default to refused | **pass** |
-| Auditor resolves as gated, 60 pages | **pass** |
+| Auditor resolves as gated, 67 pages | **pass** |
 | The nine requested pages open | **9 × 200** |
 | SchoolPay, ID Card, Timetable Manager, Retake, Missing Marks by URL | **5 × 403** |
 | `?action=ListStudents`, `?action=SpecList` | 200 |
 | `?action=ChangeProgramme`, `SetPhoto`, `ResetPasswordToDefault`, `GenerateAcademicDocument` | **4 × 403** |
 | Sidebar rendered for the Auditor | **73 visible, 121 hidden** |
 | Visible links pointing at a page the gate would refuse | **0** |
+| 6 transaction screens open | **6 × 200** |
+| `batchdup_scan`, `glsync_scan` | **2 × 200** |
+| `batchdup_fix_one`, `glsync_fix` | **2 × 403** |
 | Administrator: `cdPageGated=false`, slugs `'*'`, both tests above | **200, unaffected** |
 
 The temporary handler that issued test tickets has been deleted and returns 404; test rows
@@ -151,5 +173,6 @@ were removed from `sys_access_denied_log`.
 | `COOPERP/sql/security/auditor_role.sql` | Column, log table, the role, the first 49 grants |
 | `COOPERP/sql/security/auditor_role_extra.sql` | The nine requested pages and their relatives |
 | `COOPERP/sql/security/register_unmapped_menu_items.sql` | The sixteen unregistered screens |
+| `COOPERP/sql/security/auditor_role_transactions.sql` | The transaction family |
 | `AUDITOR_ROLE.md` | How it works, for developers and administrators |
 | `AUDITOR_ROLE_PLAN.md` | The plan it was built from |

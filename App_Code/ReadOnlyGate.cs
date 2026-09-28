@@ -62,7 +62,12 @@ public static class ReadOnlyGate
         "get", "load", "list", "browse", "search", "find", "stats", "stat", "count",
         "detail", "init", "record", "progress", "export", "report", "summar", "analy",
         "view", "lookup", "fetch", "filter", "chart", "trend", "history", "audit",
-        "preview", "log", "dashboard", "print", "download", "read", "page", "options"
+        "preview", "log", "dashboard", "print", "download", "read", "page", "options",
+        // The transactions screen offers batchdup_scan and glsync_scan, which only look:
+        // 223 and 106 lines with no INSERT, UPDATE or DELETE between them. Their
+        // batchdup_fix_one and glsync_fix counterparts carry the three write statements
+        // and stay refused, having neither a read word nor a name that starts like one.
+        "scan"
     };
 
     /// <summary>
