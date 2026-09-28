@@ -373,6 +373,29 @@
         return "";
     }
 
+
+    /// <summary>
+    /// A read-only role is enforced here, and the stage matters.
+    ///
+    /// PageMethod requests (Page.aspx/MethodName) do NOT raise PostAcquireRequestState or
+    /// PreRequestHandlerExecute in this application, which was measured rather than assumed:
+    /// a probe on all three stages logged only this one for a PageMethod POST. Those are
+    /// exactly the requests that do the writing, so a gate on either of the later stages
+    /// would have guarded the pages and left every AJAX write open.
+    ///
+    /// PostAuthenticateRequest fires for everything, and the forms ticket is established by
+    /// the time it does. Session is not yet available here, which is why the gate identifies
+    /// the user from the ticket rather than from Session.
+    /// </summary>
+    protected void Application_PostAuthenticateRequest(Object sender, EventArgs e)
+    {
+        try
+        {
+            if (ReadOnlyGate.Intercept(HttpContext.Current)) return;
+        }
+        catch { /* the gate must never be the reason the site stops working */ }
+    }
+
     protected void Application_PreRequestHandlerExecute(Object sender, EventArgs e)
     {
         // Before anything else looks at the session, make sure a valid ticket has one.
