@@ -1130,8 +1130,12 @@ function requestDelete(regId) {
     var c = findCourse(regId);
     if (!c) return;
     var warn = '';
+    // The result is no longer left behind, so the warning no longer threatens an orphan. It
+    // says what actually happens, which is more serious, not less: the mark goes too.
     if (c.resultId) warn = '<div class="rx-err">' + esc(c.course) + ' has a <b>published result</b> (grade ' +
-                           esc(c.grade || '—') + '). Removing the registration leaves that result orphaned.</div>';
+                           esc(c.grade || '—') + '). Removing the registration <b>also removes that ' +
+                           'result</b>, and the semester GPA is recalculated. Both are archived together and ' +
+                           'are restored together if this is reversed.</div>';
     askReason({
         title: 'Remove this course registration', kind: 'remove',
         context: warn + '<div class="rx-warn">The registration is <b>archived, not destroyed</b>. ' +

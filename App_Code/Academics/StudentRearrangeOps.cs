@@ -750,24 +750,27 @@ public static partial class StudentRearrangeService
         string lockErr = CheckLock(x, op, out isOverride, out lockStatus);
         if (lockErr != null) { res.error = lockErr; return res; }
 
-        // A published result is its own guard, separate from the results-status lock: a row
-        // can be unlocked (DRAFT) and still carry a published result. CheckLock says nothing
-        // about that case, so this needs its own authorisation rather than borrowing one.
-        string orphanOverride = GS(op, "overrideReason");
+        // A published result used to stop this outright unless a SECOND reason was typed into
+        // a field called overrideReason. Every other operation on this screen sends that field;
+        // DELETE never did, so the requirement could not be satisfied from the page at all. An
+        // operator typed a reason for the sitting, typed another for the removal, and was still
+        // refused. That was not a control, it was a dead end.
+        //
+        // The thing it was guarding against is real: deleting the registration on its own leaves
+        // the published result behind with nothing to hang from. So the fix is to stop leaving
+        // it. The result is archived and removed in the SAME transaction as the registration,
+        // which is what the marks screen has always done, and the reason already typed for the
+        // removal authorises both.
+        //
+        // The role check stays. Removing somebody's published mark is not an everyday edit, and
+        // that check was never the one anybody was stuck behind.
         if (x.resultId > 0)
         {
             if (!CanOverrideLock())
             {
                 res.error = x.course + " has a published result (" + (x.score == null ? "no score" : Convert.ToString(x.score)) +
-                            ", grade " + x.grade + "). Removing the registration would leave that result orphaned. " +
+                            ", grade " + x.grade + "). Removing the registration also removes that result. " +
                             "Only the Academic Registrar, a Dean or a system administrator may do that.";
-                return res;
-            }
-            if (orphanOverride.Length < MinOverrideReason)
-            {
-                res.error = x.course + " has a published result (" + (x.score == null ? "no score" : Convert.ToString(x.score)) +
-                            ", grade " + x.grade + "). Removing the registration would leave that result orphaned. " +
-                            "Type a reason of at least " + MinOverrideReason + " characters to authorise it.";
                 return res;
             }
             isOverride = true;
@@ -783,13 +786,38 @@ public static partial class StudentRearrangeService
                  "ID", Convert.ToString(x.id), x.course, Json.Serialize(before), null,
                  reason, isOverride,
                  isOverride ? (lockStatus == "ORPHAN_RESULT" ? "ORPHAN_RESULT" : "STATUS_LOCK") : null,
-                 isOverride ? orphanOverride : null, lockStatus);
+                 // The removal's own reason now carries the authorisation, there being no
+                 // second field to carry it, and no second thing for it to authorise.
+                 isOverride ? reason : GS(op, "overrideReason"), lockStatus);
 
         using (var cmd = Cmd("DELETE FROM campus_dynamics_portal.acad_course_registration WHERE ID=@i", c, t))
         { cmd.Parameters.AddWithValue("@i", x.id); cmd.ExecuteNonQuery(); }
 
+        // The published result goes with it, archived the same way and under its own table, so
+        // the reversal puts both back: ReverseOne restores from db_name, table_name and
+        // pk_value, so it needs nothing new to understand this. Same transaction, so the pair
+        // can never come apart.
+        bool resultRemoved = false;
+        if (x.resultId > 0)
+        {
+            var rBefore = ReadRow(c, t, "campus_dynamics.acad_results", "ID", x.resultId);
+            if (rBefore != null)
+            {
+                LogEntry(c, t, sess, batchId, seq, "DELETE", "campus_dynamics", "acad_results",
+                         "ID", Convert.ToString(x.resultId), x.course, Json.Serialize(rBefore), null,
+                         reason, true, "ORPHAN_RESULT", reason, lockStatus);
+                using (var cmd = Cmd("DELETE FROM campus_dynamics.acad_results WHERE ID=@i", c, t))
+                { cmd.Parameters.AddWithValue("@i", x.resultId); cmd.ExecuteNonQuery(); }
+                resultRemoved = true;
+            }
+        }
+
         res.applied = true;
         res.summary = x.course + " registration removed from Year " + x.studyYear + " Semester " + x.semester +
+                      (resultRemoved
+                         ? ", together with its published result (" +
+                           (x.score == null ? "no score" : Convert.ToString(x.score)) + ", grade " + x.grade + ")"
+                         : "") +
                       ", reason: " + reason + " (archived and reversible)";
         return res;
     }
