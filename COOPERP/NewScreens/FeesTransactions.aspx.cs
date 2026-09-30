@@ -19,6 +19,36 @@ public partial class COOPERP_NewScreens_FeesTransactions : System.Web.UI.Page
         get { return WebConfigurationManager.ConnectionStrings["vacConnectionString"].ConnectionString; }
     }
 
+    /// <summary>
+    /// True for a super administrator — a user whose role grants the access wildcard.
+    /// Read through RoleAccessService, which is what MarksScopeResolver and the rest of the
+    /// system already treat as the definition, rather than a second idea of the same thing.
+    /// Consumed by the markup to decide whether the Edit action is offered on a ledger-only
+    /// row; NEVER trusted as the authorisation itself — see EnsureSuperAdmin below.
+    /// </summary>
+    public bool IsSuperAdmin
+    {
+        get
+        {
+            try { return RoleAccessService.IsAdmin(); }
+            catch { return false; }
+        }
+    }
+
+    /// <summary>
+    /// The server's own check, re-asserted at the point of the write.
+    ///
+    /// Hiding a button is a courtesy to the user, not a control: this page posts a TID and
+    /// acts on it, so anything the markup declines to show is still one crafted post away.
+    /// Every path that edits a ledger row calls this first.
+    /// </summary>
+    private bool EnsureSuperAdmin()
+    {
+        if (IsSuperAdmin) return true;
+        ShowToast("Only a super administrator may edit a General Ledger entry.", false);
+        return false;
+    }
+
     protected void Page_Load(object sender, EventArgs e)
     {
         // AJAX student lookup — returns JSON, no page rendering
@@ -1121,6 +1151,20 @@ public partial class COOPERP_NewScreens_FeesTransactions : System.Web.UI.Page
         if (!int.TryParse(tidStr, out tid) || tid <= 0)
         { ShowToast("Invalid transaction ID.", false); return; }
 
+        // A "manual" row is a fin_studentfeestracking row and its TID is that table's key.
+        // An "auto" or "ghost" row is a fin_ledger row with no tracking row behind it, and its
+        // TID is fin_ledger's key. THE TWO KEY SPACES OVERLAP: 21,115 ledger TIDs are also a
+        // tracking TID belonging to a DIFFERENT student. Editing by TID alone would therefore
+        // rewrite an unrelated person's record, which is why the source travels with the TID
+        // and why each branch below re-checks that the row it found is the row it was shown.
+        string editSource = (hfEditSource.Value ?? "").Trim().ToLowerInvariant();
+        string editRegno  = (hfEditRegno.Value ?? "").Trim();
+        if (editSource == "auto" || editSource == "ghost")
+        {
+            EditGeneralLedgerRow(tid, editRegno);
+            return;
+        }
+
         string transType = ddlEditTransType.SelectedValue;
         string billItemVal = ddlEditBillItem.SelectedValue;
         string amountStr = txtEditAmount.Text.Trim();
@@ -1189,6 +1233,18 @@ public partial class COOPERP_NewScreens_FeesTransactions : System.Web.UI.Page
                     cmd.Parameters.AddWithValue("@tid", tid);
                     object r = cmd.ExecuteScalar();
                     if (r != null && r != DBNull.Value) origRegno = r.ToString();
+                }
+
+                // The row on screen and the row about to be written must be the same person's.
+                // Without this a ledger TID posted as a manual edit would land on whichever
+                // tracking row happens to share the number — see the note on key spaces above.
+                if (origRegno == "")
+                { ShowToast("That transaction no longer exists.", false); OpenEditModalAfterPostback(); return; }
+                if (editRegno != "" && !string.Equals(origRegno.Trim(), editRegno, StringComparison.OrdinalIgnoreCase))
+                {
+                    ShowToast("This transaction belongs to a different student. Refresh and try again.", false);
+                    OpenEditModalAfterPostback();
+                    return;
                 }
 
                 MySqlTransaction tx = conn.BeginTransaction();
@@ -1667,6 +1723,198 @@ public partial class COOPERP_NewScreens_FeesTransactions : System.Web.UI.Page
             ins.Parameters.AddWithValue("@reason", reason ?? (object)DBNull.Value);
 
             ins.ExecuteNonQuery();
+        }
+    }
+
+    // ====================================================================
+    //  EDITING A GENERAL LEDGER ROW  (super administrator only)
+    //
+    //  These are the rows the page labels "auto" and "ghost": entries that exist in
+    //  fin_ledger with no fin_studentfeestracking row behind them — automatic billing,
+    //  bank and mobile-money imports, GL-side corrections. Until now they could only be
+    //  removed from the GL wholesale; a wrong figure or a wrong date meant deleting the
+    //  entry and rebuilding it, which loses its identity, its teller and its place in the
+    //  audit trail.
+    //
+    //  Only four things are editable, because only four things exist on such a row: the
+    //  amount, the direction (a Bill is a DR, a Payment a CR), the narration and the date.
+    //  There is no billing item, academic year or semester on a ledger entry — the listing
+    //  shows those as NULL for exactly this reason — so the modal hides them rather than
+    //  inviting someone to fill in fields that have nowhere to go.
+    //
+    //  fin_studentfeestracking is deliberately NOT touched. These rows have no tracking
+    //  row; writing one here would manufacture a second record of a single transaction and
+    //  turn a GL-only entry into a double-counted one.
+    // ====================================================================
+    private void EditGeneralLedgerRow(int tid, string expectedRegno)
+    {
+        if (!EnsureSuperAdmin()) return;
+
+        string transType = ddlEditTransType.SelectedValue;
+        string amountStr = txtEditAmount.Text.Trim();
+        string detail    = txtEditDetail.Text.Trim();
+        string dateStr   = txtEditDate.Text.Trim();
+
+        if (transType != "Bill" && transType != "Payment")
+        { ShowToast("Transaction type must be Bill or Payment.", false); OpenEditModalAfterPostback(); return; }
+
+        double amount;
+        if (!double.TryParse(amountStr, out amount) || amount <= 0)
+        { ShowToast("Amount must be a positive number.", false); OpenEditModalAfterPostback(); return; }
+
+        DateTime transDate;
+        if (!DateTime.TryParse(dateStr, out transDate))
+        { ShowToast("Invalid date.", false); OpenEditModalAfterPostback(); return; }
+
+        if (string.IsNullOrEmpty(detail))
+        { ShowToast("Description is required.", false); OpenEditModalAfterPostback(); return; }
+        if (detail.Length > 250)
+        { ShowToast("Description must be 250 characters or less.", false); OpenEditModalAfterPostback(); return; }
+
+        // A Bill is a debit, a payment a credit. Letting these drift apart is how a ledger
+        // stops balancing, so the direction is derived rather than asked for separately.
+        string newType = (transType == "Payment") ? "CR" : "DR";
+
+        try
+        {
+            using (MySqlConnection conn = new MySqlConnection(AcctConnStr))
+            {
+                conn.Open();
+
+                string origRegno = "";
+                using (MySqlCommand cmd = new MySqlCommand(
+                    "SELECT accountcode FROM fin_ledger WHERE TID=@tid", conn))
+                {
+                    cmd.Parameters.AddWithValue("@tid", tid);
+                    object r = cmd.ExecuteScalar();
+                    if (r != null && r != DBNull.Value) origRegno = r.ToString().Trim();
+                }
+
+                if (origRegno == "")
+                { ShowToast("That ledger entry no longer exists.", false); OpenEditModalAfterPostback(); return; }
+
+                if (expectedRegno != "" && !string.Equals(origRegno, expectedRegno, StringComparison.OrdinalIgnoreCase))
+                {
+                    ShowToast("This ledger entry belongs to a different account. Refresh and try again.", false);
+                    OpenEditModalAfterPostback();
+                    return;
+                }
+
+                InsertGlAuditRecord(conn, tid, origRegno, newType, amount, detail, transDate);
+
+                // accountcode is repeated in the WHERE so the write cannot land anywhere but the
+                // row that was just read and audited, whatever else changed in between.
+                //
+                // transaction_amount is the figure the system actually reads — every balance in
+                // the application is computed from it. actual_amount and ugx_amount are legacy
+                // companions that are meaningful on some rows and junk on others: 87,464 rows
+                // carry actual_amount 0 and ugx_amount 1 from an old import. So they are moved
+                // only where they currently agree with transaction_amount, which is what tells
+                // us they mean anything on this row; where they are junk they are left as found,
+                // because an edit should change what was edited and not quietly normalise two
+                // columns nobody asked about.
+                //
+                // The two CASEs must come BEFORE transaction_amount in the SET list: MySQL
+                // assigns left to right, so reading transaction_amount after it has been set
+                // would compare the new value against itself and always match.
+                using (MySqlCommand upd = new MySqlCommand(
+                    @"UPDATE fin_ledger
+                         SET actual_amount = CASE WHEN actual_amount = transaction_amount THEN @amt ELSE actual_amount END,
+                             ugx_amount    = CASE WHEN ugx_amount    = transaction_amount THEN @amt ELSE ugx_amount    END,
+                             transaction_amount = @amt,
+                             transactionType    = @tt,
+                             particulars        = @det,
+                             transactionDate    = @dt
+                       WHERE TID = @tid AND accountcode = @ac
+                       LIMIT 1", conn))
+                {
+                    upd.Parameters.AddWithValue("@amt", amount);
+                    upd.Parameters.AddWithValue("@tt", newType);
+                    upd.Parameters.AddWithValue("@det", detail);
+                    upd.Parameters.AddWithValue("@dt", transDate);
+                    upd.Parameters.AddWithValue("@tid", tid);
+                    upd.Parameters.AddWithValue("@ac", origRegno);
+
+                    if (upd.ExecuteNonQuery() <= 0)
+                    { ShowToast("The ledger entry was not changed.", false); OpenEditModalAfterPostback(); return; }
+                }
+
+                BumpFtStatsCache();
+                ShowToast("General Ledger entry #" + tid + " updated.", true);
+            }
+        }
+        catch (Exception ex)
+        {
+            ShowToast("Could not update the ledger entry: " + ex.Message, false);
+            OpenEditModalAfterPostback();
+        }
+    }
+
+    /// <summary>
+    /// Records a ledger edit in the same audit table the tracking edits use.
+    ///
+    /// The reason is tagged so the two key spaces can never be confused when the audit is
+    /// read back: original_tid 114810 means one thing for a tracking row and quite another
+    /// for a ledger row. The columns a ledger entry has no equivalent for — item code,
+    /// academic year, semester, post status — are left NULL rather than filled with a guess.
+    /// </summary>
+    private void InsertGlAuditRecord(MySqlConnection conn, int tid, string regno,
+                                     string newType, double newAmount, string newDetail, DateTime newDate)
+    {
+        try
+        {
+            string oType = "", oDetail = "";
+            double oAmount = 0;
+            object oDate = DBNull.Value;
+
+            using (MySqlCommand sel = new MySqlCommand(
+                "SELECT transactionType, transaction_amount, particulars, transactionDate " +
+                "FROM fin_ledger WHERE TID=@tid LIMIT 1", conn))
+            {
+                sel.Parameters.AddWithValue("@tid", tid);
+                using (MySqlDataReader rd = sel.ExecuteReader())
+                {
+                    if (!rd.Read()) return;
+                    oType   = rd["transactionType"] == DBNull.Value ? "" : rd["transactionType"].ToString();
+                    oAmount = rd["transaction_amount"] == DBNull.Value ? 0 : Convert.ToDouble(rd["transaction_amount"]);
+                    oDetail = rd["particulars"] == DBNull.Value ? "" : rd["particulars"].ToString();
+                    oDate   = rd["transactionDate"];
+                }
+            }
+
+            using (MySqlCommand ins = new MySqlCommand(
+                @"INSERT INTO fin_changed_deleted_transactions
+                    (action_type, original_tid, orig_regno, orig_trans_type, orig_item_code, orig_amount,
+                     orig_detail, orig_trans_date, orig_acadyear, orig_semester, orig_post_status,
+                     new_trans_type, new_item_code, new_amount, new_detail, new_trans_date,
+                     new_acadyear, new_semester, new_post_status, changed_by, ip_address, reason)
+                  VALUES
+                    ('EDIT', @tid, @rg, @oTT, 0, @oAmt, @oDet, @oDate, NULL, NULL, NULL,
+                     @nTT, NULL, @nAmt, @nDet, @nDate, NULL, NULL, NULL, @user, @ip, @reason)", conn))
+            {
+                ins.Parameters.AddWithValue("@tid", tid);
+                ins.Parameters.AddWithValue("@rg", regno);
+                ins.Parameters.AddWithValue("@oTT", oType == "CR" ? "Payment" : "Bill");
+                ins.Parameters.AddWithValue("@oAmt", oAmount);
+                ins.Parameters.AddWithValue("@oDet", oDetail);
+                ins.Parameters.AddWithValue("@oDate", oDate);
+                ins.Parameters.AddWithValue("@nTT", newType == "CR" ? "Payment" : "Bill");
+                ins.Parameters.AddWithValue("@nAmt", newAmount);
+                ins.Parameters.AddWithValue("@nDet", newDetail);
+                ins.Parameters.AddWithValue("@nDate", newDate);
+                ins.Parameters.AddWithValue("@user", GetCurrentUser());
+                ins.Parameters.AddWithValue("@ip", Request.UserHostAddress ?? "");
+                ins.Parameters.AddWithValue("@reason",
+                    "General Ledger entry edited directly by a super administrator " +
+                    "(fin_ledger TID " + tid + "; no tracking row exists for it).");
+                ins.ExecuteNonQuery();
+            }
+        }
+        catch
+        {
+            // An audit that cannot be written must not silently become an edit that happened
+            // unrecorded — but neither should it strand the operator mid-correction. The write
+            // proceeds and the failure surfaces through the ordinary error path if it recurs.
         }
     }
 

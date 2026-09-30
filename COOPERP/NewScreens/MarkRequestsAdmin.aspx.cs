@@ -876,6 +876,7 @@ public partial class COOPERP_NewScreens_MarkRequestsAdmin : Page
             int semester = 0, courseRegId = 0;
             int? proposedCw = null, proposedExam = null, proposedTotal = null;
             bool marksPublished = false;
+            bool enteredJourney = false;
             int publishedTotal = 0;
             decimal semGpa = 0m, cgpa = 0m;
 
@@ -936,7 +937,16 @@ public partial class COOPERP_NewScreens_MarkRequestsAdmin : Page
                         && !string.IsNullOrEmpty(courseId)
                         && (proposedTotal.HasValue || (proposedCw.HasValue && proposedExam.HasValue));
 
-                    if (canPublish)
+                    // A MARK_CHANGE re-enters the marks journey (Capture → Approve → Publish)
+                    // instead of being force-published here — same rule as the portal. Only
+                    // MISSING_MARK (a mark that never existed) is published on approval.
+                    if (string.Equals(requestType, "MARK_CHANGE", StringComparison.OrdinalIgnoreCase))
+                    {
+                        EnterChangeIntoJourney(conn, tx, requestId, courseRegId,
+                            proposedCw, proposedExam, proposedTotal, "Admin: " + adminUser, note);
+                        enteredJourney = true;
+                    }
+                    else if (canPublish)
                     {
                         PublishToResults(conn, tx, requestId, reqRegno, courseId, acadYear,
                             semester, courseRegId, proposedCw, proposedExam, proposedTotal,
@@ -980,14 +990,17 @@ public partial class COOPERP_NewScreens_MarkRequestsAdmin : Page
 
             return Json.Serialize(new
             {
-                success         = true,
-                marks_published = marksPublished,
-                published_total = publishedTotal,
-                semester_gpa    = semGpa,
-                cgpa            = cgpa,
-                message         = marksPublished
+                success          = true,
+                marks_published  = marksPublished,
+                entered_journey  = enteredJourney,
+                published_total  = publishedTotal,
+                semester_gpa     = semGpa,
+                cgpa             = cgpa,
+                message          = marksPublished
                     ? "Approved. Marks published. GPA/CGPA recalculated."
-                    : "Request approved. (No marks to publish — proposed marks missing.)"
+                    : (enteredJourney
+                        ? "Approved. The new mark has been entered and now goes through the normal journey: Capture (HOD) → Approve (Dean) → Publish (Senate)."
+                        : "Request approved. (No marks to publish — proposed marks missing.)")
             });
         }
         catch (Exception ex) { return Json.Serialize(new { success = false, message = ex.Message }); }
@@ -1181,10 +1194,10 @@ public partial class COOPERP_NewScreens_MarkRequestsAdmin : Page
             if (note.Length < 3) return Json.Serialize(new { success = false, message = "Please provide a short reason/note (min 3 characters)." });
 
             string adminUser = AdminUser();
-            string curStatus = "", regno = "", courseId = "", acadYear = "";
+            string curStatus = "", regno = "", courseId = "", acadYear = "", reqType = "";
             int semester = 0, courseRegId = 0;
             int? pcw = null, pex = null, ptot = null;
-            bool published = false, reverted = false;
+            bool published = false, reverted = false, enteredJourney = false;
             int publishedTotal = 0;
             decimal semGpa = 0m, cgpa = 0m;
             string sideMsg = "";
@@ -1197,7 +1210,7 @@ public partial class COOPERP_NewScreens_MarkRequestsAdmin : Page
                 {
                     using (var cmd = new MySqlCommand(@"
                         SELECT status, regno, course_id, acad_year, semester, course_reg_id,
-                               proposed_cw, proposed_exam, proposed_total
+                               request_type, proposed_cw, proposed_exam, proposed_total
                         FROM campus_dynamics_portal.acad_marks_requests WHERE id=@id LIMIT 1 FOR UPDATE", conn, tx))
                     {
                         cmd.Parameters.AddWithValue("@id", requestId);
@@ -1206,6 +1219,7 @@ public partial class COOPERP_NewScreens_MarkRequestsAdmin : Page
                             if (!rdr.Read()) { tx.Rollback(); return Json.Serialize(new { success = false, message = "Request not found." }); }
                             curStatus = S(rdr, "status").ToUpperInvariant();
                             regno = S(rdr, "regno"); courseId = S(rdr, "course_id"); acadYear = S(rdr, "acad_year");
+                            reqType = S(rdr, "request_type");
                             int.TryParse(S(rdr, "semester"), out semester);
                             int.TryParse(S(rdr, "course_reg_id"), out courseRegId);
                             pcw = NI(rdr, "proposed_cw"); pex = NI(rdr, "proposed_exam"); ptot = NI(rdr, "proposed_total");
@@ -1217,7 +1231,14 @@ public partial class COOPERP_NewScreens_MarkRequestsAdmin : Page
                     if (newStatus == "APPROVED")
                     {
                         bool canPublish = regno != "" && courseId != "" && (ptot.HasValue || (pcw.HasValue && pex.HasValue));
-                        if (canPublish)
+                        // Same rule as AdminApprove: a MARK_CHANGE re-enters the journey; only
+                        // MISSING_MARK publishes on approval.
+                        if (string.Equals(reqType, "MARK_CHANGE", StringComparison.OrdinalIgnoreCase))
+                        {
+                            EnterChangeIntoJourney(conn, tx, requestId, courseRegId, pcw, pex, ptot, "Admin: " + adminUser, note);
+                            enteredJourney = true;
+                        }
+                        else if (canPublish)
                         {
                             PublishToResults(conn, tx, requestId, regno, courseId, acadYear, semester, courseRegId,
                                 pcw, pex, ptot, "Admin: " + adminUser, note, out publishedTotal, out semGpa, out cgpa);
@@ -1256,6 +1277,7 @@ public partial class COOPERP_NewScreens_MarkRequestsAdmin : Page
 
             string msg = "Status changed: " + Pretty(curStatus) + " → " + Pretty(newStatus) + ".";
             if (published) msg += " Proposed marks published; GPA/CGPA recalculated.";
+            if (enteredJourney) msg += " The new mark was entered into the journey: Capture (HOD) → Approve (Dean) → Publish (Senate).";
             if (curStatus == "APPROVED" && newStatus != "APPROVED")
                 msg += reverted ? " Prior mark auto-reverted; GPA/CGPA recalculated."
                                 : (" NOTE: " + (sideMsg.Length > 0 ? sideMsg : "published mark was not auto-reverted — verify manually."));
@@ -1263,7 +1285,7 @@ public partial class COOPERP_NewScreens_MarkRequestsAdmin : Page
             return Json.Serialize(new
             {
                 success = true, from = curStatus, to = newStatus,
-                marks_published = published, marks_reverted = reverted,
+                marks_published = published, marks_reverted = reverted, entered_journey = enteredJourney,
                 semester_gpa = semGpa, cgpa = cgpa, message = msg
             });
         }
@@ -1540,7 +1562,14 @@ public partial class COOPERP_NewScreens_MarkRequestsAdmin : Page
                                     && !string.IsNullOrEmpty(courseId)
                                     && (proposedTotal.HasValue || (proposedCw.HasValue && proposedExam.HasValue));
 
-                                if (canPublish)
+                                // Same rule as AdminApprove: a MARK_CHANGE re-enters the journey
+                                // (Capture → Approve → Publish); only MISSING_MARK publishes now.
+                                if (string.Equals(requestType, "MARK_CHANGE", StringComparison.OrdinalIgnoreCase))
+                                {
+                                    EnterChangeIntoJourney(conn, tx, rid, courseRegId,
+                                        proposedCw, proposedExam, proposedTotal, "Admin (batch): " + adminUser, note);
+                                }
+                                else if (canPublish)
                                 {
                                     int pt; decimal sg, cg;
                                     PublishToResults(conn, tx, rid, reqRegno, courseId, acadYear,
@@ -1741,6 +1770,61 @@ public partial class COOPERP_NewScreens_MarkRequestsAdmin : Page
     // ════════════════════════════════════════════════════════════════════════════
     //  PUBLISH MARKS TO acad_results
     // ════════════════════════════════════════════════════════════════════════════
+
+    // ════════════════════════════════════════════════════════════════════════════
+    //  Route an approved MARK_CHANGE into the normal marks journey instead of
+    //  force-publishing it.
+    //
+    //  Same rule as the portal (MarkRequestsController.EnterApprovedChangeIntoJourney):
+    //  a mark change that clears its request-approval does NOT go straight to
+    //  acad_results. The new mark is set on the registration and the row drops to
+    //  ENTERED (lecturer entry), then travels Capture (HOD) → Approve (Dean) →
+    //  Publish (Senate) like any other mark; only the Senate publish writes results.
+    //  Stale capture/approve/publish links are cleared. acad_results is deliberately
+    //  left untouched — the previously-published mark (if any) stays of record until
+    //  the new one completes the journey, and a fresh change publishes nothing yet.
+    // ════════════════════════════════════════════════════════════════════════════
+    private static void EnterChangeIntoJourney(
+        MySqlConnection conn, MySqlTransaction tx,
+        int requestId, int courseRegId,
+        int? proposedCw, int? proposedExam, int? proposedTotal,
+        string actorLabel, string note)
+    {
+        if (courseRegId <= 0) return;
+
+        int total = proposedTotal.HasValue ? proposedTotal.Value : ((proposedCw ?? 0) + (proposedExam ?? 0));
+        string comment = "Mark-change request #" + requestId + " approved by " + (actorLabel ?? "system")
+            + "; new mark entered into the approval journey (Capture -> Approve -> Publish). CW="
+            + (proposedCw.HasValue ? proposedCw.Value.ToString() : "-") + ", Exam="
+            + (proposedExam.HasValue ? proposedExam.Value.ToString() : "-") + ", Total=" + total
+            + (string.IsNullOrEmpty(note) ? "" : ("; " + note)) + ".";
+
+        using (var cmd = new MySqlCommand(@"
+            UPDATE campus_dynamics_portal.acad_course_registration
+            SET provisional_course_work_marks    = COALESCE(@cw, provisional_course_work_marks),
+                provisional_exam_marks            = COALESCE(@ex, provisional_exam_marks),
+                provisional_total_marks           = @total,
+                provisional_marks_status          = 'pending',
+                mark_stage                        = 'ENTERED',
+                capture_record_id                 = NULL,
+                approve_record_id                 = NULL,
+                publish_record_id                 = NULL,
+                mark_stage_changed_at             = NOW(),
+                mark_stage_changed_by             = @actor,
+                provisional_marks_review_comments = @cm,
+                provisional_marks_reviewed_by     = @actor,
+                provisional_marks_review_date     = NOW()
+            WHERE id = @id", conn, tx))
+        {
+            cmd.Parameters.AddWithValue("@cw",    proposedCw.HasValue   ? (object)proposedCw.Value   : DBNull.Value);
+            cmd.Parameters.AddWithValue("@ex",    proposedExam.HasValue  ? (object)proposedExam.Value : DBNull.Value);
+            cmd.Parameters.AddWithValue("@total", total);
+            cmd.Parameters.AddWithValue("@actor", actorLabel ?? "");
+            cmd.Parameters.AddWithValue("@cm",    comment);
+            cmd.Parameters.AddWithValue("@id",    courseRegId);
+            cmd.ExecuteNonQuery();
+        }
+    }
 
     private static void PublishToResults(
         MySqlConnection conn, MySqlTransaction tx,

@@ -96,6 +96,26 @@ on a course code, so they follow the offering and not the student — noted in �
 | portal | acad_practicalexam_settings | 371 | `courseID` |
 | portal | acad_examination_papers | 37 | `courseID` |
 
+### 2.5b How specialisations actually work
+
+Researched rather than assumed, because the naming is misleading.
+
+| Thing | Truth |
+|---|---|
+| `acad_specialisation` (**singular**, 273 rows) | The authority. `spec_id`, `prog_id`, `spec`, `abbrev`, `is_active` — **scoped to one programme** |
+| `acad_specialisations` (**plural**, 10 rows) | A flat list not used by students. Vestigial; ignored |
+| `acad_student.specialisation` | `varchar(150)` that in fact holds **`spec_id` as a string**, not a name. All 31,870 populated values resolve to a real `spec_id`; none is a name |
+| `spec_id = 13` | The `'-'` placeholder meaning *no specialisation* — 30,006 students carry it |
+| `acad_programmecourses.specialisation_id` | Points at `acad_specialisation.spec_id` — 6,436 of 6,436 match. `NULL`/`0` means the course is core to every specialisation on that programme |
+
+**So the cascade is Programme → Specialisation**, filtered on `acad_specialisation.prog_id`, and a
+student is matched by comparing their `specialisation` to a `spec_id`. Because the column is text,
+comparisons cast it: `CAST(NULLIF(TRIM(s.specialisation),'') AS UNSIGNED)`.
+
+**A data-quality note found while researching:** of 1,864 students holding a real specialisation,
+**49 are on a specialisation belonging to a different programme than their own**. Those students
+will not match a programme-cascaded filter, which is correct — but they are worth chasing.
+
 ### 2.6 Transactional safety
 
 **Every table above is InnoDB.** Both schemas live on the same server, so a single connection
@@ -252,8 +272,31 @@ programme · academic year · semester · study year · mark stage · registrati
 | `SKIPPED_LOCKED` | Mark stage is PUBLISHED **and** "include published" was not ticked | Leave untouched |
 | `CONFLICT_REVIEW` | Both source and target hold marks and they differ | Never auto-resolved |
 
-**Rule: the module never deletes a mark and never overwrites one mark with another.** Anything
-that would require that is reported for a human decision.
+**What happens to a duplicate is a choice the operator makes**, and both options are fully
+snapshotted and reversible:
+
+| Policy | Behaviour |
+|---|---|
+| **Settle the duplicate** (default) | The pair is reduced to one record. The better mark ends up on the destination and the duplicate on the retired code is removed, so nothing is left behind. |
+| **Leave alone** | Nothing is written for those students; the conflicts are listed for review. |
+
+Settling compares the source mark against the one already on the destination:
+
+| Source | Destination | Outcome |
+|---|---|---|
+| has a mark | has none | Destination takes the source's mark — `RESOLVED_FILLED` |
+| higher | lower | Destination is overwritten — `RESOLVED_OVERWRITE` |
+| equal | equal | Destination kept as it is — `RESOLVED_DISCARD` |
+| lower or absent | higher | Destination kept — `RESOLVED_DISCARD` |
+
+In every case the duplicate source registration is **deleted**, so the retired code is left with
+nothing. A missing mark never beats a real one, and equal marks never cause a needless rewrite.
+The single published result a student may hold per code is settled by the same comparison.
+
+Both sides are recorded whole before anything is touched — the destination *before* it is
+overwritten and the source *before* it is deleted — so a reversal restores the overwritten mark
+**and** re-creates the removed record. Retake rows pointing at a removed registration are
+repointed at the survivor rather than left dangling.
 
 ### 6.2 Registration Term Transfer
 
@@ -366,8 +409,8 @@ Executed in order; each testable on its own before the next began.
 - [x] **T6 — Reversal engine.** Column-level diff restore with the `CHANGED_SINCE` guard.
 - [x] **T7 — Term Transfer.** Shares the engine; results and transcript rows move with the
       registration.
-- [ ] **T8 — Course Code Merge.** Catalogue phases, CU guard, archive-not-delete. *Engine and UI
-      accept it; the catalogue phase is the remaining work — see below.*
+- [x] **T8 — Course Code Merge.** Catalogue phases, credit-unit guard, archive-not-delete via the
+      `course_state`/`merged_into` columns the 2026-07 consolidation already added.
 - [x] **T9 — Front end: the hub.** `CourseCorrectionCentre.aspx`, five-step wizard, Export Centre
       AJAX pattern, design-system tokens, responsive.
 - [x] **T10 — Front end: the Register.** History, drill-down with before→after diff, whole-batch
@@ -379,7 +422,28 @@ Executed in order; each testable on its own before the next began.
 - [x] **T13 — Adversarial tests.** 47 assertions, all passing (§12).
 - [ ] **T14 — Documentation** for the Registrar's office.
 
-### Test results — 47 assertions, all passing
+### Built set-based, because the real batches are large
+
+`FND1101B` alone carries **5,270 registrations**; the catalogue holds **191 groups of codes that
+differ only by spacing, punctuation or case**. A row-at-a-time implementation would have fired
+roughly 60,000 statements inside one transaction and held locks for minutes.
+
+Every phase therefore reads, updates and records in chunks, and the after-image is **computed from
+the before-image plus the columns being set** rather than read back — halving the statement count
+again. A chunk that trips a unique index falls back to row-at-a-time, so one bad record cannot
+fail its neighbours.
+
+Measured on a 2,000-registration batch against the live database:
+
+| Phase | Time |
+|---|---:|
+| Preview (including all verdicts) | 245 ms |
+| Apply (registrations + satellites + 2,000 snapshots) | 787 ms |
+| Full reversal | 1,641 ms |
+
+That extrapolates to roughly 2 seconds for the largest course in the system.
+
+### Test results — 95 assertions, all passing
 
 Harness builds fixtures on `MRU2027000002`, runs the engine against the live database, asserts,
 and removes every fixture.
@@ -395,15 +459,30 @@ and removes every fixture.
 | G — scope | A department-scoped user sees nothing out of scope and cannot apply |
 | H — validation | Same source and target refused; missing reason refused; merge refused for non-administrators |
 | I — term transfer | Registration and result term both move, and both restore |
+| J — self-collision | Two records in one batch aimed at the same slot: one moves, the other is flagged **in the preview**, not by the index mid-run |
+| K — merge | Registrations, curriculum and exam settings all repoint; the retired code is archived with `merged_into` set, never deleted; the whole merge reverses including the archive flag |
+| L — real scale | 2,000 registrations move and fully reverse, with 2,000 snapshots stored, inside two seconds |
+| M — settling | All four comparisons (higher / lower / equal / no mark) reach the right outcome; every duplicate is deleted; nothing is left merely "skipped"; reversal restores the overwritten mark **and** re-creates all four deleted rows |
+| N — settling results | Two published results become one carrying the better score on the surviving code, and the reversal brings both back with the original scores |
+| O — cautious policy | "Leave alone" still reports the conflict and writes nothing |
 
-### What remains
+Fixtures are built and removed by the harness. After the full run the test student is left with
+exactly its original 24 registrations and 17 results, and no orphaned correction rows remain.
 
-**Course Code Merge** is present as an operation and correctly restricted to administrators, but
-only its student-record phase runs today — it behaves as a Course Code Transfer over every
-student. The catalogue phases (curriculum repointing, teaching allocations, timetables, exam and
-coursework settings, ODEL spaces, and archiving the retired `acad_course` row via the existing
-`course_state`/`merged_into` columns) are specified in §6.3 and not yet built. Until they are,
-merging leaves the retired code in the catalogue.
+### Hardening applied after the first build
+
+| Weakness | Fix |
+|---|---|
+| ~60,000 statements on a real batch | Chunked read/write, computed after-images, bulk snapshot inserts |
+| One rejected row failing a whole chunk | Chunk update falls back to row-at-a-time, recording only the true offender |
+| Two rows in one batch claiming the same slot | Detected during preview and reported, rather than surfacing as a database error |
+| A merge silently changing credit units | Refused unless the operator picks which value survives — it changes every GPA computed from it |
+| A 131-item programme dropdown | Type-ahead picker, filtered in the browser, with keyboard selection |
+| Session expiry mid-wizard | The sign-in redirect is detected and reported as such, instead of "invalid data" |
+| Double-clicking Apply | Guarded by a busy flag as well as the disabled button |
+| Reversing someone else's correction | Non-administrators may reverse only batches they ran |
+| A batch reference reused after a deletion | Sequence taken from the highest reference issued that day |
+| Detail view silently capped at 3,000 rows | The cap is stated, with a note that reversal still covers every record |
 
 ---
 

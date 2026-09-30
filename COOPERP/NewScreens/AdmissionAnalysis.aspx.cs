@@ -170,6 +170,25 @@ public partial class COOPERP_NewScreens_AdmissionAnalysis : System.Web.UI.Page
                 "COUNT(DISTINCT NULLIF(TRIM(c.adm_session),'')) sessions, " + StatCols + BaseJoin + wc + " GROUP BY a.stud_entry_year ORDER BY yr DESC", ps))
                 byYear.Add(new { name = S(d["yr"]), sessions = L(d["sessions"]), stat = Stat(d) });
 
+            // ── By intake cohort: entry year AND session together ──
+            // The Admissions Office reports by INTAKE, and an intake is a year and a session
+            // together — "2026 Weekend" is a cohort with its own admitted, enrolled and
+            // retention figures. By Year and By Session each collapse one half of that away, so
+            // neither of them could answer the question actually being asked, and the two could
+            // not be combined afterwards either: 2026 Weekend cannot be derived from a 2026 row
+            // and a Weekend row. It has to be grouped once, on both.
+            var byCohort = new List<object>();
+            foreach (var d in Query(conn, "SELECT COALESCE(a.stud_entry_year,'') yr, " +
+                "COALESCE(NULLIF(TRIM(c.adm_session),''),'(none)') sess, " + StatCols + BaseJoin + wc +
+                " GROUP BY a.stud_entry_year, sess ORDER BY yr DESC, sess", ps))
+                byCohort.Add(new
+                {
+                    name = S(d["yr"]) + " \u00b7 " + S(d["sess"]),
+                    yr   = S(d["yr"]),
+                    sess = S(d["sess"]),
+                    stat = Stat(d)
+                });
+
             // ── By session ──
             var bySession = new List<object>();
             foreach (var d in Query(conn, "SELECT COALESCE(NULLIF(c.adm_session,''),'(None)') sess, " + StatCols + BaseJoin + wc + " GROUP BY c.adm_session ORDER BY total DESC", ps))
@@ -214,6 +233,7 @@ public partial class COOPERP_NewScreens_AdmissionAnalysis : System.Web.UI.Page
                 byFaculty = byFaculty,
                 byCampus = byCampus,
                 byYear = byYear,
+                byCohort = byCohort,
                 bySession = bySession,
                 bySource = bySource,
                 notAnalysed = notAnalysed,

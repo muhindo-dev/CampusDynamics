@@ -94,6 +94,7 @@
         <button type="button" data-dim="byFaculty" onclick="AA.dim('byFaculty')">By Faculty</button>
         <button type="button" data-dim="byCampus" onclick="AA.dim('byCampus')">By Campus</button>
         <button type="button" data-dim="byYear" onclick="AA.dim('byYear')">By Year</button>
+        <button type="button" data-dim="byCohort" onclick="AA.dim('byCohort')">By Intake (Year &times; Session)</button>
         <button type="button" data-dim="bySession" onclick="AA.dim('bySession')">By Session</button>
         <button type="button" data-dim="bySource" onclick="AA.dim('bySource')">By Source</button>
       </div>
@@ -158,8 +159,8 @@ var AA = (function(){
   var D = window.__AA_INIT || {};
   var DIM='byProg', SORT='total', DIR=-1;
   var facCombo=null, progCombo=null;
-  var DIMLABEL={byProg:'By Programme',byFaculty:'By Faculty',byCampus:'By Campus',byYear:'By Year',bySession:'By Session',bySource:'By Source'};
-  var DIMCOL={byProg:'Programme',byFaculty:'Faculty',byCampus:'Campus',byYear:'Entry Year',bySession:'Session',bySource:'Source'};
+  var DIMLABEL={byProg:'By Programme',byFaculty:'By Faculty',byCampus:'By Campus',byYear:'By Year',byCohort:'By Intake (Year \u00d7 Session)',bySession:'By Session',bySource:'By Source'};
+  var DIMCOL={byProg:'Programme',byFaculty:'Faculty',byCampus:'Campus',byYear:'Entry Year',byCohort:'Intake',bySession:'Session',bySource:'Source'};
   function qs(id){return document.getElementById(id);}
   function esc(s){s=(s==null?'':''+s);return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');}
   function nf(n){ return (n||0).toLocaleString(); }
@@ -254,7 +255,9 @@ var AA = (function(){
       +(showSessions?th('sessions','Sessions','num'):'')
       +th('total','Applicants','num')+th('pending','Pending','num')+th('admitted','Admitted','num')
       +th('registered','Registered','num')+th('rejected','Rejected','num')+th('withdrawn','Withdrawn','num')+th('other','Other','num')
-      +'<th class="num">Offer %</th><th class="num">Reg %</th></tr></thead><tbody>';
+      +'<th class="num">Offer %</th><th class="num">Reg %</th>'
+      +'<th class="num" title="Enrolled as a share of those offered a place \u2014 the Admissions Office retention rate">Retention %</th>'
+      +'</tr></thead><tbody>';
     list.forEach(function(r,i){
       var s=r.stat; T.total+=s.total;T.pending+=s.pending;T.admitted+=s.admitted;T.registered+=s.registered;T.rejected+=s.rejected;T.withdrawn+=s.withdrawn;T.other+=(s.other||0);
       var offer=s.admitted+s.registered, bw=maxTotal>0?Math.round(s.total/maxTotal*60):0;
@@ -270,14 +273,16 @@ var AA = (function(){
         +'<td class="num">'+(s.withdrawn?nf(s.withdrawn):'<span class="aa-mut">0</span>')+'</td>'
         +'<td class="num">'+(s.other?nf(s.other):'<span class="aa-mut">0</span>')+'</td>'
         +'<td class="num">'+pct(offer,s.total)+'</td>'
-        +'<td class="num">'+pct(s.registered,s.total)+'</td></tr>';
+        +'<td class="num">'+pct(s.registered,s.total)+'</td>'
+        +'<td class="num"><b>'+pct(s.registered,offer)+'</b></td></tr>';
     });
     var toffer=T.admitted+T.registered;
     h+='</tbody><tfoot><tr><td></td><td>TOTAL — '+list.length+'</td>'
       +(showSessions?'<td></td>':'')
       +'<td class="num">'+nf(T.total)+'</td><td class="num">'+nf(T.pending)+'</td><td class="num">'+nf(T.admitted)+'</td>'
       +'<td class="num">'+nf(T.registered)+'</td><td class="num">'+nf(T.rejected)+'</td><td class="num">'+nf(T.withdrawn)+'</td><td class="num">'+nf(T.other)+'</td>'
-      +'<td class="num">'+pct(toffer,T.total)+'</td><td class="num">'+pct(T.registered,T.total)+'</td></tr></tfoot></table></div>';
+      +'<td class="num">'+pct(toffer,T.total)+'</td><td class="num">'+pct(T.registered,T.total)+'</td>'
+      +'<td class="num"><b>'+pct(T.registered,toffer)+'</b></td></tr></tfoot></table></div>';
     qs('aaHost').innerHTML=h;
   }
 
@@ -289,27 +294,28 @@ var AA = (function(){
   function csv(){
     var list=sortRows(rows()); if(!list.length){ alert('Nothing to export.'); return; }
     var ss=(DIM==='byProg'||DIM==='byFaculty'||DIM==='byCampus'||DIM==='byYear');
-    var head=[DIMCOL[DIM]].concat(ss?['Sessions']:[]).concat(['Applicants','Pending','Admitted','Registered','Rejected','Withdrawn','Offer%','Reg%']);
+    var head=[DIMCOL[DIM]].concat(ss?['Sessions']:[]).concat(['Applicants','Pending','Admitted','Registered','Rejected','Withdrawn','Other','Offer%','Reg%','Retention%']);
     var lines=[head.join(',')];
     var T={total:0,pending:0,admitted:0,registered:0,rejected:0,withdrawn:0,other:0};
     list.forEach(function(r){ var s=r.stat; T.total+=s.total;T.pending+=s.pending;T.admitted+=s.admitted;T.registered+=s.registered;T.rejected+=s.rejected;T.withdrawn+=s.withdrawn;T.other+=(s.other||0);
-      lines.push([r.name].concat(ss?[r.sessions||0]:[]).concat([s.total,s.pending,s.admitted,s.registered,s.rejected,s.withdrawn,(s.other||0),pctv(s.admitted+s.registered,s.total).toFixed(1),pctv(s.registered,s.total).toFixed(1)]).map(csvCell).join(',')); });
-    lines.push(['TOTAL'].concat(ss?['']:[]).concat([T.total,T.pending,T.admitted,T.registered,T.rejected,T.withdrawn,T.other,pctv(T.admitted+T.registered,T.total).toFixed(1),pctv(T.registered,T.total).toFixed(1)]).map(csvCell).join(','));
+      lines.push([r.name].concat(ss?[r.sessions||0]:[]).concat([s.total,s.pending,s.admitted,s.registered,s.rejected,s.withdrawn,(s.other||0),pctv(s.admitted+s.registered,s.total).toFixed(1),pctv(s.registered,s.total).toFixed(1),pctv(s.registered,s.admitted+s.registered).toFixed(1)]).map(csvCell).join(',')); });
+    lines.push(['TOTAL'].concat(ss?['']:[]).concat([T.total,T.pending,T.admitted,T.registered,T.rejected,T.withdrawn,T.other,pctv(T.admitted+T.registered,T.total).toFixed(1),pctv(T.registered,T.total).toFixed(1),pctv(T.registered,T.admitted+T.registered).toFixed(1)]).map(csvCell).join(','));
     var blob=new Blob([lines.join('\r\n')],{type:'text/csv;charset=utf-8;'});
     var a=document.createElement('a'); a.href=URL.createObjectURL(blob); a.download='admission_analysis_'+DIM+'.csv'; document.body.appendChild(a); a.click(); document.body.removeChild(a);
   }
 
   /* ── branded print (KPIs + every dimension) ── */
-  function ptable(title, list){
+  function ptable(title, list, keepOrder){
     if(!list||!list.length) return '';
     var T={total:0,pending:0,admitted:0,registered:0,rejected:0,withdrawn:0,other:0};
     var body='';
-    list.slice().sort(function(a,b){return b.stat.total-a.stat.total;}).forEach(function(r,i){ var s=r.stat;
+    var seq=list.slice(); if(!keepOrder) seq.sort(function(a,b){return b.stat.total-a.stat.total;});
+    seq.forEach(function(r,i){ var s=r.stat;
       T.total+=s.total;T.pending+=s.pending;T.admitted+=s.admitted;T.registered+=s.registered;T.rejected+=s.rejected;T.withdrawn+=s.withdrawn;T.other+=(s.other||0);
-      body+='<tr><td class="n">'+(i+1)+'</td><td>'+esc(r.name)+'</td><td class="c">'+nf(s.total)+'</td><td class="c">'+nf(s.pending)+'</td><td class="c">'+nf(s.admitted)+'</td><td class="c">'+nf(s.registered)+'</td><td class="c">'+nf(s.rejected)+'</td><td class="c">'+nf(s.withdrawn)+'</td><td class="c">'+pct(s.admitted+s.registered,s.total)+'</td><td class="c">'+pct(s.registered,s.total)+'</td></tr>';
+      body+='<tr><td class="n">'+(i+1)+'</td><td>'+esc(r.name)+'</td><td class="c">'+nf(s.total)+'</td><td class="c">'+nf(s.pending)+'</td><td class="c">'+nf(s.admitted)+'</td><td class="c">'+nf(s.registered)+'</td><td class="c">'+nf(s.rejected)+'</td><td class="c">'+nf(s.withdrawn)+'</td><td class="c">'+pct(s.admitted+s.registered,s.total)+'</td><td class="c">'+pct(s.registered,s.total)+'</td><td class="c"><b>'+pct(s.registered,s.admitted+s.registered)+'</b></td></tr>';
     });
-    body+='<tr class="tot"><td></td><td><b>TOTAL</b></td><td class="c">'+nf(T.total)+'</td><td class="c">'+nf(T.pending)+'</td><td class="c">'+nf(T.admitted)+'</td><td class="c">'+nf(T.registered)+'</td><td class="c">'+nf(T.rejected)+'</td><td class="c">'+nf(T.withdrawn)+'</td><td class="c">'+pct(T.admitted+T.registered,T.total)+'</td><td class="c">'+pct(T.registered,T.total)+'</td></tr>';
-    return '<h3>'+esc(title)+'</h3><table><thead><tr><th>#</th><th>'+esc(title.replace(/^By /,''))+'</th><th class="c">Applicants</th><th class="c">Pending</th><th class="c">Admitted</th><th class="c">Registered</th><th class="c">Rejected</th><th class="c">Withdrawn</th><th class="c">Offer %</th><th class="c">Reg %</th></tr></thead><tbody>'+body+'</tbody></table>';
+    body+='<tr class="tot"><td></td><td><b>TOTAL</b></td><td class="c">'+nf(T.total)+'</td><td class="c">'+nf(T.pending)+'</td><td class="c">'+nf(T.admitted)+'</td><td class="c">'+nf(T.registered)+'</td><td class="c">'+nf(T.rejected)+'</td><td class="c">'+nf(T.withdrawn)+'</td><td class="c">'+pct(T.admitted+T.registered,T.total)+'</td><td class="c">'+pct(T.registered,T.total)+'</td><td class="c"><b>'+pct(T.registered,T.admitted+T.registered)+'</b></td></tr>';
+    return '<h3>'+esc(title)+'</h3><table><thead><tr><th>#</th><th>'+esc(title.replace(/^By /,''))+'</th><th class="c">Applicants</th><th class="c">Pending</th><th class="c">Admitted</th><th class="c">Registered</th><th class="c">Rejected</th><th class="c">Withdrawn</th><th class="c">Offer %</th><th class="c">Reg %</th><th class="c">Retention %</th></tr></thead><tbody>'+body+'</tbody></table>';
   }
   function print(){
     var k=D.kpis||{}, t=k.total||0, F=D.filters||{};
@@ -334,7 +340,7 @@ var AA = (function(){
       +'<div class="hd"><img src="'+logo+'" onerror="this.style.display=\'none\'" alt=""/><div>'
       +'<div class="u">Muteesa I Royal University</div><div class="t">Admission Analysis</div>'
       +'<div class="m">'+meta.map(esc).join('<span>&bull;</span>')+'</div></div></div>'
-      +ptable('By Programme', D.byProg)+ptable('By Faculty', D.byFaculty)+ptable('By Campus', D.byCampus)+ptable('By Year', D.byYear)+ptable('By Session', D.bySession)+ptable('By Source', D.bySource)
+      +ptable('By Intake (Year \u00d7 Session)', D.byCohort, true)+ptable('By Programme', D.byProg)+ptable('By Faculty', D.byFaculty)+ptable('By Campus', D.byCampus)+ptable('By Year', D.byYear)+ptable('By Session', D.bySession)+ptable('By Source', D.bySource)
       +'<div class="ft"><span>Generated '+stamp+'</span><span>eadmin.mru.ac.ug</span></div></body></html>';
     var w=window.open('','_blank'); if(!w){ alert('Please allow pop-ups to open the printable analysis.'); return; }
     w.document.open(); w.document.write(html); w.document.close(); w.focus();

@@ -63,6 +63,196 @@ public static partial class IDCardService
     public const string COLLECTED     = "COLLECTED";
     public const string CANCELLED     = "CANCELLED";
 
+    // -- one human name per status ------------------------------------------
+    //
+    // The status strings above are the machine's vocabulary. Screens kept inventing
+    // their own words for them, and the same state ended up with three names on two
+    // pages: the ID-card console's summary tile said "Draft" while its own table and
+    // its own filter said "REQUESTED", and the student's tracker said "Approved by
+    // XAXU" where the console said "APPROVED". An operator who had just placed a
+    // batch of requests went looking for them under "Submitted" and could not tell
+    // whether they had failed or were simply being called something else.
+    //
+    // So the name lives here, once, beside the constant it names, and every screen
+    // -- staff or student, C# or JavaScript -- asks for it rather than choosing.
+    // StatusLabelsJson() exists so a page can hand the same table to its JavaScript
+    // instead of hardcoding a second copy that will drift.
+    //
+    // REQUESTED is deliberately "Not submitted" rather than "Draft": it says what is
+    // missing, which is the question people actually arrive with.
+    private static readonly string[][] Labels =
+    {
+        new[] { REQUESTED,     "Not submitted"        },
+        new[] { FINANCE_CHECK, "Fee check"            },
+        new[] { BLOCKED,       "Blocked by fees"      },
+        new[] { SUBMITTED,     "Submitted"            },
+        new[] { APPROVED,      "Approved"             },
+        new[] { HALTED,        "Halted"               },
+        new[] { PRINTED,       "Printed"              },
+        new[] { READY,         "Ready for collection" },
+        new[] { COLLECTED,     "Collected"            },
+        new[] { CANCELLED,     "Cancelled"            },
+    };
+
+    /// <summary>The human name for a status. Unknown values come back unchanged.</summary>
+    public static string StatusLabel(string status)
+    {
+        string s = (status ?? "").Trim().ToUpperInvariant();
+        for (int i = 0; i < Labels.Length; i++)
+            if (Labels[i][0] == s) return Labels[i][1];
+        return status ?? "";
+    }
+
+    /// <summary>The whole table as a JSON object, for pages that label in JavaScript.</summary>
+    public static string StatusLabelsJson()
+    {
+        var sb = new System.Text.StringBuilder("{");
+        for (int i = 0; i < Labels.Length; i++)
+        {
+            if (i > 0) sb.Append(",");
+            sb.Append('"').Append(Labels[i][0]).Append('"').Append(':')
+              .Append('"').Append(Labels[i][1]).Append('"');
+        }
+        return sb.Append("}").ToString();
+    }
+
+    // ── Forced ID-card collection ──────────────────────────────────────────────
+    //
+    // A card that has been printed is useless sitting in a drawer, and chasing
+    // students one by one does not scale. This lets the ID office put a student
+    // under an obligation: from a chosen date, the portal stops them until they
+    // have physically collected the card from a named office.
+    //
+    // Deliberately its own table rather than another column on idcard_requests:
+    // the obligation is about a PERSON and a PLACE, it can be applied to someone
+    // whose request was created long ago (or by the OmniPass backfill, which
+    // created no request the student ever saw), and it has to be liftable by the
+    // counter clerk who hands the card over without touching the request's own
+    // state machine.
+    //
+    // A block bites only when all three are true: it is active, the card has not
+    // been collected, and the enforce-from date has arrived. Anything else — a
+    // future date, a cleared row, a database that cannot be read — means the
+    // student is not blocked. A portal-wide gate must fail OPEN.
+    public const string POINT_AR = "AR_OFFICE";
+    public const string POINT_IT = "IT_OFFICE";
+
+    /// <summary>Where the student has been told to collect from, in words.</summary>
+    public static string CollectionPointLabel(string point)
+    {
+        return string.Equals((point ?? "").Trim(), POINT_IT, StringComparison.OrdinalIgnoreCase)
+            ? "ICT Office"
+            : "Academic Registrar's Office";
+    }
+
+    /// <summary>The collection obligation standing over a student, if any.</summary>
+    public class ForceCollection
+    {
+        public bool Active;                 // in force right now (active, uncollected, date reached)
+        public bool Exists;                 // a row exists, even if not yet in force
+        public string Regno = "";
+        public string CollectionPoint = "";
+        public string PointLabel = "";
+        public string Campus = "";
+        public string GroupName = "";       // the batch the cards were sorted into
+        public string Note = "";
+        public DateTime? EnforceFrom;
+        public bool Collected;
+    }
+
+    // The portal's page gate calls ForceCollectionFor on every request a student makes,
+    // and that used to re-issue the CREATE TABLE every single time. The schema cannot
+    // change under a running process, so it is built once and then skipped. Worst case
+    // two threads race and both build it — the statements are idempotent, so that is
+    // harmless and cheaper than locking.
+    private static bool _fcSchemaReady;
+
+    /// <summary>Creates the tracking table if it is not there yet. Runs once per process.</summary>
+    public static void EnsureForceCollectionSchema(MySqlConnection conn)
+    {
+        if (_fcSchemaReady) return;
+        try
+        {
+            // utf8/utf8_general_ci on purpose: regno is compared against
+            // acad_student.regno, and a charset mismatch silently makes the index
+            // unusable (this system has been bitten by exactly that before).
+            Exec(conn, "CREATE TABLE IF NOT EXISTS idcard_force_collection (" +
+                " id INT NOT NULL AUTO_INCREMENT PRIMARY KEY," +
+                " regno VARCHAR(50) NOT NULL," +
+                " is_active TINYINT NOT NULL DEFAULT 1," +
+                " collection_point VARCHAR(20) NOT NULL DEFAULT 'AR_OFFICE'," +
+                " campus VARCHAR(120) NULL," +
+                " group_name VARCHAR(10) NULL," +
+                " enforce_from DATE NOT NULL," +
+                " note VARCHAR(255) NULL," +
+                " collected TINYINT NOT NULL DEFAULT 0," +
+                " collected_at DATETIME NULL," +
+                " collected_by VARCHAR(150) NULL," +
+                " created_by VARCHAR(150) NULL," +
+                " created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP," +
+                " updated_by VARCHAR(150) NULL," +
+                " updated_at DATETIME NULL," +
+                " UNIQUE KEY uq_regno (regno)," +
+                " KEY ix_enforce (is_active, collected, enforce_from)" +
+                ") ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_general_ci");
+
+            // group_name arrived after the table did, so an installation created by an
+            // earlier build needs it added. Checked rather than blind-ALTERed so a normal
+            // start-up costs one cheap information_schema read and no failing statement.
+            using (var chk = new MySqlCommand(
+                "SELECT COUNT(*) FROM information_schema.COLUMNS WHERE TABLE_SCHEMA=DATABASE()" +
+                " AND TABLE_NAME='idcard_force_collection' AND COLUMN_NAME='group_name'", conn))
+            {
+                if (Convert.ToInt64(chk.ExecuteScalar()) == 0)
+                    Exec(conn, "ALTER TABLE idcard_force_collection ADD COLUMN group_name VARCHAR(10) NULL AFTER campus");
+            }
+
+            _fcSchemaReady = true;
+        }
+        catch { /* the table already existing is the normal case */ }
+    }
+
+    /// <summary>
+    /// What, if anything, stands over this student. Never throws: this is called by
+    /// the portal's page gate, and an unreadable table must not lock the portal.
+    /// </summary>
+    public static ForceCollection ForceCollectionFor(string regno)
+    {
+        var fc = new ForceCollection { Regno = (regno ?? "").Trim() };
+        if (fc.Regno == "") return fc;
+        try
+        {
+            using (var c = new MySqlConnection(ConnStr))
+            {
+                c.Open();
+                EnsureForceCollectionSchema(c);
+                using (var cmd = new MySqlCommand(
+                    "SELECT is_active, collected, collection_point, IFNULL(campus,'') AS campus," +
+                    "       IFNULL(group_name,'') AS group_name, enforce_from, IFNULL(note,'') AS note," +
+                    "       (is_active = 1 AND collected = 0 AND enforce_from <= CURDATE()) AS in_force " +
+                    "FROM idcard_force_collection WHERE regno = @r LIMIT 1", c))
+                {
+                    cmd.Parameters.AddWithValue("@r", fc.Regno);
+                    using (var r = cmd.ExecuteReader())
+                    {
+                        if (!r.Read()) return fc;
+                        fc.Exists = true;
+                        fc.Collected = Convert.ToInt32(r["collected"]) == 1;
+                        fc.CollectionPoint = Convert.ToString(r["collection_point"]);
+                        fc.PointLabel = CollectionPointLabel(fc.CollectionPoint);
+                        fc.Campus = Convert.ToString(r["campus"]);
+                        fc.GroupName = Convert.ToString(r["group_name"]);
+                        fc.Note = Convert.ToString(r["note"]);
+                        if (r["enforce_from"] != DBNull.Value) fc.EnforceFrom = Convert.ToDateTime(r["enforce_from"]);
+                        fc.Active = Convert.ToInt32(r["in_force"]) == 1;
+                    }
+                }
+            }
+        }
+        catch { return new ForceCollection { Regno = fc.Regno }; }   // fail open
+        return fc;
+    }
+
     // Terminal states = request is closed; a person may open a new one.
     private static readonly HashSet<string> Terminal =
         new HashSet<string>(StringComparer.OrdinalIgnoreCase) { COLLECTED, CANCELLED };

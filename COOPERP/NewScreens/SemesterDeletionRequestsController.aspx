@@ -96,6 +96,47 @@ html,body{background:#f5f7fa}
 .sdr-modal__title{font-size:12px;font-weight:900;letter-spacing:.45px;text-transform:uppercase;color:#03234e}
 .sdr-modal__body{padding:14px;display:flex;flex-direction:column;gap:12px;max-height:calc(90vh - 140px);overflow-y:auto}
 .sdr-modal__foot{padding:12px 14px;border-top:1px solid #e8ecf3;display:flex;justify-content:flex-end;gap:6px;flex-wrap:wrap;background:#f9fbff}
+/* What approving will actually destroy. This panel is the point of the screen now:
+   the reason a student gives is one line, but the consequence is a registration, a
+   course list and a fee that somebody has to answer for later. */
+.sdr-imp{border:1px solid #d0dce9;border-left:3px solid #03234e;background:#f7f9fc;padding:9px 11px}
+.sdr-imp__h{font-size:9px;font-weight:900;letter-spacing:.45px;text-transform:uppercase;color:#03234e;margin-bottom:7px}
+.sdr-imp__g{display:grid;grid-template-columns:repeat(4,1fr);gap:7px}
+.sdr-imp__c{background:#fff;border:1px solid #e2e9f2;padding:6px 8px;min-width:0}
+.sdr-imp__n{font-size:15px;font-weight:900;color:#03234e;line-height:1.15;word-break:break-word}
+.sdr-imp__l{font-size:8px;font-weight:700;letter-spacing:.35px;text-transform:uppercase;color:#7a8795;margin-top:2px}
+.sdr-imp__c--money .sdr-imp__n{color:#8a5a00}
+.sdr-imp__c--warn{border-color:#f0c7c3;background:#fdf3f2}
+.sdr-imp__c--warn .sdr-imp__n{color:#b42318}
+.sdr-imp__note{margin-top:8px;font-size:10px;line-height:1.5;padding:7px 9px}
+.sdr-imp__note--stop{background:#fdecec;border:1px solid #f4c2c2;color:#8f1c16}
+.sdr-imp__note--hold{background:#fff6e5;border:1px solid #f0d9a8;color:#7a4f00}
+.sdr-imp__note--ok{background:#eef7f0;border:1px solid #cbe5d2;color:#1e6b33}
+@media(max-width:700px){.sdr-imp__g{grid-template-columns:repeat(2,1fr)}}
+/* Step two: the plan. Approving used to be one click on a screen that showed a
+   sentence of the student's prose; it now costs a second click on a screen that
+   says, line by line, what the first one will do. */
+.sdr-steps{display:flex;align-items:center;gap:6px;margin-bottom:11px}
+.sdr-steps__i{display:flex;align-items:center;gap:5px;font-size:8px;font-weight:800;letter-spacing:.4px;text-transform:uppercase;color:#9aa6b4}
+.sdr-steps__i.is-on{color:#03234e}
+.sdr-steps__n{width:16px;height:16px;border-radius:50%;background:#e2e9f2;color:#7a8795;display:flex;align-items:center;justify-content:center;font-size:8px;font-weight:900}
+.sdr-steps__i.is-on .sdr-steps__n{background:#03234e;color:#fff}
+.sdr-steps__b{flex:1;height:1px;background:#e2e9f2}
+.sdr-plan{display:flex;flex-direction:column;gap:0;border:1px solid #d0dce9;background:#fff}
+.sdr-plan__r{display:flex;gap:9px;padding:9px 11px;align-items:flex-start}
+.sdr-plan__r+.sdr-plan__r{border-top:1px solid #edf1f6}
+.sdr-plan__i{flex:0 0 auto;width:17px;height:17px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:9px;font-weight:900;color:#fff;margin-top:1px}
+.sdr-plan__r--go .sdr-plan__i{background:#b42318}
+.sdr-plan__r--keep .sdr-plan__i{background:#7a8795}
+.sdr-plan__r--info .sdr-plan__i{background:#03234e}
+.sdr-plan__t{flex:1;min-width:0;font-size:10.5px;line-height:1.5;color:#23324a}
+.sdr-plan__t b{color:#03234e}
+.sdr-plan__r--go .sdr-plan__t b{color:#b42318}
+.sdr-bal{display:flex;align-items:center;gap:10px;margin-top:9px;padding:8px 11px;background:#f7f9fc;border:1px solid #d0dce9}
+.sdr-bal__x{font-size:8px;font-weight:800;letter-spacing:.4px;text-transform:uppercase;color:#7a8795}
+.sdr-bal__v{font-size:13px;font-weight:900;color:#03234e}
+.sdr-bal__v--cr{color:#1e6b33}
+.sdr-bal__a{color:#7a8795;font-size:12px}
 .sdr-dl{display:grid;grid-template-columns:1fr 1fr;gap:10px;padding:10px 12px;background:#f8f9fb;border-radius:2px;border:1px solid #eef1f7}
 .sdr-dl__k{font-size:8px;text-transform:uppercase;letter-spacing:.4px;color:#6b7280;font-weight:900}
 .sdr-dl__v{font-size:11px;color:#1f2937;font-weight:600;margin-top:2px}
@@ -247,16 +288,29 @@ html,body{background:#f5f7fa}
             <button type="button" class="sdr-btn sdr-btn--secondary sdr-btn--sm" id="btnCloseModal">&#10005;</button>
         </div>
         <div class="sdr-modal__body">
-            <div class="sdr-dl" id="decisionDetails"></div>
-            <div class="sdr-fg-inline" id="decisionCommentWrap">
-                <label>Decision Comment <span style="color:#b42318">*</span> <span id="decisionCommentHint" style="font-weight:400;font-size:8px;color:#7a8795;text-transform:none">(required for rejection)</span></label>
-                <textarea id="decisionComment" class="sdr-textarea" placeholder="Explain your decision to the student..."></textarea>
+            <div class="sdr-steps" id="decisionSteps" style="display:none">
+                <div class="sdr-steps__i is-on" id="stepPip1"><span class="sdr-steps__n">1</span><span>Review</span></div>
+                <div class="sdr-steps__b"></div>
+                <div class="sdr-steps__i" id="stepPip2"><span class="sdr-steps__n">2</span><span>Confirm</span></div>
             </div>
+
+            <div id="decisionStep1">
+                <div class="sdr-dl" id="decisionDetails"></div>
+                <div id="decisionImpact"></div>
+                <div class="sdr-fg-inline" id="decisionCommentWrap">
+                    <label>Decision Comment <span style="color:#b42318">*</span> <span id="decisionCommentHint" style="font-weight:400;font-size:8px;color:#7a8795;text-transform:none">(required for rejection)</span></label>
+                    <textarea id="decisionComment" class="sdr-textarea" placeholder="Explain your decision to the student..."></textarea>
+                </div>
+            </div>
+
+            <div id="decisionStep2" style="display:none"></div>
         </div>
         <div class="sdr-modal__foot">
             <button type="button" class="sdr-btn sdr-btn--secondary" id="btnCancelDecision">Cancel</button>
             <button type="button" class="sdr-btn sdr-btn--danger" id="btnReject">Reject Request</button>
             <button type="button" class="sdr-btn sdr-btn--success" id="btnApprove">Approve Deletion</button>
+            <button type="button" class="sdr-btn sdr-btn--secondary" id="btnPlanBack" style="display:none">&#8592; Back</button>
+            <button type="button" class="sdr-btn sdr-btn--danger" id="btnPlanGo" style="display:none">Yes, carry this out</button>
         </div>
     </div>
 </div>
@@ -501,18 +555,138 @@ function fillDetails(item){
     '<div><div class="sdr-dl__k">Status</div><div class="sdr-dl__v"><span class="sdr-pill sdr-pill--'+esc(String(item.status||'').toUpperCase())+'">'+esc(item.status||'')+'</span></div></div>'+
     '<div style="grid-column:1/-1"><div class="sdr-dl__k">Reason for Deletion</div><div class="sdr-dl__v">'+esc(item.request_reason||'—')+'</div></div>';
 }
+function money(v){
+  var x=Number(v||0);
+  return isNaN(x)?'0':x.toFixed(0).replace(/\B(?=(\d{3})+(?!\d))/g,',');
+}
+
+/* The consequence of the click, spelled out before it is made. Deleting a semester
+   registration is not one row: the wizard that created it also raised a bill, so
+   approving reverses a course list and a charge as well. */
+function fillImpact(imp,readOnly){
+  var el=byId('decisionImpact');
+  if(!imp){el.innerHTML='';return;}
+  var sharesPeriod=!!imp.shares_period, blocked=!!imp.blocked;
+
+  var cells=
+    '<div class="sdr-imp__c"><div class="sdr-imp__n">'+n(imp.courses)+'</div><div class="sdr-imp__l">Courses</div></div>'+
+    '<div class="sdr-imp__c'+(n(imp.marked_courses)>0?' sdr-imp__c--warn':'')+'"><div class="sdr-imp__n">'+n(imp.marked_courses)+'</div><div class="sdr-imp__l">With marks</div></div>'+
+    '<div class="sdr-imp__c'+(n(imp.results)>0?' sdr-imp__c--warn':'')+'"><div class="sdr-imp__n">'+n(imp.results)+'</div><div class="sdr-imp__l">Results</div></div>'+
+    '<div class="sdr-imp__c sdr-imp__c--money"><div class="sdr-imp__n">'+money(imp.bill_amount)+'</div><div class="sdr-imp__l">Fees, UGX</div></div>';
+
+  var note='';
+  if(blocked){
+    note='<div class="sdr-imp__note sdr-imp__note--stop"><b>Cannot be deleted.</b> This semester carries '
+       +n(imp.results)+' published result(s). Withdraw the results through the marks pipeline first.</div>';
+  } else if(sharesPeriod){
+    note='<div class="sdr-imp__note sdr-imp__note--hold"><b>Only the registration will go.</b> The student holds '
+       +n(imp.siblings)+' other registration(s) for this same semester at a different year of study, and the '
+       +'course list and the fees belong to the semester rather than to one registration. They will be left alone.</div>';
+  } else {
+    note='<div class="sdr-imp__note sdr-imp__note--ok">Approving removes the registration, '+n(imp.courses)
+       +' course row(s), and reverses '+n(imp.bills)+' fee bill(s) worth UGX '+money(imp.bill_amount)
+       +' ('+n(imp.ledger_rows)+' ledger entr'+(n(imp.ledger_rows)===1?'y':'ies')+'). '
+       +'Payments already made are <b>not</b> touched — they stay on the account as credit.</div>';
+  }
+
+  el.innerHTML='<div class="sdr-imp"><div class="sdr-imp__h">'
+    +(readOnly?'What this removed':'What approving will remove')
+    +'</div><div class="sdr-imp__g">'+cells+'</div>'+note+'</div>';
+}
+
+/* ── The approve wizard ──────────────────────────────────────────────────────
+   Step one is the request and its consequence. Step two is the plan: every row a
+   line, in the order it will happen, with the real figures. It exists because an
+   approval on this screen now cancels money as well as a registration, and the one
+   thing a person should never be able to say afterwards is "I didn't know it would
+   do that". */
+function planStep(on){
+  byId('decisionStep1').style.display = on ? 'none' : '';
+  byId('decisionStep2').style.display = on ? '' : 'none';
+  byId('decisionSteps').style.display = '';
+  byId('stepPip2').className = 'sdr-steps__i' + (on ? ' is-on' : '');
+  byId('stepPip1').className = 'sdr-steps__i' + (on ? '' : ' is-on');
+  byId('btnApprove').style.display = on ? 'none' : '';
+  byId('btnReject').style.display  = on ? 'none' : '';
+  byId('btnCancelDecision').style.display = on ? 'none' : '';
+  byId('btnPlanBack').style.display = on ? '' : 'none';
+  byId('btnPlanGo').style.display   = on ? '' : 'none';
+  byId('decisionTitle').textContent = on ? 'Confirm — what will happen' : 'Review Request';
+}
+
+function planRow(kind,icon,html){
+  return '<div class="sdr-plan__r sdr-plan__r--'+kind+'"><span class="sdr-plan__i">'+icon+'</span>'
+       + '<span class="sdr-plan__t">'+html+'</span></div>';
+}
+
+function buildPlan(item,imp){
+  if(!imp){return '<div class="sdr-imp__note sdr-imp__note--hold">The details of this request could not be read again. Close and reopen it.</div>';}
+  var period='<b>'+esc(item.acad_year||'')+' &mdash; Year '+n(item.study_year)+', Semester '+n(item.semester)+'</b>';
+  var rows='';
+
+  rows+=planRow('go','1','Delete the semester registration for '+period+'.');
+
+  if(imp.shares_period){
+    rows+=planRow('keep','2','<b>Keep</b> the '+n(imp.courses)+' course registration(s). This student holds '
+      +n(imp.siblings)+' other registration(s) for this same semester at a different year of study, and the '
+      +'course list belongs to the semester rather than to one registration.');
+    rows+=planRow('keep','3','<b>Keep</b> the fees of UGX '+money(imp.bill_amount)+' &mdash; for the same reason. '
+      +'The semester is still registered, so it is still chargeable.');
+  } else {
+    rows+= n(imp.courses)>0
+      ? planRow('go','2','Delete <b>'+n(imp.courses)+'</b> course registration(s) for that semester.')
+      : planRow('info','2','No courses were ever selected, so there are none to delete.');
+    rows+= n(imp.bills)>0
+      ? planRow('go','3','Cancel <b>'+n(imp.bills)+'</b> fee bill(s) worth <b>UGX '+money(imp.bill_amount)+'</b>, '
+          +'and the '+n(imp.ledger_rows)+' matching ledger entr'+(n(imp.ledger_rows)===1?'y':'ies')+'.')
+      : planRow('info','3','No fees were raised for this semester, so there is nothing to cancel.');
+  }
+
+  rows+=planRow('info','4','<b>Payments are not touched.</b> Only charges are reversed &mdash; any money the '
+    +'student has paid stays on their account.');
+  rows+=planRow('info','5','Everything deleted is copied to the recovery tables first, so it can be put back.');
+  rows+=planRow('info','6','The student is told on their portal, and this decision is recorded against your name.');
+
+  var bal='';
+  if(!imp.shares_period && n(imp.bills)>0){
+    var after=Number(imp.balance_after||0);
+    bal='<div class="sdr-bal"><span class="sdr-bal__x">Balance</span>'
+      + '<span class="sdr-bal__v">UGX '+money(imp.balance_before)+'</span>'
+      + '<span class="sdr-bal__a">&#8594;</span>'
+      + '<span class="sdr-bal__v'+(after<0?' sdr-bal__v--cr':'')+'">UGX '+money(Math.abs(after))
+      + (after<0?' in credit':'')+'</span></div>';
+  }
+
+  return '<div class="sdr-plan">'+rows+'</div>'+bal;
+}
+
 function openReview(id,readOnly){
   state.currentId=n(id);
   ajax('GetRequest',{id:state.currentId},function(res){
     if(!res||!res.success){showAlert((res&&res.message)||'Failed to load request.','danger');return;}
     var item=res.request||{};
+    var imp=res.impact||null;
+    state.currentItem=item;
+    state.currentImpact=imp;
+    planStep(false);
+    byId('decisionSteps').style.display=readOnly?'none':'';
     fillDetails(item);
+    fillImpact(imp,readOnly);
     byId('decisionComment').value=item.admin_comment||'';
     byId('decisionTitle').textContent=readOnly?'Request Details':'Review Request';
     var approveBtn=byId('btnApprove'),rejectBtn=byId('btnReject');
     var commentWrap=byId('decisionCommentWrap');
     if(readOnly){approveBtn.style.display='none';rejectBtn.style.display='none';commentWrap.style.display='none';}
-    else{approveBtn.style.display='';rejectBtn.style.display='';commentWrap.style.display='';}
+    else{
+      approveBtn.style.display='';rejectBtn.style.display='';commentWrap.style.display='';
+      /* The server refuses this case anyway; taking the button away as well means
+         nobody spends a click finding that out. */
+      var stop=!!(imp&&imp.blocked);
+      approveBtn.disabled=stop;
+      byId('btnPlanGo').disabled=stop;
+      approveBtn.title=stop?'This semester has published results and cannot be deleted here.':'';
+      approveBtn.style.opacity=stop?'.45':'';
+    }
     showDecisionModal(true);
   });
 }
@@ -521,7 +695,8 @@ function decideSingle(decision){
   if(!id){showAlert('No request selected.','danger');return;}
   var comment=(byId('decisionComment').value||'').trim();
   if(decision==='REJECT'&&!comment){showAlert('A comment is required when rejecting a request.','danger');return;}
-  var btn=decision==='APPROVE'?byId('btnApprove'):byId('btnReject');
+  /* On approve the visible button is the plan's, not the one on step one. */
+  var btn=decision==='APPROVE'?byId('btnPlanGo'):byId('btnReject');
   btn.disabled=true;btn.classList.add('sdr-btn--loading');
   ajax('DecideRequest',{id:id,decision:decision,comment:comment},function(res){
     btn.disabled=false;btn.classList.remove('sdr-btn--loading');
@@ -610,8 +785,15 @@ byId('btnBatchApprove').onclick=function(){openBatch('APPROVE');};
 byId('btnBatchReject').onclick=function(){openBatch('REJECT');};
 byId('btnCloseModal').onclick=function(){showDecisionModal(false);};
 byId('btnCancelDecision').onclick=function(){showDecisionModal(false);};
-byId('btnApprove').onclick=function(){decideSingle('APPROVE');};
+/* Approve no longer fires. It opens the plan, and the plan fires. Rejecting still
+   goes straight through — turning a request down destroys nothing. */
+byId('btnApprove').onclick=function(){
+  byId('decisionStep2').innerHTML=buildPlan(state.currentItem||{},state.currentImpact);
+  planStep(true);
+};
 byId('btnReject').onclick=function(){decideSingle('REJECT');};
+byId('btnPlanBack').onclick=function(){planStep(false);};
+byId('btnPlanGo').onclick=function(){decideSingle('APPROVE');};
 byId('btnCloseBatch').onclick=function(){showBatchModal(false);};
 byId('btnCancelBatch').onclick=function(){showBatchModal(false);};
 byId('btnConfirmBatch').onclick=confirmBatch;

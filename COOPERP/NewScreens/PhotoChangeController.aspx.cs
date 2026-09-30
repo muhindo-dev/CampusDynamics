@@ -98,6 +98,8 @@ public partial class COOPERP_NewScreens_PhotoChangeController : System.Web.UI.Pa
                 else if (action == "restoreversion") Response.Write(HandleRestoreVersion());
                 else if (action == "lookupstudent") Response.Write(HandleLookupStudent());
                 else if (action == "adminupload") Response.Write(HandleAdminUpload());
+                else if (action == "idcardscan") Response.Write(HandleIdCardScan());
+                else if (action == "idcardplace") Response.Write(HandleIdCardPlace());
                 else Response.Write("{\"success\":false,\"message\":\"Unknown action.\"}");
             }
             catch (Exception ex)
@@ -1049,7 +1051,362 @@ public partial class COOPERP_NewScreens_PhotoChangeController : System.Web.UI.Pa
         }
     }
 
-    private string BuildList()
+    // ===================================================================
+    // BULK ID-CARD REQUESTS  --  scan, review, then place
+    //
+    // A student whose photograph has been approved may ask for an ID card from the
+    // portal, and most never do: the request is the last step of a journey they have
+    // already stopped paying attention to. This places those requests for them, from
+    // the desk that just approved the photographs.
+    //
+    // Deliberately three steps, never one button:
+    //
+    //   scan    a read-only query answering "who qualifies" -- and, just as
+    //           importantly, "who does not, and why". The three skip buckets are
+    //           returned beside the answer, because a bare "480 qualify" is
+    //           indistinguishable from a broken filter until you can see the rest of
+    //           the intake accounted for.
+    //   review  every candidate is listed with a tick, and the operator can untick
+    //           anyone. Nothing has been written at this point.
+    //   place   the ticked students only, in chunks, through the SAME
+    //           IDCardService.CreateRequest the student wizard calls. A bulk-placed
+    //           request is therefore an ordinary request: its own request number, its
+    //           own event trail, the same eligibility gate. There is no second code
+    //           path to keep in step with the first.
+    //
+    // The list the browser sends back is NEVER trusted. Every registration number is
+    // re-tested against the same qualification rule at the moment of writing, so a
+    // stale tab, a double click or a hand-edited request cannot create a card request
+    // for an alumnus, for somebody whose photograph is not approved, or for somebody
+    // who already asked.
+    // ===================================================================
+
+    private const int IDCARD_MIN_YEAR_DEFAULT = 2026;
+    private const int IDCARD_PREVIEW_CAP = 1500;   // the list is reviewed by eye; beyond this it is not
+    private const int IDCARD_PLACE_CHUNK = 60;     // one HTTP request's worth, so progress stays honest
+
+    /// <summary>
+    /// The single definition of "qualifies for a card and has not asked". Used by the
+    /// scan to build the list AND again, unchanged, to re-check every write. One
+    /// string, so the preview can never promise something the commit does not apply.
+    /// </summary>
+    private const string IDCARD_QUALIFY_SQL =
+        " COALESCE(s.entryyear,0) >= @y " +
+        " AND UPPER(TRIM(COALESCE(s.photo_status,''))) = 'APPROVED' " +
+        " AND COALESCE(TRIM(s.photofile),'') NOT IN ('','-') " +
+        " AND UPPER(TRIM(COALESCE(s.new_status,''))) <> 'ALUMNI' " +
+        " AND NOT EXISTS (SELECT 1 FROM idcard_requests r WHERE r.regno = s.regno " +
+        "                   AND r.status NOT IN ('REQUESTED','CANCELLED')) ";
+    //
+    // "Has no request at all" was the wrong test. Creating a request leaves it at
+    // REQUESTED -- which every screen now calls "Not submitted" -- and it only reaches
+    // SUBMITTED when the requester submits it. Placing a batch therefore produced a pile
+    // of unsubmitted drafts that nobody was ever going to finish, and they did not appear
+    // under Submitted because they were not submitted.
+    //
+    // So a student still qualifies while their only request is a draft: the placement
+    // submits the one they have instead of creating a second. CANCELLED is likewise not a
+    // request -- it was withdrawn and a fresh one is an ordinary new card, which is exactly
+    // how IDCardService.CheckEligibility treats it.
+    //
+    // r.regno = s.regno, NOT TRIM(r.regno) = TRIM(s.regno). Wrapping the indexed column
+    // in TRIM() makes ix_regno unusable and turns the EXISTS into a scan of every request
+    // per student: measured at 2.28s against 0.050s, 45x. Both columns are utf8_general_ci,
+    // which is PAD SPACE, so = already ignores trailing spaces -- and the two forms were
+    // checked against each other over the whole student table: 274 = 274, zero rows
+    // disagreeing. Same answer, 45x cheaper.
+
+    /// <summary>Who qualifies, who does not and why, plus the list itself.</summary>
+    private string HandleIdCardScan()
+    {
+        int minYear = SafeInt(Request.QueryString["minyear"] ?? Request.Form["minyear"], IDCARD_MIN_YEAR_DEFAULT);
+        if (minYear < 2000 || minYear > 2100) minYear = IDCARD_MIN_YEAR_DEFAULT;
+
+        int qualify = 0, already = 0, noPhoto = 0, alumni = 0, drafts = 0;
+        var rows = new StringBuilder();
+        int listed = 0;
+        string windowLabel = "";
+        bool windowOpen = false;
+
+        using (var conn = new MySqlConnection(ConnectionString))
+        {
+            conn.Open();
+
+            // One pass over the intake, bucketed in the order the rules are applied.
+            using (var cmd = new MySqlCommand(
+                "SELECT CASE " +
+                "  WHEN UPPER(TRIM(COALESCE(s.new_status,''))) = 'ALUMNI' THEN 'alumni' " +
+                "  WHEN UPPER(TRIM(COALESCE(s.photo_status,''))) <> 'APPROVED' " +
+                "    OR COALESCE(TRIM(s.photofile),'') IN ('','-') THEN 'nophoto' " +
+                "  WHEN EXISTS (SELECT 1 FROM idcard_requests r WHERE r.regno = s.regno " +
+"                 AND r.status NOT IN ('REQUESTED','CANCELLED')) THEN 'already' " +
+                "  ELSE 'qualify' END AS g_bucket, COUNT(*) AS n " +
+                "FROM acad_student s WHERE COALESCE(s.entryyear,0) >= @y GROUP BY g_bucket", conn))
+            {
+                cmd.Parameters.AddWithValue("@y", minYear);
+                using (var rd = cmd.ExecuteReader())
+                    while (rd.Read())
+                    {
+                        string b = Convert.ToString(rd[0]);
+                        int n = Convert.ToInt32(rd[1]);
+                        if (b == "qualify") qualify = n;
+                        else if (b == "already") already = n;
+                        else if (b == "nophoto") noPhoto = n;
+                        else if (b == "alumni") alumni = n;
+                    }
+            }
+
+            using (var cmd = new MySqlCommand(
+                "SELECT s.regno, " +
+                "       TRIM(CONCAT(COALESCE(s.firstname,''),' ',COALESCE(s.othername,''))) AS name, " +
+                "       COALESCE(s.progid,'') AS prog, COALESCE(p.progname,'') AS progname, " +
+                "       COALESCE(s.entryyear,0) AS ey, UPPER(TRIM(COALESCE(s.new_status,''))) AS st, " +
+                "       COALESCE(s.photofile,'') AS pf, " +
+                "       COALESCE((SELECT r2.request_no FROM idcard_requests r2 " +
+                "                 WHERE r2.regno = s.regno AND r2.status = 'REQUESTED' " +
+                "                 ORDER BY r2.id DESC LIMIT 1),'') AS draft_no " +
+                "FROM acad_student s LEFT JOIN acad_programme p ON p.progcode = s.progid " +
+                "WHERE " + IDCARD_QUALIFY_SQL +
+                "ORDER BY s.entryyear DESC, s.regno LIMIT " + IDCARD_PREVIEW_CAP, conn))
+            {
+                cmd.Parameters.AddWithValue("@y", minYear);
+                using (var rd = cmd.ExecuteReader())
+                    while (rd.Read())
+                    {
+                        if (listed > 0) rows.Append(",");
+                        rows.Append("{\"regno\":\"").Append(JsEnc(Safe(rd, "regno")))
+                            .Append("\",\"name\":\"").Append(JsEnc(Safe(rd, "name")))
+                            .Append("\",\"prog\":\"").Append(JsEnc(Safe(rd, "prog")))
+                            .Append("\",\"progname\":\"").Append(JsEnc(Safe(rd, "progname")))
+                            .Append("\",\"year\":\"").Append(JsEnc(Safe(rd, "ey")))
+                            .Append("\",\"status\":\"").Append(JsEnc(Safe(rd, "st")))
+                            .Append("\",\"photo\":\"").Append(JsEnc(Safe(rd, "pf")))
+                            .Append("\",\"draft\":\"").Append(JsEnc(Safe(rd, "draft_no")))
+                            .Append("\"}");
+                        if (Safe(rd, "draft_no") != "") drafts++;
+                        listed++;
+                    }
+            }
+        }
+
+        // The request window gates STUDENTS, not this screen -- an operator placing a
+        // request on somebody's behalf is not turned away by it. It is reported anyway,
+        // because "the window shut yesterday" is exactly the sort of thing worth knowing
+        // before creating four hundred requests.
+        try
+        {
+            using (var c = new MySqlConnection(IDCardService.ConnStr))
+            {
+                c.Open();
+                using (var cmd = new MySqlCommand(
+                    "SELECT id, closes_at, (NOW() BETWEEN opens_at AND closes_at) AS open_now " +
+                    "FROM idcard_windows WHERE is_active = 1 " +
+                    "  AND UPPER(COALESCE(requester_scope,'BOTH')) IN ('BOTH','STUDENT') " +
+                    "ORDER BY open_now DESC, id DESC LIMIT 1", c))
+                using (var rd = cmd.ExecuteReader())
+                {
+                    if (rd.Read())
+                    {
+                        windowOpen = Convert.ToInt32(rd[2]) == 1;
+                        DateTime closes = Convert.ToDateTime(rd[1]);
+                        windowLabel = windowOpen
+                            ? "Student requests are open until " + closes.ToString("d MMM yyyy")
+                            : "The student request window closed on " + closes.ToString("d MMM yyyy");
+                    }
+                    else { windowOpen = true; windowLabel = "No request window is set, so nothing is gating requests."; }
+                }
+            }
+        }
+        catch { windowLabel = ""; }
+
+        var sb = new StringBuilder();
+        sb.Append("{\"success\":true,\"minYear\":").Append(minYear)
+          .Append(",\"qualify\":").Append(qualify)
+          .Append(",\"already\":").Append(already)
+          .Append(",\"noPhoto\":").Append(noPhoto)
+          .Append(",\"alumni\":").Append(alumni)
+          .Append(",\"listed\":").Append(listed)
+          .Append(",\"drafts\":").Append(drafts)
+          .Append(",\"capped\":").Append(qualify > listed ? "true" : "false")
+          .Append(",\"windowOpen\":").Append(windowOpen ? "true" : "false")
+          .Append(",\"windowLabel\":\"").Append(JsEnc(windowLabel)).Append("\"")
+          .Append(",\"photoBase\":\"").Append(JsEnc(PHOTO_BASE)).Append("\"")
+          .Append(",\"rows\":[").Append(rows).Append("]}");
+        return sb.ToString();
+    }
+
+    /// <summary>
+    /// Places requests for the ticked students, after re-proving every one of them.
+    /// Chunked by the caller; this handler is deliberately small and re-entrant, so a
+    /// dropped connection halfway through costs at most one chunk and never a
+    /// half-written batch -- each request is its own committed unit anyway.
+    /// </summary>
+    private string HandleIdCardPlace()
+    {
+        int minYear = SafeInt(Request.Form["minyear"], IDCARD_MIN_YEAR_DEFAULT);
+        if (minYear < 2000 || minYear > 2100) minYear = IDCARD_MIN_YEAR_DEFAULT;
+
+        var wanted = new List<string>();
+        foreach (string part in (Request.Form["regnos"] ?? "").Split(','))
+        {
+            string r = part.Trim();
+            if (r != "" && !wanted.Contains(r)) wanted.Add(r);
+        }
+        if (wanted.Count == 0) return "{\"success\":false,\"message\":\"Nothing was selected.\"}";
+        if (wanted.Count > IDCARD_PLACE_CHUNK)
+            return "{\"success\":false,\"message\":\"Too many in one go. Send " + IDCARD_PLACE_CHUNK + " or fewer.\"}";
+
+        // Re-prove every one of them against the same rule the scan used. The browser
+        // is a source of intent, never of authority.
+        var okPhoto = new Dictionary<string, string>();
+        using (var conn = new MySqlConnection(ConnectionString))
+        {
+            conn.Open();
+            var names = new StringBuilder();
+            for (int i = 0; i < wanted.Count; i++) { if (i > 0) names.Append(","); names.Append("@r").Append(i); }
+            using (var cmd = new MySqlCommand(
+                "SELECT s.regno, COALESCE(s.photofile,'') AS pf FROM acad_student s " +
+                "WHERE s.regno IN (" + names + ") AND " + IDCARD_QUALIFY_SQL, conn))
+            {
+                cmd.Parameters.AddWithValue("@y", minYear);
+                for (int i = 0; i < wanted.Count; i++) cmd.Parameters.AddWithValue("@r" + i, wanted[i]);
+                using (var rd = cmd.ExecuteReader())
+                    while (rd.Read()) okPhoto[Safe(rd, "regno")] = Safe(rd, "pf");
+            }
+        }
+
+        int windowId = CurrentIdCardWindowId();
+        string actor = GetCurrentUser();
+        string note = "Placed by the ID office on the student's behalf (bulk).";
+
+        int submitted = 0, blocked = 0, skipped = 0, failed = 0;
+        var detail = new StringBuilder();
+        foreach (string regno in wanted)
+        {
+            string outcome = "", requestNo = "";
+            if (!okPhoto.ContainsKey(regno))
+            {
+                // No longer qualifies: somebody submitted in the meantime, the photograph
+                // was pulled, or the row never qualified at all.
+                skipped++; outcome = "skipped";
+            }
+            else
+            {
+                // A student may already be holding an unsubmitted draft -- their own, or one
+                // from an earlier batch. Submit that one rather than creating a second, which
+                // CheckEligibility would refuse anyway.
+                requestNo = ExistingDraftNo(regno);
+                if (requestNo == "")
+                {
+                    var res = IDCardService.CreateRequest("STUDENT", regno, 0, "NEW",
+                                                          okPhoto[regno], true, true, windowId, actor);
+                    if (res.Ok) { requestNo = res.RequestNo ?? ""; StampRequestNote(requestNo, note); }
+                    else { failed++; outcome = res.Message ?? "could not be created"; }
+                }
+
+                if (outcome == "")
+                {
+                    // The same call the student's own Submit button makes: it runs the photo
+                    // gate, runs the fee check, writes the snapshot, and lands the request on
+                    // SUBMITTED or BLOCKED. Going straight to SUBMITTED is legal for staff and
+                    // would have been one line shorter -- and would have quietly waved four
+                    // hundred students past the fee gate their classmates have to clear.
+                    IDCardService.SubmitJson(requestNo, null, null, null, null, actor);
+
+                    string now = StatusOf(requestNo);
+                    if (now == "SUBMITTED") { submitted++; outcome = "submitted"; }
+                    else if (now == "BLOCKED") { blocked++; outcome = "blocked"; }
+                    else { failed++; outcome = "stopped at " + IDCardService.StatusLabel(now); }
+                }
+            }
+            if (detail.Length > 0) detail.Append(",");
+            detail.Append("{\"regno\":\"").Append(JsEnc(regno))
+                  .Append("\",\"outcome\":\"").Append(JsEnc(outcome))
+                  .Append("\",\"requestNo\":\"").Append(JsEnc(requestNo)).Append("\"}");
+        }
+
+        return "{\"success\":true,\"submitted\":" + submitted + ",\"blocked\":" + blocked +
+               ",\"skipped\":" + skipped + ",\"failed\":" + failed +
+               ",\"detail\":[" + detail + "]}";
+    }
+
+    /// <summary>This student's newest unsubmitted request, or "".</summary>
+    private string ExistingDraftNo(string regno)
+    {
+        using (var c = new MySqlConnection(IDCardService.ConnStr))
+        {
+            c.Open();
+            using (var cmd = new MySqlCommand(
+                "SELECT request_no FROM idcard_requests WHERE regno = @r AND status = 'REQUESTED' " +
+                "ORDER BY id DESC LIMIT 1", c))
+            {
+                cmd.Parameters.AddWithValue("@r", regno);
+                object v = cmd.ExecuteScalar();
+                return (v == null || v == DBNull.Value) ? "" : v.ToString();
+            }
+        }
+    }
+
+    /// <summary>Where a request actually ended up, read back rather than assumed.</summary>
+    private string StatusOf(string requestNo)
+    {
+        if (string.IsNullOrEmpty(requestNo)) return "";
+        using (var c = new MySqlConnection(IDCardService.ConnStr))
+        {
+            c.Open();
+            using (var cmd = new MySqlCommand("SELECT status FROM idcard_requests WHERE request_no = @rn LIMIT 1", c))
+            {
+                cmd.Parameters.AddWithValue("@rn", requestNo);
+                object v = cmd.ExecuteScalar();
+                return (v == null || v == DBNull.Value) ? "" : v.ToString().ToUpperInvariant();
+            }
+        }
+    }    /// <summary>The open student window, or 0. Never throws: the window is informational here.</summary>
+    private int CurrentIdCardWindowId()
+    {
+        try
+        {
+            using (var c = new MySqlConnection(IDCardService.ConnStr))
+            {
+                c.Open();
+                using (var cmd = new MySqlCommand(
+                    "SELECT id FROM idcard_windows WHERE is_active = 1 " +
+                    "  AND NOW() BETWEEN opens_at AND closes_at " +
+                    "  AND UPPER(COALESCE(requester_scope,'BOTH')) IN ('BOTH','STUDENT') " +
+                    "ORDER BY id DESC LIMIT 1", c))
+                {
+                    object v = cmd.ExecuteScalar();
+                    return (v == null || v == DBNull.Value) ? 0 : Convert.ToInt32(v);
+                }
+            }
+        }
+        catch { return 0; }
+    }
+
+    /// <summary>
+    /// Records on the request itself that the office placed it, not the student.
+    /// Written after creation rather than through CreateRequest, because that method is
+    /// shared code duplicated byte-for-byte with the portal and is not ours to fork.
+    /// </summary>
+    private void StampRequestNote(string requestNo, string note)
+    {
+        if (string.IsNullOrEmpty(requestNo)) return;
+        try
+        {
+            using (var c = new MySqlConnection(IDCardService.ConnStr))
+            {
+                c.Open();
+                using (var cmd = new MySqlCommand(
+                    "UPDATE idcard_requests SET notes = @n, updated_at = NOW() WHERE request_no = @rn", c))
+                {
+                    cmd.Parameters.AddWithValue("@n", note);
+                    cmd.Parameters.AddWithValue("@rn", requestNo);
+                    cmd.ExecuteNonQuery();
+                }
+            }
+        }
+        catch { /* the note is a courtesy; never fail a placed request over it */ }
+    }    private string BuildList()
     {
         string status = (Request.QueryString["status"] ?? "PENDING").Trim().ToUpperInvariant();
         if (status != "ALL" && status != "PENDING" && status != "APPROVED" && status != "REJECTED" && status != "DELETED" && status != "BANNED") status = "PENDING";
@@ -1162,6 +1519,11 @@ public partial class COOPERP_NewScreens_PhotoChangeController : System.Web.UI.Pa
                       (q != "" ? "<a class='pc-clear' href='PhotoChangeController.aspx?status=" + HE(status) + "'>clear</a>" : "") +
                       "</div>");
             sb.Append("<button type='button' class='pc-btn pc-btn--up' onclick='pcOpenUp()' title='Put a photograph on a student&rsquo;s record for them'>" + CameraIcon() + "Upload a photo for a student</button>");
+            // Offered on the Approved tab only. That is where the operator has just
+            // finished settling photographs, and an approved photograph is the single
+            // thing standing between a student and a card they never asked for.
+            if (status == "APPROVED")
+                sb.Append("<button type='button' class='pc-btn pc-btn--idc' onclick='pcOpenIdc()' title='Place ID-card requests for students who qualify but never asked'>" + CardIcon() + "Place ID-card requests</button>");
             sb.Append("<button type='button' class='pc-btn pc-btn--nav' onclick='pcOpenInit()'>&#43; Set a student&rsquo;s photograph status</button>");
             sb.Append("</div>");
             sb.Append("</div>");
@@ -1312,6 +1674,15 @@ public partial class COOPERP_NewScreens_PhotoChangeController : System.Web.UI.Pa
 
     // ---- helpers ----
     private static string Safe(MySqlDataReader rd, string col) { return rd[col] == DBNull.Value ? "" : rd[col].ToString().Trim(); }
+    private static string CardIcon()
+    {
+        return "<svg xmlns='http://www.w3.org/2000/svg' width='14' height='14' viewBox='0 0 24 24' fill='none' " +
+               "stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round' style='vertical-align:-2px;margin-right:6px'>" +
+               "<rect x='2' y='4' width='20' height='16' rx='2'></rect><circle cx='8.5' cy='11' r='2.5'></circle>" +
+               "<path d='M4.5 17.5c.9-1.6 2.3-2.5 4-2.5s3.1.9 4 2.5'></path>" +
+               "<line x1='15' y1='9' x2='19' y2='9'></line><line x1='15' y1='13' x2='19' y2='13'></line></svg>";
+    }
+
     private string HE(string s) { return Server.HtmlEncode(s ?? ""); }
     private static int SafeInt(string s, int def) { int v; return int.TryParse((s ?? "").Trim(), out v) ? v : def; }
     private static MySqlParameter Clone(MySqlParameter p) { return new MySqlParameter(p.ParameterName, p.Value); }

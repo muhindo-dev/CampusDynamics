@@ -689,21 +689,33 @@
         if (al > 0) html += '<div class="sl-fx__kpi sl-fx__kpi--warn"><b>' + fxEsc(al) + '</b><span>Metadata Alignment</span></div>';
         if (nm > 0) html += '<div class="sl-fx__kpi sl-fx__kpi--warn"><b>' + fxEsc(nm) + '</b><span>Account Type Fix</span></div>';
 
-        if (ub + dr + cr + al + nm === 0)
+        var hb = Number(s.held_back_count || 0);
+        if (hb > 0){
+            html += '<div class="sl-fx__kpi sl-fx__kpi--warn"><b>' + fxEsc(hb) + '</b><span>Unbilled (Held Back)</span></div>';
+            html += '<div class="sl-fx__kpi sl-fx__kpi--warn"><b>' + fxMoney(s.held_back_amount) + '</b><span>Held-Back Amount</span></div>';
+        }
+
+        if (ub + dr + cr + al + nm + hb === 0)
             html += '<div class="sl-fx__kpi sl-fx__kpi--ok"><b>0</b><span>Issues Found</span></div>';
 
         html += '</div>';
 
+        if (hb > 0){
+            html += '<div class="sl-fx__alert">This student is <strong>' + fxEsc(s.student_status || 'not active') + '</strong>. ' +
+                    'The semesters below were registered but never billed. They are shown but <strong>not billed automatically</strong> — ' +
+                    'tick the confirmation on the next step if this debt is genuinely owed.</div>';
+        }
+
         var rows = s.samples || [];
         if (rows.length > 0){
             html += '<table class="sl-fx__tbl"><thead><tr><th>Category</th><th>Period</th><th>Fee Type</th><th>Amount</th><th>Detail</th></tr></thead><tbody>';
-            var catLabels = { unbilled:'Unbilled', missing_dr:'Missing DR', missing_cr:'Missing CR' };
+            var catLabels = { unbilled:'Unbilled', unbilled_held:'Unbilled (held back)', missing_dr:'Missing DR', missing_cr:'Missing CR' };
             for (var i=0;i<rows.length;i++){
                 var r = rows[i];
                 html += '<tr><td>' + fxEsc(catLabels[r.cat] || r.cat) + '</td><td>' + fxEsc(r.period) + '</td><td>' + fxEsc(r.feeType) + '</td><td>' + fxMoney(r.amount) + '</td><td>' + fxEsc(r.detail) + '</td></tr>';
             }
             html += '</tbody></table>';
-        } else if (ub + dr + cr === 0) {
+        } else if (ub + dr + cr + hb === 0) {
             html += '<div class="sl-fx__ok">No missing billing entries detected.</div>';
         }
         w.innerHTML = html;
@@ -717,10 +729,12 @@
         var cr = Number(s.missing_cr_count || 0);
         var al = Number(s.align_count || 0);
         var nm = Number(s.normalise_count || 0);
-        var total = ub + dr + cr + al + nm;
+        var hb = Number(s.held_back_count || 0);
+        var total = ub + dr + cr + al + nm + hb;
 
         var html = '<div class="sl-fx__summary">';
         html += '<div><strong>Student:</strong> ' + fxEsc(_fx.regno) + '</div>';
+        if (hb > 0) html += '<div><strong>Unbilled, held back (' + fxEsc(s.student_status || 'not active') + '):</strong> ' + fxEsc(hb) + ' items (' + fxMoney(s.held_back_amount) + ')</div>';
         if (ub > 0) html += '<div><strong>Create bills for unbilled semesters:</strong> ' + fxEsc(ub) + ' items (' + fxMoney(s.unbilled_amount) + ')</div>';
         if (dr > 0) html += '<div><strong>Insert missing GL debit mirrors:</strong> ' + fxEsc(dr) + ' rows (' + fxMoney(s.missing_dr_amount) + ')</div>';
         if (cr > 0) html += '<div><strong>Insert missing income credit entries:</strong> ' + fxEsc(cr) + ' rows (' + fxMoney(s.missing_cr_amount) + ')</div>';
@@ -741,7 +755,8 @@
         var cr = Number(s.missing_cr_count || 0);
         var al = Number(s.align_count || 0);
         var nm = Number(s.normalise_count || 0);
-        var canRun = (ub + dr + cr + al + nm) > 0;
+        var hb = Number(s.held_back_count || 0);
+        var canRun = (ub + dr + cr + al + nm + hb) > 0;
         document.getElementById('slFxRun').disabled = !canRun;
 
         var wrap = document.getElementById('slFxConfirmWrap');
@@ -757,7 +772,24 @@
         if (al > 0) ops.push('align metadata on ' + al + ' rows');
         if (nm > 0) ops.push('normalise account type on ' + nm + ' rows');
 
-        wrap.innerHTML = '<div class="sl-fx__summary">Click <strong>Run Fix</strong> to execute the following in one transaction:<ul><li>' + ops.join('</li><li>') + '</li></ul></div>';
+        var html = '';
+        if (ops.length)
+            html += '<div class="sl-fx__summary">Click <strong>Run Fix</strong> to execute the following in one transaction:<ul><li>' + ops.join('</li><li>') + '</li></ul></div>';
+
+        // Billing someone who has already left is a deliberate act, so it needs its own
+        // tick — the rest of the repair runs either way.
+        if (hb > 0){
+            html += '<div class="sl-fx__alert" style="margin-top:8px;">' +
+                    '<label style="display:flex;gap:8px;align-items:flex-start;cursor:pointer;">' +
+                    '<input type="checkbox" id="slFxAllowInactive" style="margin-top:3px;" />' +
+                    '<span>Also bill this <strong>' + fxEsc(s.student_status || 'inactive') + '</strong> student for the ' + fxEsc(hb) +
+                    ' held-back item(s), ' + fxMoney(s.held_back_amount) + '. Only tick this if the student really attended those semesters and the fee is owed.</span>' +
+                    '</label></div>';
+        }
+        if (!ops.length && hb > 0)
+            html += '<div class="sl-fx__note">Nothing else needs repair on this account.</div>';
+
+        wrap.innerHTML = html;
     }
 
     function fxRenderResult(){
@@ -824,7 +856,12 @@
         btn.disabled = true;
         btn.innerHTML = 'Processing...';
 
-        var url = '<%= ResolveUrl("~/COOPERP/NewScreens/StudentLedgers.aspx") %>?ajax=fixbillingapply&regno=' + encodeURIComponent(_fx.regno) + '&_ts=' + new Date().getTime();
+        // Only sent when the operator ticked the box; the server bills an inactive
+        // student on this flag alone, never by default.
+        var allowBox = document.getElementById('slFxAllowInactive');
+        var allow = (allowBox && allowBox.checked) ? '&allowinactive=1' : '';
+
+        var url = '<%= ResolveUrl("~/COOPERP/NewScreens/StudentLedgers.aspx") %>?ajax=fixbillingapply&regno=' + encodeURIComponent(_fx.regno) + allow + '&_ts=' + new Date().getTime();
         fetch(url, { credentials:'same-origin', cache:'no-store' })
             .then(function(r){ return r.json(); })
             .then(function(d){

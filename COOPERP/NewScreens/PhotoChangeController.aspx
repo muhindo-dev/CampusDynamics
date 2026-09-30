@@ -65,6 +65,8 @@
 .pc-toast--err{background:#b3261e;}
 .pc-bar__right{display:flex;gap:8px;align-items:center;flex-wrap:wrap;}
 .pc-btn--nav{background:#05275C;color:#fff;} .pc-btn--nav:hover{background:#0a3a82;}
+/* bulk ID-card requests -- teal, so it reads as neither an approval (green) nor a rejection (red) */
+.pc-btn--idc{background:#0f766e;color:#fff;} .pc-btn--idc:hover{background:#0c5f59;}
 /* admin set-status modal */
 .pc-mov{position:fixed;inset:0;background:rgba(5,39,92,.5);z-index:9998;display:none;align-items:flex-start;justify-content:center;padding:50px 16px;overflow:auto;}
 .pc-modal{background:#fff;max-width:440px;width:100%;box-shadow:0 18px 50px rgba(5,39,92,.3);}
@@ -115,11 +117,78 @@
 .pu-msg--err{background:#fdecec;color:#b3261e;border:1px solid #f4c2c2;}
 .pu-msg--info{background:#eef4ff;color:#174DA4;border:1px solid #cfe0ff;}
 @media(max-width:520px){.pu-cmp{gap:8px;}.pu-cmp__f{width:96px;height:128px;}}
-/* reject-reason chips */
-.pc-chips{display:flex;flex-wrap:wrap;gap:6px;margin:2px 0 12px;}
-.pc-chip{font-size:11.5px;border:1px solid #e0e5ed;background:#fff;color:#3a4250;padding:6px 11px;border-radius:14px;cursor:pointer;transition:all .12s;user-select:none;}
-.pc-chip:hover{border-color:#b3261e;color:#b3261e;}
-.pc-chip--on{background:#b3261e;border-color:#b3261e;color:#fff;}
+/* -- Reject-reason picker --------------------------------------------------
+   Every sentence in REASON_GROUPS is written to be read by the STUDENT, not by
+   us. It is stored verbatim in stud_photo_change.review_comment and shown back
+   on the portal (StudentPhoto, MyApplications, the photo guide, the ID-card
+   page), so a reason has to name the fault AND say what to do next -- a student
+   told only "bad photo" uploads the same kind of photo again and we review it
+   twice. The reasons are whole sentences, so they join with a space; the old
+   fragments joined with "; " read as a jumble the moment two were picked.
+   The modal is wide because the sentences are long: in a 440px column each one
+   wrapped to four lines and the list could no longer be scanned. */
+.pc-modal--rej{max-width:900px;}
+.pc-rejgrid{display:grid;grid-template-columns:1.2fr 1fr;gap:18px;align-items:start;}
+@media(max-width:840px){.pc-rejgrid{grid-template-columns:1fr;}}
+.pc-rejcol{min-width:0;}
+.pc-chips{display:block;margin:2px 0 0;}
+.pc-picker{max-height:342px;overflow:auto;border:1px solid #e0e5ed;background:#fbfcfe;padding:8px 9px;}
+.pc-pgrp{font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.6px;color:#8b93a3;margin:12px 2px 6px;}
+.pc-pgrp:first-child{margin-top:2px;}
+.pc-opt{display:flex;gap:9px;align-items:flex-start;padding:8px 10px;background:#fff;border:1px solid #e6eaf1;margin-bottom:5px;cursor:pointer;font-size:12px;line-height:1.5;color:#3a4250;user-select:none;transition:border-color .12s,background .12s;}
+.pc-opt:hover{border-color:#b3261e;}
+.pc-opt--on{border-color:#b3261e;background:#fdecec;color:#7a1f1a;}
+.pc-opt__tick{flex:0 0 auto;width:16px;height:16px;margin-top:1px;border:1px solid #c3cad6;background:#fff;color:#fff;font-size:11px;line-height:14px;text-align:center;font-weight:700;}
+.pc-opt--on .pc-opt__tick{background:#b3261e;border-color:#b3261e;}
+.pc-pbar{display:flex;align-items:baseline;justify-content:space-between;gap:8px;margin-bottom:6px;}
+.pc-pbar label{display:block;margin:0;font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.4px;color:#5b6472;}
+.pc-pcount{font-size:11px;color:#8b93a3;}
+.pc-plink{font-size:11px;color:#174DA4;background:none;border:0;padding:0 0 0 8px;cursor:pointer;text-decoration:underline;font-family:inherit;}
+.pc-rejta{min-height:152px;}
+/* -- Bulk ID-card requests: scan, review, place ----------------------------
+   The list is the whole point of this dialog, so it gets the height and the
+   dialog gets the width; everything else is a strip above or below it. Nothing
+   here writes on its own -- the footer's first click only arms the confirm. */
+.pc-modal--idc{max-width:920px;}
+.idc-top{display:flex;align-items:flex-end;gap:10px;flex-wrap:wrap;margin-bottom:12px;}
+.idc-top .pc-fld{margin:0;width:130px;}
+.idc-win{flex:1;min-width:200px;text-align:right;font-size:11.5px;color:#8b93a3;}
+.idc-win b{color:#1c7a45;}
+.idc-win.idc-win--shut b{color:#b3261e;}
+.idc-sum{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px;}
+.idc-chip{flex:1 1 150px;border:1px solid #e0e5ed;background:#f8f9fb;padding:9px 11px;}
+.idc-chip b{display:block;font-size:19px;line-height:1.1;color:#05275C;font-variant-numeric:tabular-nums;}
+.idc-chip span{font-size:11px;color:#8b93a3;}
+.idc-chip--go{background:#eef7f1;border-color:#c6e5d3;}
+.idc-chip--go b{color:#1c7a45;}
+.idc-bar{display:flex;align-items:center;gap:10px;flex-wrap:wrap;padding:8px 10px;background:#f5f7fa;border:1px solid #e0e5ed;border-bottom:0;}
+.idc-bar label{display:flex;align-items:center;gap:6px;font-size:12px;color:#3a4250;cursor:pointer;white-space:nowrap;}
+.idc-bar input[type=text]{flex:1;min-width:160px;border:1px solid #e0e5ed;padding:6px 9px;font-size:12px;font-family:inherit;}
+.idc-count{font-size:12px;font-weight:700;color:#05275C;white-space:nowrap;font-variant-numeric:tabular-nums;}
+.idc-list{max-height:330px;overflow:auto;border:1px solid #e0e5ed;background:#fff;}
+.idc-row{display:flex;align-items:center;gap:10px;padding:7px 10px;border-bottom:1px solid #f1f4f8;cursor:pointer;font-size:12px;}
+.idc-row:last-child{border-bottom:0;}
+.idc-row:hover{background:#f8fbff;}
+.idc-row input{width:15px;height:15px;flex:0 0 auto;accent-color:#1c7a45;}
+.idc-pic{width:30px;height:40px;flex:0 0 auto;object-fit:cover;background:#eef1f6;border:1px solid #e0e5ed;}
+.idc-row__m{flex:1;min-width:0;display:flex;flex-direction:column;gap:1px;}
+.idc-row__m b{color:#05275C;font-size:12.5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.idc-row__m span{color:#8b93a3;font-size:11px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.idc-row__y{flex:0 0 auto;text-align:right;font-size:11px;color:#5b6472;font-variant-numeric:tabular-nums;}
+.idc-row__y i{display:block;font-style:normal;font-size:10px;color:#aab0bc;text-transform:uppercase;letter-spacing:.4px;}
+.idc-note{font-size:11px;color:#8b93a3;margin-top:6px;line-height:1.45;}
+.idc-confirm{margin-top:12px;padding:11px 13px;background:#fff8e6;border:1px solid #f0dca8;border-left:3px solid #d79a00;font-size:12.5px;color:#5c4708;line-height:1.55;}
+.idc-confirm b{color:#3d2f05;}
+.idc-prog{margin-top:14px;}
+.idc-prog__bar{height:7px;background:#e9edf3;overflow:hidden;}
+.idc-prog__bar i{display:block;height:100%;width:0;background:#1c7a45;transition:width .25s;}
+.idc-prog__txt{margin-top:6px;font-size:12px;color:#5b6472;font-variant-numeric:tabular-nums;}
+.idc-done{margin-top:12px;font-size:12.5px;line-height:1.6;color:#3a4250;}
+.idc-done h4{margin:0 0 6px;font-size:13px;color:#05275C;}
+.idc-fail{margin-top:8px;max-height:130px;overflow:auto;border:1px solid #f4c2c2;background:#fdecec;padding:8px 10px;font-size:11.5px;color:#7a1f1a;}
+.idc-empty{padding:22px 14px;text-align:center;font-size:12.5px;color:#8b93a3;background:#f8f9fb;border:1px solid #e0e5ed;}
+.pc-modal__f .idc-foot{flex:1;text-align:left;font-size:11.5px;color:#8b93a3;}
+@media(max-width:700px){.idc-top .pc-fld{width:100%;}.idc-win{text-align:left;}}
 .pc-reject-who{font-size:12px;color:#5b6472;background:#f5f7fa;border:1px solid #e0e5ed;padding:8px 11px;margin-bottom:12px;}
 .pc-reject-who b{color:#05275C;}
 </style>
@@ -135,7 +204,7 @@
 </div>
 <!-- Admin: initiate a record / set a student's photo status (any -> any) -->
 <div class="pc-mov" id="pcInitOv" onclick="if(event.target===this)pcCloseInit()">
-    <div class="pc-modal">
+    <div class="pc-modal pc-modal--up">
         <div class="pc-modal__h"><b>Set a student's official-photograph status</b><button type="button" class="pc-modal__x" onclick="pcCloseInit()">&times;</button></div>
         <div class="pc-modal__b">
             <div class="pc-fld">
@@ -233,25 +302,78 @@
 
 <!-- Reject reason modal (per-row & batch) with clickable common reasons -->
 <div class="pc-mov" id="pcRejOv" onclick="if(event.target===this)pcRejClose()">
-    <div class="pc-modal">
+    <div class="pc-modal pc-modal--rej">
         <div class="pc-modal__h"><b>Reject official photograph</b><button type="button" class="pc-modal__x" onclick="pcRejClose()">&times;</button></div>
         <div class="pc-modal__b">
             <div class="pc-reject-who" id="pcRejWho"></div>
-            <div class="pc-fld">
-                <label>Common reasons <span style="font-weight:400;text-transform:none;color:#8b93a3;">(tap to add)</span></label>
-                <div class="pc-chips" id="pcChips"></div>
+            <div class="pc-rejgrid">
+                <div class="pc-rejcol">
+                    <div class="pc-pbar">
+                        <label>What was wrong? <span style="font-weight:400;text-transform:none;color:#8b93a3;">(tap to add)</span></label>
+                        <span><span class="pc-pcount" id="pcPickCount">none picked</span><button type="button" class="pc-plink" onclick="pcClearPicks()">Clear</button></span>
+                    </div>
+                    <div class="pc-chips" id="pcChips"></div>
+                </div>
+                <div class="pc-rejcol">
+                    <div class="pc-fld">
+                        <label>Message the student will read</label>
+                        <textarea id="pcRejReason" class="pc-rejta" placeholder="Tap the reasons on the left, or write your own. Say what is wrong and what the student should do next."></textarea>
+                        <div class="pc-hint">This is shown to the student word for word, and their photograph is removed &mdash; they must upload a new one before they can use their dashboard.</div>
+                    </div>
+                    <label class="pc-banchk"><input type="checkbox" id="pcRejBan"/> <span>Also <b>ban</b> this student from uploading (they must visit the admin office to be unbanned)</span></label>
+                    <div class="pc-hint" style="margin-top:2px;">Students are banned automatically after 3 rejections &mdash; tick this to ban immediately.</div>
+                </div>
             </div>
-            <div class="pc-fld">
-                <label>Reason shown to the student</label>
-                <textarea id="pcRejReason" placeholder="Pick from above or type your own reason..."></textarea>
-                <div class="pc-hint">This message is shown to the student, and their photograph is removed &mdash; they must upload a new one before they can use their dashboard.</div>
-            </div>
-            <label class="pc-banchk"><input type="checkbox" id="pcRejBan"/> <span>Also <b>ban</b> this student from uploading (they must visit the admin office to be unbanned)</span></label>
-            <div class="pc-hint" style="margin-top:2px;">Students are banned automatically after 3 rejections &mdash; tick this to ban immediately.</div>
         </div>
         <div class="pc-modal__f">
             <button type="button" class="pc-btn" onclick="pcRejClose()">Cancel</button>
             <button type="button" class="pc-btn pc-btn--danger" id="pcRejGo" onclick="pcRejConfirm()">Reject photograph</button>
+        </div>
+    </div>
+</div>
+<%-- Bulk ID-card requests. Opened from the Approved tab; scans on open so the
+     operator sees the answer before touching anything, and writes nothing until
+     the footer has been clicked twice. --%>
+<div class="pc-mov" id="pcIdcOv" onclick="if(event.target===this)pcCloseIdc()">
+    <div class="pc-modal pc-modal--idc">
+        <div class="pc-modal__h"><b>Place ID-card requests</b><button type="button" class="pc-modal__x" onclick="pcCloseIdc()">&times;</button></div>
+        <div class="pc-modal__b">
+
+            <div class="idc-top">
+                <div class="pc-fld">
+                    <label>Entry year from</label>
+                    <input type="number" id="idcYear" value="2026" min="2000" max="2100" />
+                </div>
+                <button type="button" class="pc-btn pc-btn--nav" id="idcScan" onclick="pcIdcScan()">Find students</button>
+                <div class="idc-win" id="idcWin"></div>
+            </div>
+
+            <div class="idc-sum" id="idcSum" style="display:none;"></div>
+
+            <div id="idcListWrap" style="display:none;">
+                <div class="idc-bar">
+                    <label><input type="checkbox" id="idcAll" checked onclick="pcIdcAll(this)" /> Select all shown</label>
+                    <input type="text" id="idcFilter" placeholder="Filter by name, number or programme..." oninput="pcIdcFilter()" autocomplete="off" />
+                    <span class="idc-count" id="idcCount">0 selected</span>
+                </div>
+                <div class="idc-list" id="idcList"></div>
+                <div class="idc-note" id="idcNote"></div>
+            </div>
+
+            <div class="idc-empty" id="idcEmpty" style="display:none;"></div>
+            <div class="idc-confirm" id="idcConfirm" style="display:none;"></div>
+
+            <div class="idc-prog" id="idcProg" style="display:none;">
+                <div class="idc-prog__bar"><i id="idcProgFill"></i></div>
+                <div class="idc-prog__txt" id="idcProgTxt"></div>
+            </div>
+
+            <div class="idc-done" id="idcDone" style="display:none;"></div>
+        </div>
+        <div class="pc-modal__f">
+            <span class="idc-foot" id="idcFoot"></span>
+            <button type="button" class="pc-btn" id="idcCancel" onclick="pcCloseIdc()">Close</button>
+            <button type="button" class="pc-btn pc-btn--ok" id="idcGo" onclick="pcIdcGo()" disabled>Review &amp; create</button>
         </div>
     </div>
 </div>
@@ -593,31 +715,107 @@
             method: "POST", headers: { "Content-Type": "application/x-www-form-urlencoded", "X-Requested-With": "XMLHttpRequest" }, body: data
         }).then(function (r) { return r.json(); });
     }
-    // ---- reject-reason modal (per-row & batch) with clickable common reasons ----
-    var REASONS = [
-        "Photo is blurry or out of focus",
-        "Not taken straight-on (face at an angle)",
-        "Face is not clearly visible",
-        "Background is not plain (busy or dark)",
-        "Wearing a hat, cap or sunglasses",
-        "This is a selfie, not a passport-style photo",
-        "Does not appear to be the actual student",
-        "Image quality too low / too small",
-        "Other people or objects in the frame",
-        "Photo is not appropriate for official records"
+    // ---- reject-reason modal (per-row & batch) ----
+    //
+    // See the note above .pc-modal--rej in the stylesheet: these sentences are the
+    // words the STUDENT reads, so each one names the fault and then says what to do
+    // about it. Keep them plain, keep them ASCII (the text makes a round trip
+    // through MySQL and four portal pages), and keep them ending in a full stop --
+    // several can be picked at once and they are joined with a space.
+    var REASON_GROUPS = [
+        ["Not clear enough", [
+            "The photo you sent is not clear. Please take a new one that is sharp and well lit, or visit a photo studio and ask them for a digital passport photo.",
+            "The photo is blurry. Hold the phone steady, and check that your face is sharp before you send it.",
+            "The photo is too dark. Take a new one in daylight or in a well-lit room, with the light in front of you and not behind you.",
+            "The photo is too small and grainy to print. Send the original picture from your phone gallery, not a screenshot and not a copy saved from WhatsApp."
+        ]],
+        ["Taken the wrong way", [
+            "Do not print your photo and then take a picture of the printout. Take the photo directly with a phone or camera and upload that file.",
+            "Do not take a picture of a photo on a computer or phone screen. Upload the original image file instead.",
+            "This is a selfie, not a passport photo. Ask someone else to take it, holding the camera about an arm's length away and level with your face.",
+            "The photo has a filter or a beauty effect on it. Please send the plain, unedited photo."
+        ]],
+        ["Framing and pose", [
+            "Your head is at an angle. Look straight into the camera with your head level and your shoulders square.",
+            "Your face is too small in the picture. The photo should show your head and the top of your shoulders, filling most of the frame.",
+            "Part of your head is cut off. Leave a small space above your head and on both sides.",
+            "Your ears are not visible. Face the camera straight on and keep your hair clear of your ears.",
+            "Your eyes are not clearly visible. Keep both eyes open and looking straight at the camera.",
+            "Please keep a neutral expression with your mouth closed. A broad smile is not accepted on an official photo."
+        ]],
+        ["Background and dress", [
+            "The background is not plain. Stand in front of a plain white or light-coloured wall with nothing behind you.",
+            "Someone else appears in the photo. You must be the only person in the picture.",
+            "Your head is covered. Please remove the hat, cap or hood. A covering worn for religious reasons is allowed, but your whole face must be visible.",
+            "Please remove your sunglasses or tinted glasses. If you wear clear glasses, make sure there is no glare on the lenses.",
+            "Please dress smartly. This photo goes on your student identity card and stays on your University record."
+        ]],
+        ["Wrong photo or wrong person", [
+            "The person in the photo is not the student on this record. Please upload a recent photo of yourself.",
+            "This photo is not recent. Please upload one taken within the last six months.",
+            "This photo is not suitable for an official University record. Please upload a plain, passport-style photo of yourself."
+        ]]
     ];
     var _rejTarget = null; // {mode:'single', id} | {mode:'batch', ids:[]}
 
     window.pcRejClose = function () { document.getElementById("pcRejOv").style.display = "none"; };
 
+    // Builds the grouped picker into `containerId`, wired to the textarea `taId`.
+    // Used by BOTH the reject modal and the narrower admin-override modal.
     window.pcBuildChips = function (containerId, taId) {
-        var wrap = document.getElementById(containerId); if (!wrap) return; wrap.innerHTML = "";
-        REASONS.forEach(function (r) {
-            var b = document.createElement("span");
-            b.className = "pc-chip"; b.textContent = r;
-            b.onclick = function () { toggleChip(b, r, taId); };
-            wrap.appendChild(b);
+        var wrap = document.getElementById(containerId); if (!wrap) return;
+        var ta = document.getElementById(taId); if (!ta) return;
+        ta._picked = [];
+        wrap.innerHTML = "";
+        var box = document.createElement("div"); box.className = "pc-picker";
+        REASON_GROUPS.forEach(function (grp) {
+            var h = document.createElement("div"); h.className = "pc-pgrp"; h.textContent = grp[0];
+            box.appendChild(h);
+            grp[1].forEach(function (text) {
+                var row = document.createElement("div"); row.className = "pc-opt";
+                var tick = document.createElement("span"); tick.className = "pc-opt__tick"; tick.innerHTML = "&#10003;";
+                var lbl = document.createElement("span"); lbl.textContent = text;
+                row.appendChild(tick); row.appendChild(lbl);
+                row.onclick = function () { toggleReason(row, text, ta); };
+                box.appendChild(row);
+            });
         });
+        wrap.appendChild(box);
+        var tip = document.createElement("div"); tip.className = "pc-hint";
+        tip.textContent = "If none of these fit, write your own \u2014 always say what is wrong AND what the student should do next.";
+        wrap.appendChild(tip);
+        pcPickCount(ta);
+    };
+
+    // Ticking a reason must never eat what the reviewer typed. The picked sentences
+    // are remembered on the textarea itself, so whatever is left after removing them
+    // is the reviewer's own wording, and it is carried to the end of the message.
+    function toggleReason(row, text, ta) {
+        var picked = ta._picked || (ta._picked = []);
+        var free = ta.value;
+        picked.forEach(function (p) { free = free.split(p).join(" "); }); // split(string) is literal, not a regex
+        free = free.replace(/\s+/g, " ").trim();
+
+        var at = picked.indexOf(text);
+        if (at >= 0) { picked.splice(at, 1); row.classList.remove("pc-opt--on"); }
+        else { picked.push(text); row.classList.add("pc-opt--on"); }
+
+        var parts = picked.slice(); if (free) parts.push(free);
+        ta.value = parts.join(" ");
+        pcPickCount(ta);
+    }
+    function pcPickCount(ta) {
+        var el = document.getElementById("pcPickCount");
+        if (!el || !ta || ta.id !== "pcRejReason") return; // the counter belongs to the reject modal only
+        var n = (ta._picked || []).length;
+        el.textContent = n === 0 ? "none picked" : (n === 1 ? "1 picked" : n + " picked");
+    }
+    window.pcClearPicks = function () {
+        var ta = document.getElementById("pcRejReason"); if (!ta) return;
+        ta.value = ""; ta._picked = [];
+        var on = document.querySelectorAll("#pcChips .pc-opt--on");
+        for (var i = 0; i < on.length; i++) on[i].classList.remove("pc-opt--on");
+        pcPickCount(ta);
     };
     function openReject(target, whoHtml) {
         _rejTarget = target;
@@ -626,14 +824,6 @@
         var bc = document.getElementById("pcRejBan"); if (bc) bc.checked = false;
         window.pcBuildChips("pcChips", "pcRejReason");
         document.getElementById("pcRejOv").style.display = "flex";
-    }
-    function toggleChip(el, text, taId) {
-        var ta = document.getElementById(taId);
-        var parts = ta.value.split(/;\s*/).map(function (s) { return s.trim(); }).filter(Boolean);
-        var i = parts.indexOf(text);
-        if (i >= 0) { parts.splice(i, 1); el.classList.remove("pc-chip--on"); }
-        else { parts.push(text); el.classList.add("pc-chip--on"); }
-        ta.value = parts.join("; ");
     }
     window.pcRejConfirm = function () {
         var reason = document.getElementById("pcRejReason").value.trim();
@@ -670,6 +860,246 @@
             .then(function (d) { pcToast(d.message || "Done", !d.success); if (d.success) setTimeout(reloadKeep, 800); })
             .catch(function () { pcToast("Request failed.", true); });
     };
+    // ================================================================
+    // Bulk ID-card requests -- scan, review, place
+    //
+    // Three states, in order, and the dialog never skips one:
+    //   scanned  -> a list with every candidate ticked; nothing written
+    //   armed    -> the confirm panel is showing and the footer button has
+    //               changed its mind about what it does; still nothing written
+    //   running  -> chunks of 60 go to the server, which re-proves each student
+    //               before writing. The bar is real progress, not a spinner.
+    // Arming expires on its own, so a dialog left open on a busy desk cannot be
+    // committed later by somebody walking past and clicking the green button.
+    // ================================================================
+    var IDC = { rows: [], armed: false, armTimer: null, running: false, base: "" };
+
+    window.pcOpenIdc = function () {
+        document.getElementById("pcIdcOv").style.display = "flex";
+        pcIdcReset();
+        pcIdcScan();                       // answer the question before being asked twice
+    };
+    window.pcCloseIdc = function () {
+        if (IDC.running && !confirm("Requests are still being created. Close anyway?")) return;
+        document.getElementById("pcIdcOv").style.display = "none";
+    };
+
+    function idcEl(id) { return document.getElementById(id); }
+    function pcIdcReset() {
+        IDC.rows = []; IDC.armed = false; IDC.running = false;
+        clearTimeout(IDC.armTimer);
+        idcEl("idcSum").style.display = "none";
+        idcEl("idcListWrap").style.display = "none";
+        idcEl("idcEmpty").style.display = "none";
+        idcEl("idcConfirm").style.display = "none";
+        idcEl("idcProg").style.display = "none";
+        idcEl("idcDone").style.display = "none";
+        idcEl("idcFilter").value = "";
+        idcEl("idcAll").checked = true;
+        idcEl("idcFoot").textContent = "";
+        var go = idcEl("idcGo"); go.disabled = true; go.textContent = "Review & create";
+        go.className = "pc-btn pc-btn--ok";
+    }
+
+    window.pcIdcScan = function () {
+        var year = parseInt(idcEl("idcYear").value, 10);
+        if (!(year >= 2000 && year <= 2100)) { pcToast("Enter a four-digit entry year.", true); return; }
+        pcIdcReset();
+        var b = idcEl("idcScan"); b.disabled = true; b.textContent = "Looking...";
+        post("action=idcardscan&minyear=" + year).then(function (d) {
+            b.disabled = false; b.textContent = "Find students";
+            if (!d || !d.success) { pcToast((d && d.message) || "Could not read the list.", true); return; }
+            IDC.rows = d.rows || []; IDC.base = d.photoBase || "";
+            pcIdcRenderSummary(d);
+            pcIdcRenderList(d);
+        }).catch(function () {
+            b.disabled = false; b.textContent = "Find students";
+            pcToast("Request failed.", true);
+        });
+    };
+
+    function pcIdcRenderSummary(d) {
+        var w = idcEl("idcWin");
+        w.className = "idc-win" + (d.windowOpen ? "" : " idc-win--shut");
+        w.innerHTML = d.windowLabel ? ("<b>&bull;</b> " + puEsc(d.windowLabel)) : "";
+
+        idcEl("idcSum").style.display = "flex";
+        idcEl("idcSum").innerHTML =
+            chip(d.qualify, "have no submitted request", true) +
+            chip(d.already, "already submitted or further on") +
+            chip(d.noPhoto, "photo not approved yet") +
+            chip(d.alumni, "alumni, left out");
+    }
+    function chip(n, label, go) {
+        return "<div class='idc-chip" + (go ? " idc-chip--go" : "") + "'><b>" + n + "</b><span>" + label + "</span></div>";
+    }
+
+    function pcIdcRenderList(d) {
+        if (!IDC.rows.length) {
+            idcEl("idcEmpty").style.display = "block";
+            idcEl("idcEmpty").textContent = "Nobody from " + d.minYear +
+                " onwards is waiting. Every student with an approved photograph has already asked for a card.";
+            return;
+        }
+        var h = [];
+        for (var i = 0; i < IDC.rows.length; i++) {
+            var r = IDC.rows[i];
+            var search = ((r.name || "") + " " + (r.regno || "") + " " + (r.progname || "") + " " + (r.prog || "")).toLowerCase();
+            h.push(
+                "<label class='idc-row' data-s=\"" + puEsc(search) + "\">" +
+                  "<input type='checkbox' class='idc-ck' checked data-r=\"" + puEsc(r.regno) + "\" onchange='pcIdcCount()' />" +
+                  (r.photo ? "<img class='idc-pic' loading='lazy' src='" + IDC.base + encodeURIComponent(r.photo) + "' alt='' onerror=\"this.style.visibility='hidden'\" />"
+                           : "<span class='idc-pic'></span>") +
+                  "<span class='idc-row__m'><b>" + puEsc(r.name || "(no name on file)") + "</b>" +
+                     "<span>" + puEsc(r.regno) + (r.progname ? " &middot; " + puEsc(r.progname) : "") + "</span></span>" +
+                  "<span class='idc-row__y'>" + puEsc(r.year) + "<i>" + (r.draft ? "not submitted" : puEsc(r.status)) + "</i></span>" +
+                "</label>");
+        }
+        idcEl("idcList").innerHTML = h.join("");
+        idcEl("idcListWrap").style.display = "block";
+        var note = d.capped
+            ? ("Showing the first " + d.listed + " of " + d.qualify + ". Do these, then run the scan again for the rest. ")
+            : "Untick anyone who should not get a card. Nothing is written until you confirm. ";
+        if (d.drafts) note += "<b>" + d.drafts + "</b> of these already hold an unsubmitted request &mdash; " +
+                              "those are submitted rather than duplicated.";
+        idcEl("idcNote").innerHTML = note;
+        pcIdcCount();
+    }
+
+    window.pcIdcAll = function (box) {
+        var rows = idcEl("idcList").querySelectorAll(".idc-row");
+        for (var i = 0; i < rows.length; i++) {
+            if (rows[i].style.display === "none") continue;     // "shown" means shown
+            rows[i].querySelector(".idc-ck").checked = box.checked;
+        }
+        pcIdcCount();
+    };
+
+    window.pcIdcFilter = function () {
+        var q = idcEl("idcFilter").value.trim().toLowerCase();
+        var rows = idcEl("idcList").querySelectorAll(".idc-row");
+        for (var i = 0; i < rows.length; i++)
+            rows[i].style.display = (!q || rows[i].getAttribute("data-s").indexOf(q) >= 0) ? "" : "none";
+        pcIdcCount();
+    };
+
+    function pcIdcPicked() {
+        var out = [], cks = idcEl("idcList").querySelectorAll(".idc-ck");
+        for (var i = 0; i < cks.length; i++) if (cks[i].checked) out.push(cks[i].getAttribute("data-r"));
+        return out;
+    }
+    window.pcIdcCount = function () {
+        var n = pcIdcPicked().length;
+        idcEl("idcCount").textContent = n + " selected";
+        var go = idcEl("idcGo");
+        go.disabled = (n === 0) || IDC.running;
+        if (!IDC.armed) go.textContent = n ? ("Review & create " + n) : "Review & create";
+        if (IDC.armed) pcIdcDisarm();      // changing the selection invalidates the confirmation
+    };
+
+    function pcIdcDisarm() {
+        IDC.armed = false; clearTimeout(IDC.armTimer);
+        idcEl("idcConfirm").style.display = "none";
+        var go = idcEl("idcGo"); go.className = "pc-btn pc-btn--ok";
+        go.textContent = "Review & create " + pcIdcPicked().length;
+        idcEl("idcFoot").textContent = "";
+    }
+
+    // First click arms and explains; second click writes.
+    window.pcIdcGo = function () {
+        var picked = pcIdcPicked();
+        if (!picked.length) return;
+
+        if (!IDC.armed) {
+            IDC.armed = true;
+            idcEl("idcConfirm").style.display = "block";
+            idcEl("idcConfirm").innerHTML =
+                "<b>" + picked.length + " request" + (picked.length === 1 ? "" : "s") + " will be created and submitted.</b> " +
+                "Each one goes through exactly what the student's own Submit button does, including the fee check, " +
+                "so a student below the fee threshold comes back <b>Blocked by fees</b> rather than Submitted &mdash; " +
+                "the same answer they would have got themselves. Students already holding an unsubmitted request have " +
+                "that one submitted instead of a second being made, and anyone who submitted while this list was on " +
+                "screen is skipped.";
+            var go = idcEl("idcGo");
+            go.className = "pc-btn pc-btn--danger";
+            go.textContent = "Yes \u2014 create " + picked.length;
+            idcEl("idcFoot").textContent = "Click again to confirm. This expires in 20 seconds.";
+            IDC.armTimer = setTimeout(pcIdcDisarm, 20000);
+            return;
+        }
+
+        clearTimeout(IDC.armTimer);
+        pcIdcRun(picked);
+    };
+
+    // Chunked so the browser sees genuine progress and no single request has to
+    // carry four hundred inserts. Each chunk is independent: a failure stops the
+    // run with everything before it already safely committed.
+    function pcIdcRun(picked) {
+        IDC.running = true; IDC.armed = false;
+        var year = parseInt(idcEl("idcYear").value, 10) || 2026;
+        var CHUNK = 60, done = 0, submitted = 0, blocked = 0, skipped = 0, failed = 0, fails = [];
+
+        idcEl("idcConfirm").style.display = "none";
+        idcEl("idcProg").style.display = "block";
+        idcEl("idcGo").disabled = true;
+        idcEl("idcGo").textContent = "Creating...";
+        idcEl("idcGo").className = "pc-btn pc-btn--ok";
+        idcEl("idcFoot").textContent = "Leave this window open until it finishes.";
+        idcEl("idcScan").disabled = true;
+
+        function tick() {
+            var pct = Math.round(done * 100 / picked.length);
+            idcEl("idcProgFill").style.width = pct + "%";
+            idcEl("idcProgTxt").textContent = done + " of " + picked.length + " done \u2014 " +
+                submitted + " submitted" + (blocked ? ", " + blocked + " blocked by fees" : "") +
+                (skipped ? ", " + skipped + " skipped" : "") + (failed ? ", " + failed + " failed" : "");
+        }
+        tick();
+
+        function next() {
+            if (done >= picked.length) { finish(); return; }
+            var slice = picked.slice(done, done + CHUNK);
+            post("action=idcardplace&minyear=" + year + "&regnos=" + encodeURIComponent(slice.join(",")))
+                .then(function (d) {
+                    if (!d || !d.success) { fails.push((d && d.message) || "Server refused a batch."); failed += slice.length; }
+                    else {
+                        submitted += d.submitted; blocked += d.blocked; skipped += d.skipped; failed += d.failed;
+                        for (var i = 0; i < (d.detail || []).length; i++) {
+                            var x = d.detail[i];
+                            if (x.outcome !== "submitted" && x.outcome !== "blocked" && x.outcome !== "skipped")
+                                fails.push(x.regno + ": " + x.outcome);
+                        }
+                    }
+                    done += slice.length; tick(); next();
+                })
+                .catch(function () {
+                    fails.push("The connection dropped after " + done + " students. Nothing after that point was created \u2014 run the scan again to finish.");
+                    failed += (picked.length - done); done = picked.length; tick(); finish();
+                });
+        }
+
+        function finish() {
+            IDC.running = false;
+            idcEl("idcScan").disabled = false;
+            idcEl("idcFoot").textContent = "";
+            var go = idcEl("idcGo"); go.disabled = true; go.textContent = "Done";
+            var h = "<h4>" + submitted + " request" + (submitted === 1 ? "" : "s") + " submitted</h4>";
+            if (blocked) h += "<b>" + blocked + " came back Blocked by fees.</b> They are below the fee threshold, " +
+                              "so the request is waiting on payment &mdash; the student sees why and can resubmit. " +
+                              "That is the same answer their own Submit button would have given.<br/>";
+            if (skipped) h += skipped + " were skipped because they had already submitted by the time we wrote &mdash; that is the safeguard working, not an error.<br/>";
+            if (failed) h += "<b>" + failed + " did not go through.</b>";
+            h += "<div class='idc-note'>Run the scan again to see the list refresh.</div>";
+            if (fails.length) h += "<div class='idc-fail'>" + fails.map(puEsc).join("<br/>") + "</div>";
+            idcEl("idcDone").style.display = "block";
+            idcEl("idcDone").innerHTML = h;
+            pcToast(submitted + " ID-card request" + (submitted === 1 ? "" : "s") + " submitted.", submitted === 0);
+        }
+
+        next();
+    }
+
     // ---- revert the student to an earlier photograph ----
     window.pcRestore = function (id) {
         var why = prompt("Make this earlier photograph the student's official one again.\n\nOptional note for the record:", "");

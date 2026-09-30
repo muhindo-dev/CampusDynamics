@@ -311,7 +311,37 @@ public partial class COOPERP_NewScreens_SemesterDeletionRequestsController : Pag
                             deletion_executed = ToInt(rdr["deletion_executed"]) == 1
                         };
 
-                        return Json.Serialize(new { success = true, request = row });
+                        // Read what approving would actually destroy, and hand it back with the
+                        // request. An approver deciding without this is deciding blind: the
+                        // screen used to show the student's reason and nothing about the courses,
+                        // the marks or the money that the click would take with it.
+                        string rq = rdr["regno"].ToString();
+                        string ay = rdr["acad_year"].ToString();
+                        int sy = ToInt(rdr["study_year"]);
+                        int sm = ToInt(rdr["semester"]);
+                        rdr.Close();
+
+                        var imp = ReadImpact(conn, null, rq, ay, sy, sm);
+
+                        return Json.Serialize(new
+                        {
+                            success = true,
+                            request = row,
+                            impact = new
+                            {
+                                courses        = imp.Courses,
+                                marked_courses = imp.MarkedCourses,
+                                results        = imp.Results,
+                                bills          = imp.Bills,
+                                bill_amount    = imp.BillAmount,
+                                ledger_rows    = imp.LedgerRows,
+                                siblings       = imp.Siblings,
+                                shares_period  = imp.SharesPeriod,
+                                blocked        = imp.Blocked,
+                                balance_before = imp.BalanceBefore,
+                                balance_after  = imp.BalanceAfter
+                            }
+                        });
                     }
                 }
             }
@@ -365,32 +395,153 @@ public partial class COOPERP_NewScreens_SemesterDeletionRequestsController : Pag
 
             int deletedRegs = 0;
             int deletedCourses = 0;
+            int deletedBills = 0;
+            int deletedLedger = 0;
+            decimal reversedAmount = 0m;
+            bool keptSharedRows = false;
 
             if (d == "APPROVE")
             {
                 using (var conn = new MySqlConnection(ConnStr))
                 {
                     conn.Open();
-                    using (var cmd = new MySqlCommand(@"
-                        DELETE FROM campus_dynamics.acad_registration
-                        WHERE TRIM(regno)=@r AND acad_year=@a AND studyyear=@y AND semester=@s
-                        LIMIT 1", conn))
+
+                    var imp = ReadImpact(conn, null, regno, acadYear, studyYear, semester);
+
+                    // Published results are an academic record. Whatever the student asked for
+                    // and whoever is approving, a semester that has produced results is not
+                    // something this screen takes away — the marks would have to be withdrawn
+                    // through the marks pipeline first, by the people who own them.
+                    if (imp.Blocked)
                     {
-                        cmd.Parameters.AddWithValue("@r", regno.Trim());
-                        cmd.Parameters.AddWithValue("@a", acadYear);
-                        cmd.Parameters.AddWithValue("@y", studyYear);
-                        cmd.Parameters.AddWithValue("@s", semester);
-                        deletedRegs = cmd.ExecuteNonQuery();
+                        return Json.Serialize(new
+                        {
+                            success = false,
+                            message = "This semester has " + imp.Results + " published result(s). " +
+                                      "Withdraw the results first — a semester carrying results cannot be deleted here."
+                        });
                     }
 
-                    using (var cmd = new MySqlCommand(@"
-                        DELETE FROM campus_dynamics_portal.acad_course_registration
-                        WHERE TRIM(regno)=@r AND acad_year=@a AND semester=@s", conn))
+                    // Everything in one transaction. Deleting the registration but failing on the
+                    // fees would leave the student billed for a semester that no longer exists,
+                    // which is the exact fault this is fixing; a half-done reversal is worse than
+                    // none. All the tables involved are InnoDB, so this really does roll back.
+                    //
+                    // One asterisk: fin_deleted_ledger, which the fin_ledger delete trigger writes
+                    // to, is MyISAM. A rollback leaves an archive row claiming a deletion that did
+                    // not happen. It is an append-only audit table that no balance is computed
+                    // from, so the residue is noise rather than damage — but it is worth knowing
+                    // it can happen before anyone reads that table as gospel.
+                    using (var tx = conn.BeginTransaction())
                     {
-                        cmd.Parameters.AddWithValue("@r", regno.Trim());
-                        cmd.Parameters.AddWithValue("@a", acadYear);
-                        cmd.Parameters.AddWithValue("@s", semester);
-                        deletedCourses = cmd.ExecuteNonQuery();
+                        // ── the registration row: archived, then removed ──────────────────
+                        using (var cmd = new MySqlCommand(@"
+                            INSERT INTO campus_dynamics.acad_registration_regdel_bak
+                            SELECT * FROM campus_dynamics.acad_registration
+                             WHERE regno=@r AND acad_year=@a AND studyyear=@y AND semester=@s", conn, tx))
+                        {
+                            cmd.Parameters.AddWithValue("@r", regno.Trim());
+                            cmd.Parameters.AddWithValue("@a", acadYear);
+                            cmd.Parameters.AddWithValue("@y", studyYear);
+                            cmd.Parameters.AddWithValue("@s", semester);
+                            cmd.ExecuteNonQuery();
+                        }
+
+                        using (var cmd = new MySqlCommand(@"
+                            DELETE FROM campus_dynamics.acad_registration
+                             WHERE regno=@r AND acad_year=@a AND studyyear=@y AND semester=@s
+                             LIMIT 1", conn, tx))
+                        {
+                            cmd.Parameters.AddWithValue("@r", regno.Trim());
+                            cmd.Parameters.AddWithValue("@a", acadYear);
+                            cmd.Parameters.AddWithValue("@y", studyYear);
+                            cmd.Parameters.AddWithValue("@s", semester);
+                            deletedRegs = cmd.ExecuteNonQuery();
+                        }
+
+                        // ── the courses and the fees ──────────────────────────────────────
+                        // Both are keyed by (regno, acad_year, semester) with no study year, so
+                        // they belong to the SEMESTER, not to this one registration row. If the
+                        // student still holds another registration for the same semester at a
+                        // different study year — 23 students do — those rows are still that
+                        // registration's, and removing them here would strip the courses and
+                        // cancel the fees of a semester they are still enrolled in. So they only
+                        // go when this was the last registration standing for the period.
+                        keptSharedRows = imp.SharesPeriod;
+                        if (!keptSharedRows)
+                        {
+                            using (var cmd = new MySqlCommand(@"
+                                INSERT INTO campus_dynamics_portal.acad_course_registration_regdel_bak
+                                SELECT * FROM campus_dynamics_portal.acad_course_registration
+                                 WHERE regno=@r AND acad_year=@a AND semester=@s", conn, tx))
+                            {
+                                cmd.Parameters.AddWithValue("@r", regno.Trim());
+                                cmd.Parameters.AddWithValue("@a", acadYear);
+                                cmd.Parameters.AddWithValue("@s", semester);
+                                cmd.ExecuteNonQuery();
+                            }
+
+                            using (var cmd = new MySqlCommand(@"
+                                DELETE FROM campus_dynamics_portal.acad_course_registration
+                                 WHERE regno=@r AND acad_year=@a AND semester=@s", conn, tx))
+                            {
+                                cmd.Parameters.AddWithValue("@r", regno.Trim());
+                                cmd.Parameters.AddWithValue("@a", acadYear);
+                                cmd.Parameters.AddWithValue("@s", semester);
+                                deletedCourses = cmd.ExecuteNonQuery();
+                            }
+
+                            reversedAmount = imp.BillAmount;
+
+                            // The bill is archived before either side of it is touched, because
+                            // once the tracking row is gone the ledger rows can no longer be
+                            // found — the only link between them is folio = 'BillNo:' + TID.
+                            using (var cmd = new MySqlCommand(@"
+                                INSERT INTO campus_dynamics_accounts.fin_studentfeestracking_regdel_bak
+                                SELECT * FROM campus_dynamics_accounts.fin_studentfeestracking
+                                 WHERE regno=@r AND acadyear=@a AND semester=@s AND trans_type='Bill'", conn, tx))
+                            {
+                                cmd.Parameters.AddWithValue("@r", regno.Trim());
+                                cmd.Parameters.AddWithValue("@a", acadYear);
+                                cmd.Parameters.AddWithValue("@s", semester);
+                                cmd.ExecuteNonQuery();
+                            }
+
+                            // The GL side first, matched through the folio. Only DR rows: those
+                            // are the charges. Payments are CR, they carry no semester at all, and
+                            // they are never touched — the money was genuinely received, and a
+                            // student who paid for a semester they are dropping ends up in credit
+                            // against the next one. Cancelling a charge is bookkeeping; taking
+                            // back a receipt would be something else entirely.
+                            using (var cmd = new MySqlCommand(@"
+                                DELETE l FROM campus_dynamics_accounts.fin_ledger l
+                                  JOIN campus_dynamics_accounts.fin_studentfeestracking t
+                                    ON l.folio = CONCAT('BillNo:', t.TID) AND l.accountcode = t.regno
+                                 WHERE t.regno=@r AND t.acadyear=@a AND t.semester=@s
+                                   AND t.trans_type='Bill' AND l.transactionType='DR'", conn, tx))
+                            {
+                                cmd.Parameters.AddWithValue("@r", regno.Trim());
+                                cmd.Parameters.AddWithValue("@a", acadYear);
+                                cmd.Parameters.AddWithValue("@s", semester);
+                                deletedLedger = cmd.ExecuteNonQuery();
+                            }
+
+                            // Then the bill itself. Deleting this row fires trg_sync_bill_uniqueness_delete,
+                            // which clears fin_bill_uniqueness for the period — without that the
+                            // guard would still read "already billed" and a student who registers
+                            // this semester again could never be charged for it.
+                            using (var cmd = new MySqlCommand(@"
+                                DELETE FROM campus_dynamics_accounts.fin_studentfeestracking
+                                 WHERE regno=@r AND acadyear=@a AND semester=@s AND trans_type='Bill'", conn, tx))
+                            {
+                                cmd.Parameters.AddWithValue("@r", regno.Trim());
+                                cmd.Parameters.AddWithValue("@a", acadYear);
+                                cmd.Parameters.AddWithValue("@s", semester);
+                                deletedBills = cmd.ExecuteNonQuery();
+                            }
+                        }
+
+                        tx.Commit();
                     }
                 }
             }
@@ -412,9 +563,25 @@ public partial class COOPERP_NewScreens_SemesterDeletionRequestsController : Pag
                         student_seen_at=NULL
                     WHERE id=@id", conn))
                 {
+                    // The comment is the record of what happened, so the numbers go into it.
+                    // "Approved" on its own does not tell anyone, later, that a bill was cancelled.
+                    string note = c;
+                    if (d == "APPROVE")
+                    {
+                        string what = "Removed: registration " + deletedRegs
+                                    + ", course rows " + deletedCourses
+                                    + ", fee bills " + deletedBills
+                                    + " (UGX " + reversedAmount.ToString("N0") + ")"
+                                    + ", ledger entries " + deletedLedger + ".";
+                        if (keptSharedRows)
+                            what += " Courses and fees were KEPT: the student still holds another "
+                                  + "registration for this same semester at a different year of study.";
+                        note = string.IsNullOrEmpty(c) ? what : c + "  " + what;
+                    }
+
                     cmd.Parameters.AddWithValue("@st", d == "APPROVE" ? "APPROVED" : "REJECTED");
                     cmd.Parameters.AddWithValue("@au", AdminUser());
-                    cmd.Parameters.AddWithValue("@ac", c);
+                    cmd.Parameters.AddWithValue("@ac", note);
                     cmd.Parameters.AddWithValue("@dex", d == "APPROVE" ? 1 : 0);
                     cmd.Parameters.AddWithValue("@id", id);
                     if (cmd.ExecuteNonQuery() <= 0)
@@ -425,13 +592,184 @@ public partial class COOPERP_NewScreens_SemesterDeletionRequestsController : Pag
             return Json.Serialize(new
             {
                 success = true,
-                message = d == "APPROVE" ? "Request approved and semester registration deleted." : "Request rejected.",
-                data    = new { deleted_semester_registration = deletedRegs, deleted_course_rows = deletedCourses }
+                message = d != "APPROVE"
+                        ? "Request rejected."
+                        : keptSharedRows
+                          ? "Registration deleted. Courses and fees were kept — the student still has another "
+                            + "registration for this semester."
+                          : "Registration deleted, " + deletedCourses + " course row(s) removed and fees of UGX "
+                            + reversedAmount.ToString("N0") + " reversed.",
+                data    = new
+                {
+                    deleted_semester_registration = deletedRegs,
+                    deleted_course_rows           = deletedCourses,
+                    deleted_fee_bills             = deletedBills,
+                    deleted_ledger_entries        = deletedLedger,
+                    reversed_amount               = reversedAmount,
+                    shared_period_rows_kept       = keptSharedRows
+                }
             });
         }
         catch (Exception ex)
         {
             return Json.Serialize(new { success = false, message = ex.Message });
+        }
+    }
+
+    /// <summary>
+    /// Everything an approval would actually destroy, read before anything is touched.
+    ///
+    /// This exists because approving used to remove the registration and its course rows and
+    /// stop there — leaving the semester's fees standing on the student's account for a
+    /// semester that no longer existed. A registration is not one row: the wizard that creates
+    /// it also raises a bill (fin_AutoBillOnRegistration), so undoing it has to undo that too.
+    /// Reversing a registration means reversing what registering DID.
+    /// </summary>
+    private class Impact
+    {
+        public int Courses;
+        public int MarkedCourses;
+        public int Results;
+        public int Bills;
+        public decimal BillAmount;
+        public int LedgerRows;
+        /// <summary>
+        /// Other registrations for the SAME academic year and semester at a different study
+        /// year. They matter more than they look: course rows and bills are both keyed by
+        /// (regno, acad_year, semester) with NO study year, so they are shared. Deleting them
+        /// while a sibling registration survives would strip the courses and cancel the fees of
+        /// a semester the student is still registered for.
+        /// </summary>
+        public int Siblings;
+        /// <summary>What the student owes right now, before anything is reversed.</summary>
+        public decimal BalanceBefore;
+        /// <summary>
+        /// What they will owe after. Cancelling a bill removes a DR from both the ledger and
+        /// the tracking table, so the balance simply drops by the amount cancelled — and it can
+        /// legitimately go negative, which is a credit sitting on the account.
+        /// </summary>
+        public decimal BalanceAfter
+        {
+            get { return SharesPeriod ? BalanceBefore : BalanceBefore - BillAmount; }
+        }
+
+        public bool SharesPeriod { get { return Siblings > 0; } }
+        /// <summary>Published results are an academic record. No portal button deletes those.</summary>
+        public bool Blocked { get { return Results > 0; } }
+    }
+
+    /// <summary>One round trip for the whole picture, all of it scoped to the one period.</summary>
+    private static Impact ReadImpact(MySqlConnection conn, MySqlTransaction tx,
+                                     string regno, string acadYear, int studyYear, int semester)
+    {
+        var imp = new Impact();
+        using (var cmd = new MySqlCommand(@"
+            SELECT
+              (SELECT COUNT(*) FROM campus_dynamics_portal.acad_course_registration c
+                WHERE c.regno=@r AND c.acad_year=@a AND c.semester=@s) AS courses,
+              (SELECT COUNT(*) FROM campus_dynamics_portal.acad_course_registration c
+                WHERE c.regno=@r AND c.acad_year=@a AND c.semester=@s
+                  AND (IFNULL(c.mark_stage,'NOT_ENTERED') <> 'NOT_ENTERED'
+                    OR c.provisional_total_marks IS NOT NULL
+                    OR c.provisional_course_work_marks IS NOT NULL
+                    OR c.provisional_exam_marks IS NOT NULL)) AS marked,
+              (SELECT COUNT(*) FROM campus_dynamics.acad_results x
+                WHERE x.regno=@r AND x.acad=@a AND x.semester=@s) AS results,
+              (SELECT COUNT(*) FROM campus_dynamics_accounts.fin_studentfeestracking t
+                WHERE t.regno=@r AND t.acadyear=@a AND t.semester=@s AND t.trans_type='Bill') AS bills,
+              (SELECT IFNULL(SUM(t.amount),0) FROM campus_dynamics_accounts.fin_studentfeestracking t
+                WHERE t.regno=@r AND t.acadyear=@a AND t.semester=@s AND t.trans_type='Bill') AS bill_amount,
+              (SELECT COUNT(*) FROM campus_dynamics_accounts.fin_ledger l
+                 JOIN campus_dynamics_accounts.fin_studentfeestracking t2
+                   ON l.folio = CONCAT('BillNo:', t2.TID) AND l.accountcode = t2.regno
+                WHERE t2.regno=@r AND t2.acadyear=@a AND t2.semester=@s
+                  AND t2.trans_type='Bill' AND l.transactionType='DR') AS ledger_rows,
+              (SELECT COUNT(*) FROM campus_dynamics.acad_registration r
+                WHERE r.regno=@r AND r.acad_year=@a AND r.semester=@s AND r.studyyear<>@y) AS siblings", conn))
+        {
+            if (tx != null) cmd.Transaction = tx;
+            cmd.Parameters.AddWithValue("@r", (regno ?? "").Trim());
+            cmd.Parameters.AddWithValue("@a", acadYear);
+            cmd.Parameters.AddWithValue("@s", semester);
+            cmd.Parameters.AddWithValue("@y", studyYear);
+            using (var rdr = cmd.ExecuteReader())
+            {
+                if (rdr.Read())
+                {
+                    imp.Courses       = ToInt(rdr["courses"]);
+                    imp.MarkedCourses = ToInt(rdr["marked"]);
+                    imp.Results       = ToInt(rdr["results"]);
+                    imp.Bills         = ToInt(rdr["bills"]);
+                    imp.BillAmount    = rdr["bill_amount"] == DBNull.Value ? 0m : Convert.ToDecimal(rdr["bill_amount"]);
+                    imp.LedgerRows    = ToInt(rdr["ledger_rows"]);
+                    imp.Siblings      = ToInt(rdr["siblings"]);
+                }
+            }
+        }
+
+        imp.BalanceBefore = ReadBalance(conn, tx, regno);
+        return imp;
+    }
+
+    /// <summary>
+    /// The student's outstanding balance, computed the way the whole system computes it.
+    ///
+    /// This query is lifted from SemesterRegistrationWizardService.GetStudentOutstandingBalance,
+    /// which its own comment calls the single source of truth — the same logic behind
+    /// FeeAccessHelper, StudentFees and the student's dashboard. Rolling a simpler SUM here
+    /// would give the approver a number that disagreed with the one the student is looking at,
+    /// and the two would be reconciled by argument.
+    ///
+    /// The union is not decoration: a bill can exist in the tracking table before it reaches the
+    /// GL, so counting only one side under-reads. The NOT EXISTS is what stops a bill present in
+    /// both from being counted twice.
+    /// </summary>
+    private static decimal ReadBalance(MySqlConnection conn, MySqlTransaction tx, string regno)
+    {
+        try
+        {
+            using (var cmd = new MySqlCommand(@"
+                SELECT
+                    COALESCE(SUM(CASE WHEN x.ttype='DR' THEN x.amt ELSE 0 END), 0) -
+                    COALESCE(SUM(CASE WHEN x.ttype='CR' THEN x.amt ELSE 0 END), 0) AS balance
+                FROM (
+                    SELECT fl.transactionType AS ttype, fl.transaction_amount AS amt
+                    FROM   campus_dynamics_accounts.fin_ledger fl
+                    WHERE  fl.accountcode = @r AND fl.transaction_amount > 0
+
+                    UNION ALL
+
+                    SELECT CASE WHEN t.trans_type IN ('Payment','Waiver') THEN 'CR' ELSE 'DR' END AS ttype,
+                           t.amount AS amt
+                    FROM   campus_dynamics_accounts.fin_studentfeestracking t
+                    WHERE  t.regno = @r
+                      AND  t.post_status = 'Posted'
+                      AND  NOT EXISTS (
+                           SELECT 1 FROM campus_dynamics_accounts.fin_ledger fl2
+                           WHERE  fl2.accountcode = t.regno
+                             AND (
+                                  fl2.voucherNo = CAST(t.TID AS CHAR)
+                               OR fl2.folio    = CONCAT('BillNo:', CAST(t.TID AS CHAR))
+                               OR (    fl2.transaction_amount = t.amount
+                                   AND DATE(fl2.transactionDate) = DATE(t.trans_date)
+                                   AND fl2.transactionType = CASE WHEN t.trans_type IN ('Payment','Waiver') THEN 'CR' ELSE 'DR' END
+                                   AND (t.trans_type IN ('Payment','Waiver') OR fl2.particulars = t.detail OR t.detail IS NULL OR t.detail = '')
+                                  )
+                             )
+                      )
+                ) x", conn))
+            {
+                if (tx != null) cmd.Transaction = tx;
+                cmd.Parameters.AddWithValue("@r", (regno ?? "").Trim());
+                object v = cmd.ExecuteScalar();
+                return v == null || v == DBNull.Value ? 0m : Convert.ToDecimal(v);
+            }
+        }
+        catch
+        {
+            // A balance we cannot read must not stop an approval. The wizard simply leaves the
+            // before/after line out rather than showing a figure it is not sure of.
+            return 0m;
         }
     }
 

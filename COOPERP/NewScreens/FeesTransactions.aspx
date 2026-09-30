@@ -397,6 +397,11 @@ td.ft-col-detail { white-space: normal; word-break: break-word; line-height: 1.4
 <asp:Button ID="btnDeleteTransaction" runat="server" style="display:none;" OnClick="btnDeleteTransaction_Click" />
 <asp:Button ID="btnRemoveFromGL" runat="server" style="display:none;" OnClick="btnRemoveFromGL_Click" />
 <asp:HiddenField ID="hfEditTID" runat="server" />
+<%-- The TID alone does not identify a row: manual rows are keyed in fin_studentfeestracking
+     and ledger-only rows in fin_ledger, and the two numberings overlap. Source says which
+     table, regno says which account, and the server checks both before it writes. --%>
+<asp:HiddenField ID="hfEditSource" runat="server" />
+<asp:HiddenField ID="hfEditRegno" runat="server" />
 <asp:HiddenField ID="hfDeleteTID" runat="server" />
 <asp:HiddenField ID="hfRemoveGLTID" runat="server" />
 <asp:HiddenField ID="hfDeleteCategory" runat="server" />
@@ -1055,6 +1060,8 @@ function ftShowDetails(row){
         a += '<button type="button" onclick="ftCloseDetails();openEditTx();" style="padding:7px 14px;font-size:12px;font-weight:600;border:1px solid #174DA4;background:#fff;color:#174DA4;cursor:pointer;">Edit</button>';
         a += '<button type="button" onclick="ftCloseDetails();confirmDeleteTx();" style="padding:7px 14px;font-size:12px;font-weight:600;border:1px solid #c0392b;background:#fff;color:#c0392b;cursor:pointer;">Delete</button>';
     } else {
+        if (FT_SUPER)
+            a += '<button type="button" onclick="ftCloseDetails();openEditTx();" style="padding:7px 14px;font-size:12px;font-weight:600;border:1px solid #174DA4;background:#fff;color:#174DA4;cursor:pointer;">Edit GL entry</button>';
         a += '<button type="button" onclick="ftCloseDetails();confirmRemoveGL();" style="padding:7px 14px;font-size:12px;font-weight:600;border:1px solid #c0392b;background:#fff;color:#c0392b;cursor:pointer;">Remove from GL</button>';
     }
     a += '<button type="button" onclick="ftCloseDetails()" style="padding:7px 14px;font-size:12px;font-weight:600;border:1px solid #e0e5ed;background:#fff;color:#444;cursor:pointer;">Close</button>';
@@ -1086,15 +1093,18 @@ function showRowAction(evt, btn) {
     };
 
     // Show/hide actions based on source
+    // Delete stays manual-only: removing a ledger row is what "Remove from GL" is for, and
+    // it keeps its own confirmation. Only EDIT opens up, and only for a super administrator.
     var isManual = (_activeRowData.source === 'manual');
-    document.getElementById('popBtnEdit').style.display     = isManual ? '' : 'none';
+    var canEdit  = isManual || FT_SUPER;
+    document.getElementById('popBtnEdit').style.display     = canEdit  ? '' : 'none';
     document.getElementById('popSepManual').style.display   = isManual ? '' : 'none';
     document.getElementById('popBtnDelete').style.display   = isManual ? '' : 'none';
     document.getElementById('popBtnRemoveGL').style.display = isManual ? 'none' : '';
 
     // Position using fixed coords (avoids clipping by overflow containers)
     var rect = btn.getBoundingClientRect();
-    var popH = isManual ? 94 : 46;
+    var popH = isManual ? 94 : (canEdit ? 78 : 46);
     var spaceBelow = window.innerHeight - rect.bottom;
 
     pop.style.left = Math.max(4, rect.left - 140) + 'px';
@@ -1124,6 +1134,31 @@ document.addEventListener('click', function(e) {
 window.addEventListener('scroll', hideRowAction, true);
 
 /* ==== Edit Transaction ==== */
+/* Whether this operator is a super administrator, as the server sees it. It decides what
+   is OFFERED here; what is PERMITTED is decided again on the server at the point of the
+   write, because a hidden button is not a control. */
+var FT_SUPER = <%= IsSuperAdmin ? "true" : "false" %>;
+
+/* A ledger-only row has no billing item, academic year, semester or post status — those
+   columns do not exist on it. The modal puts them out of the way rather than asking for
+   values that have nowhere to be stored. */
+function ftApplyEditMode(source) {
+    var gl = (source === 'auto' || source === 'ghost');
+    var ids = ['<%= ddlEditBillItem.ClientID %>','<%= ddlEditAcadYear.ClientID %>',
+               '<%= ddlEditSemester.ClientID %>','<%= ddlEditPostStatus.ClientID %>'];
+    for (var i = 0; i < ids.length; i++) {
+        var el = document.getElementById(ids[i]);
+        if (!el) continue;
+        var grp = el.closest ? el.closest('.fs-form-group') : null;
+        if (grp) grp.style.display = gl ? 'none' : '';
+        el.disabled = gl;
+    }
+    var banner = document.getElementById('editGlBanner');
+    if (banner) banner.style.display = gl ? 'block' : 'none';
+    var hdr = document.getElementById('editModalTitle');
+    if (hdr) hdr.firstChild.nodeValue = gl ? 'Edit General Ledger Entry ' : 'Edit Transaction ';
+}
+
 function openEditTx() {
     hideRowAction();
     if (!_activeRowData) return;
@@ -1138,8 +1173,11 @@ function openEditTx() {
     document.getElementById('editStudentName').textContent = d.name;
     document.getElementById('editStudentRegno').textContent = d.regno;
 
-    // Hidden field
+    // Hidden fields — the TID on its own is ambiguous, see the note beside them
     document.getElementById('<%= hfEditTID.ClientID %>').value = d.tid;
+    document.getElementById('<%= hfEditSource.ClientID %>').value = d.source || 'manual';
+    document.getElementById('<%= hfEditRegno.ClientID %>').value = d.regno || '';
+    ftApplyEditMode(d.source || 'manual');
 
     // Set dropdowns
     _setSelect('<%= ddlEditTransType.ClientID %>', d.type);
@@ -1180,6 +1218,8 @@ function _getInitials(name) {
 
 function validateAndEditTx() {
     var errors = [];
+    var _src = document.getElementById('<%= hfEditSource.ClientID %>').value || 'manual';
+    var _gl  = (_src === 'auto' || _src === 'ghost');
     var amount = document.getElementById('<%= txtEditAmount.ClientID %>').value.trim();
     var transType = document.getElementById('<%= ddlEditTransType.ClientID %>').value;
     var billItem = document.getElementById('<%= ddlEditBillItem.ClientID %>').value;
@@ -1189,10 +1229,10 @@ function validateAndEditTx() {
     var detail = document.getElementById('<%= txtEditDetail.ClientID %>').value.trim();
 
     if (!transType) errors.push('Transaction Type is required.');
-    if (!billItem) errors.push('Billing Item is required.');
+    if (!_gl && !billItem) errors.push('Billing Item is required.');
     if (!amount || isNaN(parseFloat(amount)) || parseFloat(amount) <= 0) errors.push('Amount must be a positive number.');
-    if (!acadYear) errors.push('Academic Year is required.');
-    if (!semester) errors.push('Semester is required.');
+    if (!_gl && !acadYear) errors.push('Academic Year is required.');
+    if (!_gl && !semester) errors.push('Semester is required.');
     if (!txDate) errors.push('Transaction Date is required.');
     if (!detail) errors.push('Description is required.');
     if (detail.length > 250) errors.push('Description must be 250 characters or less.');
@@ -2070,10 +2110,16 @@ function _bdFinalize() {
 <div id="modal-edit-tx" class="fs-modal-overlay">
 <div class="fs-modal">
     <div class="fs-modal__header" style="background:#174DA4;">
-        <div class="fs-modal__title" style="color:#fff;">Edit Transaction <span id="editTidBadge" style="font-size:11px;background:rgba(255,255,255,.2);padding:2px 8px;border-radius:10px;margin-left:8px;"></span></div>
+        <div class="fs-modal__title" id="editModalTitle" style="color:#fff;">Edit Transaction <span id="editTidBadge" style="font-size:11px;background:rgba(255,255,255,.2);padding:2px 8px;border-radius:10px;margin-left:8px;"></span></div>
         <button type="button" class="fs-modal__close" onclick="closeModal('modal-edit-tx');" style="color:#fff;">&times;</button>
     </div>
     <div class="fs-modal__body" id="editTxForm">
+
+        <div id="editGlBanner" style="display:none;background:#fff7e8;border:1px solid #efd9a9;border-left:3px solid #8a5a00;padding:10px 13px;margin-bottom:14px;font-size:12px;line-height:1.55;color:#7a4f00;">
+            <b>This is a General Ledger entry.</b> It has no billing item, academic year or
+            semester, so those are hidden. The amount, direction, description and date are
+            written straight to the ledger and the change is recorded against your name.
+        </div>
 
         <!-- Student (Read-only) -->
         <div class="fs-form-row">

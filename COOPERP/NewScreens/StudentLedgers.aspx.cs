@@ -19,6 +19,8 @@ public partial class COOPERP_NewScreens_StudentLedgers : System.Web.UI.Page
     // ── Balance-cache refresh throttle (see EnsureBalanceCache) ───────────
     private static DateTime _balCacheNextCheck = DateTime.MinValue;
     private static readonly object _balCacheGate = new object();
+    private static bool _balCacheRebuilding;        // a background refresh is in flight
+    private static bool _balCacheCharsetChecked;    // regno charset verified once per process
     private const int BalCacheTtlSeconds = 300;       // rebuild when older than 5 min
     private const int BalCacheThrottleSeconds = 30;   // don't re-check DB freshness more often than this
 
@@ -240,7 +242,43 @@ public partial class COOPERP_NewScreens_StudentLedgers : System.Web.UI.Page
             if (DateTime.UtcNow < _balCacheNextCheck) return;
         }
 
-        // Ensure the cache table exists.
+        EnsureBalanceCacheTable(conn);
+
+        if (!IsBalanceCacheStale(conn))
+        {
+            lock (_balCacheGate) { _balCacheNextCheck = DateTime.UtcNow.AddSeconds(BalCacheThrottleSeconds); }
+            return;
+        }
+
+        // The rebuild is a ~5s dual-source anti-join. It used to run right here, inside
+        // whichever unlucky page request happened to find the cache stale — so roughly
+        // once every TTL somebody waited five extra seconds for a page that otherwise
+        // takes a fraction of one. Only the very first build (nothing to serve yet) is
+        // worth blocking for; every refresh after that happens on a background thread
+        // while this request answers immediately from the slightly-stale cache.
+        if (BalanceCacheRowCount(conn) == 0)
+        {
+            RebuildBalanceCache(conn);
+            lock (_balCacheGate) { _balCacheNextCheck = DateTime.UtcNow.AddSeconds(BalCacheThrottleSeconds); }
+            return;
+        }
+
+        QueueBalanceCacheRebuild();
+    }
+
+    /// <summary>
+    /// Creates the cache table if absent, and makes sure its regno column is utf8.
+    ///
+    /// This matters more than it looks. The grid joins this table to
+    /// campus_dynamics.acad_student.regno, which is utf8. The original CREATE TABLE here
+    /// named no charset, so the table inherited the accounts database default (latin1) —
+    /// and MySQL cannot use an index across two different character sets. Every page load
+    /// therefore full-scanned this whole table once per student row (~23M comparisons):
+    /// measured at 6.83s per request, against 0.09s once the charsets match. Checked once
+    /// per process, and repaired in place if some other environment still has the old table.
+    /// </summary>
+    private void EnsureBalanceCacheTable(MySqlConnection conn)
+    {
         using (MySqlCommand cmd = new MySqlCommand(
             "CREATE TABLE IF NOT EXISTS campus_dynamics_accounts.fin_student_balance_cache (" +
             "  regno VARCHAR(50) NOT NULL," +
@@ -250,58 +288,114 @@ public partial class COOPERP_NewScreens_StudentLedgers : System.Web.UI.Page
             "  tx_count INT NOT NULL DEFAULT 0," +
             "  updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP," +
             "  PRIMARY KEY (regno)" +
-            ") ENGINE=InnoDB", conn))
+            ") ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_general_ci", conn))
         {
             cmd.CommandTimeout = 30;
             cmd.ExecuteNonQuery();
         }
 
-        if (!IsBalanceCacheStale(conn))
+        lock (_balCacheGate)
         {
-            lock (_balCacheGate) { _balCacheNextCheck = DateTime.UtcNow.AddSeconds(BalCacheThrottleSeconds); }
-            return;
-        }
-
-        // Become the rebuilder. On first build (empty table) wait briefly for the
-        // lock so the user gets data; on a routine TTL refresh, don't wait — just
-        // serve the slightly-stale cache while another request refreshes.
-        bool empty = BalanceCacheRowCount(conn) == 0;
-        int lockTimeout = empty ? 30 : 0;
-        bool gotLock = false;
-        using (MySqlCommand cmd = new MySqlCommand("SELECT GET_LOCK('sl_bal_cache_refresh', @t)", conn))
-        {
-            cmd.Parameters.AddWithValue("@t", lockTimeout);
-            object v = cmd.ExecuteScalar();
-            gotLock = v != null && v != DBNull.Value && Convert.ToInt32(v) == 1;
-        }
-
-        if (!gotLock)
-        {
-            // Another request is already rebuilding — use existing data, retry soon.
-            lock (_balCacheGate) { _balCacheNextCheck = DateTime.UtcNow.AddSeconds(5); }
-            return;
+            if (_balCacheCharsetChecked) return;
         }
 
         try
         {
-            // Re-check under the lock; another request may have just rebuilt.
-            if (IsBalanceCacheStale(conn))
+            string coll = null;
+            using (MySqlCommand cmd = new MySqlCommand(
+                "SELECT CHARACTER_SET_NAME FROM information_schema.COLUMNS " +
+                "WHERE TABLE_SCHEMA='campus_dynamics_accounts' AND TABLE_NAME='fin_student_balance_cache' " +
+                "  AND COLUMN_NAME='regno'", conn))
             {
-                using (MySqlTransaction tx = conn.BeginTransaction())
+                cmd.CommandTimeout = 15;
+                object v = cmd.ExecuteScalar();
+                if (v != null && v != DBNull.Value) coll = Convert.ToString(v);
+            }
+
+            if (!string.IsNullOrEmpty(coll) && coll != "utf8")
+            {
+                using (MySqlCommand cmd = new MySqlCommand(
+                    "ALTER TABLE campus_dynamics_accounts.fin_student_balance_cache " +
+                    "CONVERT TO CHARACTER SET utf8 COLLATE utf8_general_ci", conn))
                 {
-                    using (MySqlCommand del = new MySqlCommand(
-                        "DELETE FROM campus_dynamics_accounts.fin_student_balance_cache", conn, tx))
-                    {
-                        del.CommandTimeout = 60;
-                        del.ExecuteNonQuery();
-                    }
-                    using (MySqlCommand ins = new MySqlCommand(GetBalanceCacheRebuildSql(), conn, tx))
-                    {
-                        ins.CommandTimeout = 180;
-                        ins.ExecuteNonQuery();
-                    }
-                    tx.Commit();
+                    cmd.CommandTimeout = 120;
+                    cmd.ExecuteNonQuery();
                 }
+            }
+        }
+        catch { /* never break the page over the self-heal; the join still returns correct rows */ }
+
+        lock (_balCacheGate) { _balCacheCharsetChecked = true; }
+    }
+
+    /// <summary>Refreshes the cache on a background thread, one at a time per process.</summary>
+    private void QueueBalanceCacheRebuild()
+    {
+        lock (_balCacheGate)
+        {
+            if (_balCacheRebuilding) return;
+            _balCacheRebuilding = true;
+            // Hold off further freshness probes while this runs.
+            _balCacheNextCheck = DateTime.UtcNow.AddSeconds(BalCacheThrottleSeconds);
+        }
+
+        string cs = MainConnStr;   // captured now: the request may be gone by the time this runs
+        System.Threading.ThreadPool.QueueUserWorkItem(delegate
+        {
+            try
+            {
+                using (MySqlConnection bg = new MySqlConnection(cs))
+                {
+                    bg.Open();
+                    RebuildBalanceCache(bg);
+                }
+            }
+            catch { /* a stale cache is still a usable cache; the next TTL tries again */ }
+            finally
+            {
+                lock (_balCacheGate)
+                {
+                    _balCacheRebuilding = false;
+                    _balCacheNextCheck = DateTime.UtcNow.AddSeconds(BalCacheThrottleSeconds);
+                }
+            }
+        });
+    }
+
+    /// <summary>
+    /// The rebuild itself. Guarded by a server-wide named lock so that two web servers —
+    /// or two threads — never rebuild at once, and re-checked under that lock in case
+    /// somebody else just finished.
+    /// </summary>
+    private void RebuildBalanceCache(MySqlConnection conn)
+    {
+        bool gotLock = false;
+        using (MySqlCommand cmd = new MySqlCommand("SELECT GET_LOCK('sl_bal_cache_refresh', @t)", conn))
+        {
+            cmd.Parameters.AddWithValue("@t", 30);
+            object v = cmd.ExecuteScalar();
+            gotLock = v != null && v != DBNull.Value && Convert.ToInt32(v) == 1;
+        }
+        if (!gotLock) return;   // someone else is on it
+
+        try
+        {
+            if (!IsBalanceCacheStale(conn)) return;
+
+            using (MySqlTransaction tx = conn.BeginTransaction())
+            {
+                using (MySqlCommand del = new MySqlCommand(
+                    "DELETE FROM campus_dynamics_accounts.fin_student_balance_cache", conn, tx))
+                {
+                    del.CommandTimeout = 60;
+                    del.ExecuteNonQuery();
+                }
+                using (MySqlCommand ins = new MySqlCommand(GetBalanceCacheRebuildSql(), conn, tx))
+                {
+                    ins.CommandTimeout = 180;
+                    ins.ExecuteNonQuery();
+                }
+                tx.Commit();
             }
         }
         finally
@@ -310,7 +404,6 @@ public partial class COOPERP_NewScreens_StudentLedgers : System.Web.UI.Page
             {
                 try { cmd.ExecuteScalar(); } catch { }
             }
-            lock (_balCacheGate) { _balCacheNextCheck = DateTime.UtcNow.AddSeconds(BalCacheThrottleSeconds); }
         }
     }
 
@@ -416,9 +509,13 @@ public partial class COOPERP_NewScreens_StudentLedgers : System.Web.UI.Page
         // so they can look up any student by reg number, name, etc.
         // Default listing still shows only ACTIVE students.
         bool hasSearch = !string.IsNullOrEmpty(txtSearch.Text.Trim());
+        // Plain column comparison, not UPPER(COALESCE(new_status,'')): the column is
+        // utf8_general_ci so '=' is already case-insensitive, and COALESCE only mapped
+        // NULL to '', which never equalled 'ACTIVE' anyway. Wrapping the column in
+        // functions is what stops an index on it ever being used.
         string statusFilter = hasSearch
             ? "WHERE 1=1"
-            : "WHERE UPPER(COALESCE(s.new_status,'')) = 'ACTIVE'";
+            : "WHERE s.new_status = 'ACTIVE'";
 
         return @"
             SELECT 
@@ -599,8 +696,9 @@ public partial class COOPERP_NewScreens_StudentLedgers : System.Web.UI.Page
         }
     }
 
-    // ── Temp-table approach: execute the heavy base query ONCE, then read
-    //    count/stats/paginated-data from the lightweight temp table. ────────
+    // ── Two reads: totals for the header, then the page slice. Both hit the
+    //    same base query, which is an indexed ~0.09s join now that the balance
+    //    cache shares acad_student's character set. ──────────────────────────
     private void LoadLedgers()
     {
         string baseSql = BuildBaseSql();
@@ -626,31 +724,24 @@ public partial class COOPERP_NewScreens_StudentLedgers : System.Web.UI.Page
             // Make sure the per-student balance cache is fresh before we read it.
             EnsureBalanceCache(conn);
 
-            // Clean up any leftover temp table from a prior pooled-connection reuse
-            using (MySqlCommand cmd = new MySqlCommand("DROP TEMPORARY TABLE IF EXISTS _sl_page", conn))
-            {
-                cmd.CommandTimeout = 10;
-                cmd.ExecuteNonQuery();
-            }
+            // Two plain SELECTs, not a temp table.
+            //
+            // This used to run CREATE TEMPORARY TABLE _sl_page ENGINE=MEMORY AS SELECT ...
+            // so that the count and the page slice could be read cheaply afterwards. That
+            // made a *write* statement out of a read: it takes shared locks on every source
+            // row it reads and is logged for replication, so on a busy finance database it
+            // both blocks writers and can deadlock against them (reproduced on the first
+            // attempt while measuring). With the base query now at ~0.09s there is nothing
+            // to amortise, so the page just reads twice and takes no locks at all.
+            string countSql = String.Format(
+                "SELECT COUNT(*) AS c, COALESCE(SUM(x.total_billed),0) AS b, " +
+                "COALESCE(SUM(x.total_paid),0) AS p, COALESCE(SUM(x.total_balance),0) AS bal " +
+                "FROM ({0}) x {1}", baseSql, where);
 
-            // 1. Execute the expensive base query ONCE into a session temp table
-            string createSql = String.Format(
-                "CREATE TEMPORARY TABLE _sl_page ENGINE=MEMORY AS SELECT * FROM ({0}) x {1}",
-                baseSql, where);
-            using (MySqlCommand cmd = new MySqlCommand(createSql, conn))
+            using (MySqlCommand cmd = new MySqlCommand(countSql, conn))
             {
                 cmd.CommandTimeout = 120;
                 AddParams(cmd, filterParams);
-                cmd.ExecuteNonQuery();
-            }
-
-            // 2. Count + aggregated stats from temp table (instant — small row set)
-            using (MySqlCommand cmd = new MySqlCommand(
-                "SELECT COUNT(*) AS c, COALESCE(SUM(total_billed),0) AS b, " +
-                "COALESCE(SUM(total_paid),0) AS p, COALESCE(SUM(total_balance),0) AS bal " +
-                "FROM _sl_page", conn))
-            {
-                cmd.CommandTimeout = 10;
                 using (MySqlDataReader rdr = cmd.ExecuteReader())
                 {
                     if (rdr.Read())
@@ -673,25 +764,20 @@ public partial class COOPERP_NewScreens_StudentLedgers : System.Web.UI.Page
             litStatPaid.Text = FormatMoney(statPaid);
             litStatBalance.Text = FormatBalance(statBalance);
 
-            // 3. Paginated data from temp table (instant)
+            // The page slice: same base query, sorted and limited by the server.
             string dataSql = String.Format(
-                "SELECT * FROM _sl_page ORDER BY {0} {1}, student_name ASC LIMIT @offset, @ps",
-                sortCol, sortDir);
+                "SELECT * FROM ({0}) x {1} ORDER BY x.{2} {3}, x.student_name ASC LIMIT @offset, @ps",
+                baseSql, where, sortCol, sortDir);
             using (MySqlCommand cmd = new MySqlCommand(dataSql, conn))
             {
-                cmd.CommandTimeout = 10;
+                cmd.CommandTimeout = 120;
+                AddParams(cmd, filterParams);
                 cmd.Parameters.AddWithValue("@offset", pageIndex * pageSize);
                 cmd.Parameters.AddWithValue("@ps", pageSize);
                 using (MySqlDataAdapter da = new MySqlDataAdapter(cmd))
                 {
                     da.Fill(dt);
                 }
-            }
-
-            // 4. Clean up temp table
-            using (MySqlCommand cmd = new MySqlCommand("DROP TEMPORARY TABLE IF EXISTS _sl_page", conn))
-            {
-                cmd.ExecuteNonQuery();
             }
 
             rptLedgers.DataSource = dt;
@@ -1016,12 +1102,14 @@ public partial class COOPERP_NewScreens_StudentLedgers : System.Web.UI.Page
             "\"missing_dr_count\":{3},\"missing_dr_amount\":{4}," +
             "\"missing_cr_count\":{5},\"missing_cr_amount\":{6}," +
             "\"align_count\":{7},\"normalise_count\":{8}," +
-            "\"can_apply\":{9},\"samples\":[{10}]}}",
+            "\"held_back_count\":{9},\"held_back_amount\":{10},\"student_status\":\"{11}\"," +
+            "\"can_apply\":{12},\"samples\":[{13}]}}",
             JsEsc(regno),
             plan.UnbilledCount, plan.UnbilledAmount.ToString("F0"),
             plan.MissingDrCount, plan.MissingDrAmount.ToString("F0"),
             plan.MissingCrCount, plan.MissingCrAmount.ToString("F0"),
             plan.AlignCount, plan.NormaliseCount,
+            plan.HeldBackCount, plan.HeldBackAmount.ToString("F0"), JsEsc(plan.StudentStatus),
             canApply ? "true" : "false",
             string.Join(",", sj.ToArray())));
     }
@@ -1034,6 +1122,8 @@ public partial class COOPERP_NewScreens_StudentLedgers : System.Web.UI.Page
             Response.Write("{\"ok\":false,\"error\":\"Missing regno.\"}");
             return;
         }
+
+        bool allowInactive = (Request.QueryString["allowinactive"] ?? "") == "1";
 
         int insertedUnbilled = 0;
         int insertedDr = 0;
@@ -1052,8 +1142,11 @@ public partial class COOPERP_NewScreens_StudentLedgers : System.Web.UI.Page
             {
                 try
                 {
-                    // Phase A – Create bills for unbilled semesters
-                    List<UnbilledSem> unbilled = GetUnbilledSemesters(conn, tx, regno);
+                    // Phase A – Create bills for unbilled semesters. A student who is no
+                    // longer ACTIVE is only billed when the operator explicitly asked for
+                    // it (the wizard's "bill this inactive student too" confirmation),
+                    // so a routine Fix never quietly raises debt against a graduate.
+                    List<UnbilledSem> unbilled = GetUnbilledSemesters(conn, tx, regno, allowInactive);
                     foreach (UnbilledSem us in unbilled)
                     {
                         if (!us.HasTuition && us.Tuition > 0)
@@ -1157,40 +1250,46 @@ public partial class COOPERP_NewScreens_StudentLedgers : System.Web.UI.Page
 
     // ---- Detection ----
 
+    private void AddUnbilledSample(FixPlan plan, UnbilledSem us, string feeType, decimal amount)
+    {
+        if (us.IsInactive)
+        {
+            plan.HeldBackCount++;
+            plan.HeldBackAmount += amount;
+        }
+        else
+        {
+            plan.UnbilledCount++;
+            plan.UnbilledAmount += amount;
+        }
+        plan.Samples.Add(new FixSample
+        {
+            Category = us.IsInactive ? "unbilled_held" : "unbilled",
+            Period = us.AcadYear + " Sem " + us.Semester,
+            FeeType = feeType,
+            Amount = amount,
+            Detail = us.IsInactive
+                ? ("No bill exists (Year " + us.StudyYear + ") — student is " + us.StudentStatus + ", so this is not billed automatically")
+                : ("No bill exists (Year " + us.StudyYear + ")")
+        });
+    }
+
     private FixPlan BuildFixPlan(MySqlConnection conn, MySqlTransaction tx, string regno)
     {
         FixPlan plan = new FixPlan();
 
-        // A – Unbilled semesters (missing tracking entries)
-        List<UnbilledSem> unbilled = GetUnbilledSemesters(conn, tx, regno);
+        // A – Unbilled semesters (missing tracking entries). Detection always looks at
+        // inactive students too; anything belonging to one is counted separately as
+        // "held back" so it is visible without being billed behind the operator's back.
+        List<UnbilledSem> unbilled = GetUnbilledSemesters(conn, tx, regno, true);
         foreach (UnbilledSem us in unbilled)
         {
+            if (us.IsInactive && plan.StudentStatus == "") plan.StudentStatus = us.StudentStatus;
+
             if (!us.HasTuition && us.Tuition > 0)
-            {
-                plan.UnbilledCount++;
-                plan.UnbilledAmount += us.Tuition;
-                plan.Samples.Add(new FixSample
-                {
-                    Category = "unbilled",
-                    Period = us.AcadYear + " Sem " + us.Semester,
-                    FeeType = "Tuition",
-                    Amount = us.Tuition,
-                    Detail = "No bill exists (Year " + us.StudyYear + ")"
-                });
-            }
+                AddUnbilledSample(plan, us, "Tuition", us.Tuition);
             if (!us.HasFunctional && us.Functional > 0)
-            {
-                plan.UnbilledCount++;
-                plan.UnbilledAmount += us.Functional;
-                plan.Samples.Add(new FixSample
-                {
-                    Category = "unbilled",
-                    Period = us.AcadYear + " Sem " + us.Semester,
-                    FeeType = "Functional",
-                    Amount = us.Functional,
-                    Detail = "No bill exists (Year " + us.StudyYear + ")"
-                });
-            }
+                AddUnbilledSample(plan, us, "Functional", us.Functional);
         }
 
         // B – Missing DR ledger mirrors
@@ -1273,7 +1372,21 @@ public partial class COOPERP_NewScreens_StudentLedgers : System.Web.UI.Page
 
     // ---- Unbilled semesters ----
 
-    private List<UnbilledSem> GetUnbilledSemesters(MySqlConnection conn, MySqlTransaction tx, string regno)
+    /// <summary>
+    /// Registered semesters with no tuition and/or functional bill.
+    ///
+    /// <paramref name="includeInactive"/> decides what happens to a student whose CURRENT
+    /// status is ALUMNI (or otherwise not active). It used to be a flat exclusion in the
+    /// SQL, which quietly made the whole tool useless for them: a student who graduated
+    /// with a semester that was never billed produced "no issues found", while the ledger
+    /// plainly showed the gap. Status is what the student is TODAY; a bill belongs to the
+    /// semester they were actually registered for, and graduating does not settle it.
+    ///
+    /// So detection now always sees these, and it is the APPLY that holds back — inactive
+    /// students are reported and flagged, and only billed when the operator explicitly asks.
+    /// That way the screen can never claim there is nothing wrong when there is.
+    /// </summary>
+    private List<UnbilledSem> GetUnbilledSemesters(MySqlConnection conn, MySqlTransaction tx, string regno, bool includeInactive)
     {
         List<UnbilledSem> result = new List<UnbilledSem>();
 
@@ -1282,6 +1395,7 @@ public partial class COOPERP_NewScreens_StudentLedgers : System.Web.UI.Page
             SELECT sub.* FROM (
                 SELECT r.acad_year, r.semester, r.studyyear, s.progid,
                        TRIM(CONCAT(COALESCE(s.firstname,''),' ',COALESCE(s.othername,''))) AS student_name,
+                       UPPER(TRIM(IFNULL(s.new_status,''))) AS student_status,
                        (SELECT COUNT(*) FROM fin_studentfeestracking t
                         WHERE t.regno = r.regno AND t.acadyear = r.acad_year
                           AND t.semester = r.semester AND t.trans_type = 'Bill' AND t.item_code = 1) AS has_tuition,
@@ -1294,9 +1408,8 @@ public partial class COOPERP_NewScreens_StudentLedgers : System.Web.UI.Page
                   -- A registration instance is billable whether or not the student has
                   -- completed self-registration. Admin-enrolled students sit UNREGISTERED
                   -- but still owe fees for that semester, so detect those too — only the
-                  -- terminal statuses (and graduated alumni) are genuinely non-billable.
+                  -- terminal statuses are genuinely non-billable.
                   AND UPPER(TRIM(IFNULL(r.regstatus,''))) NOT IN ('DISCONTINUED','HALTED','DEAD YEAR')
-                  AND UPPER(TRIM(IFNULL(s.new_status,''))) <> 'ALUMNI'
             ) sub
             WHERE sub.has_tuition = 0 OR sub.has_functional = 0
             ORDER BY sub.acad_year, sub.semester";
@@ -1309,6 +1422,7 @@ public partial class COOPERP_NewScreens_StudentLedgers : System.Web.UI.Page
             {
                 while (rdr.Read())
                 {
+                    string status = rdr["student_status"] != DBNull.Value ? rdr["student_status"].ToString() : "";
                     raw.Add(new UnbilledSem
                     {
                         AcadYear = rdr["acad_year"] != DBNull.Value ? rdr["acad_year"].ToString() : "",
@@ -1316,6 +1430,10 @@ public partial class COOPERP_NewScreens_StudentLedgers : System.Web.UI.Page
                         StudyYear = rdr["studyyear"] != DBNull.Value ? Convert.ToInt32(rdr["studyyear"]) : 0,
                         ProgCode = rdr["progid"] != DBNull.Value ? rdr["progid"].ToString() : "",
                         StudentName = rdr["student_name"] != DBNull.Value ? rdr["student_name"].ToString() : "",
+                        StudentStatus = status,
+                        // "Not active" is the held-back set: correct to report, wrong to bill
+                        // automatically without the operator saying so.
+                        IsInactive = (status != "ACTIVE"),
                         HasTuition = Convert.ToInt32(rdr["has_tuition"]) > 0,
                         HasFunctional = Convert.ToInt32(rdr["has_functional"]) > 0
                     });
@@ -1326,6 +1444,7 @@ public partial class COOPERP_NewScreens_StudentLedgers : System.Web.UI.Page
         // Look up fee amounts from fee structure for each unbilled semester
         foreach (UnbilledSem us in raw)
         {
+            if (!includeInactive && us.IsInactive) continue;
             if (string.IsNullOrEmpty(us.ProgCode) || us.StudyYear < 1 || us.StudyYear > 3 || us.Semester < 1 || us.Semester > 3)
                 continue;
 
@@ -1624,6 +1743,11 @@ public partial class COOPERP_NewScreens_StudentLedgers : System.Web.UI.Page
         public decimal MissingCrAmount;
         public int AlignCount;
         public int NormaliseCount;
+        // Found, but not billed automatically because the student is no longer active.
+        // Reported so the screen never says "nothing to fix" while a gap exists.
+        public int HeldBackCount;
+        public decimal HeldBackAmount;
+        public string StudentStatus = "";
         public List<FixSample> Samples = new List<FixSample>();
     }
 
@@ -1643,6 +1767,8 @@ public partial class COOPERP_NewScreens_StudentLedgers : System.Web.UI.Page
         public int StudyYear;
         public string ProgCode;
         public string StudentName;
+        public string StudentStatus;
+        public bool IsInactive;
         public bool HasTuition;
         public bool HasFunctional;
         public decimal Tuition;
@@ -1669,6 +1795,7 @@ public partial class COOPERP_NewScreens_StudentLedgers : System.Web.UI.Page
         }
 
         int deleted = 0;
+        int orphanCr = 0;
         decimal balBefore = 0;
         decimal balAfter = 0;
 
@@ -1683,27 +1810,127 @@ public partial class COOPERP_NewScreens_StudentLedgers : System.Web.UI.Page
             int m1, m2, m3, m4;
             DetectDuplicates(conn, regno, dupTids, ref dupDrAmount, out m1, out m2, out m3, out m4);
 
+            // Never delete a row that is the ONLY ledger mirror of a posted tracking bill.
+            // The balance is computed from BOTH sources (ledger + unmirrored tracking), so
+            // removing a sole mirror changes nothing — the same charge simply reappears
+            // through tracking — and Fix Billing then reports it as a "missing DR" and puts
+            // it straight back. That is the two tools undoing each other; measured on a real
+            // account, the balance was identical before and after such a delete.
+            int protectedRows = RemoveSoleMirrors(conn, regno, dupTids);
+
             if (dupTids.Count > 0)
             {
-                List<long> tids = new List<long>(dupTids);
-                for (int i = 0; i < tids.Count; i += 500)
+                // One transaction: a partial clean-up of a ledger is worse than none.
+                // The previous version deleted in unwrapped 500-row batches, so a failure
+                // part-way left the account half-cleaned with no way back.
+                using (MySqlTransaction tx = conn.BeginTransaction())
                 {
-                    int end = Math.Min(i + 500, tids.Count);
-                    List<string> batch = new List<string>();
-                    for (int j = i; j < end; j++) batch.Add(tids[j].ToString());
-                    string delSql = "DELETE FROM fin_ledger WHERE TID IN (" + string.Join(",", batch.ToArray()) + ")";
-                    using (MySqlCommand cmd = new MySqlCommand(delSql, conn))
+                    try
                     {
-                        deleted += cmd.ExecuteNonQuery();
+                        List<long> tids = new List<long>(dupTids);
+                        for (int i = 0; i < tids.Count; i += 500)
+                        {
+                            int end = Math.Min(i + 500, tids.Count);
+                            List<string> batch = new List<string>();
+                            for (int j = i; j < end; j++) batch.Add(tids[j].ToString());
+                            string delSql = "DELETE FROM fin_ledger WHERE TID IN (" + string.Join(",", batch.ToArray()) + ")";
+                            using (MySqlCommand cmd = new MySqlCommand(delSql, conn, tx))
+                            {
+                                cmd.CommandTimeout = 120;
+                                deleted += cmd.ExecuteNonQuery();
+                            }
+                        }
+
+                        // Keep double entry intact: an income CR whose student DR has just
+                        // gone would otherwise sit in the GL crediting revenue for a charge
+                        // that no longer exists.
+                        orphanCr = DeleteOrphanedIncomeCr(conn, tx, regno);
+
+                        tx.Commit();
+                    }
+                    catch
+                    {
+                        tx.Rollback();
+                        throw;
                     }
                 }
             }
 
             balAfter = ComputeStudentBalance(conn, regno);
+
+            Response.Write(string.Format(
+                "{{\"ok\":true,\"deleted\":{0},\"orphan_cr_removed\":{1},\"protected\":{2}," +
+                "\"balance_before\":\"{3}\",\"balance_after\":\"{4}\"}}",
+                deleted, orphanCr, protectedRows,
+                JsEsc(FormatBalance(balBefore)), JsEsc(FormatBalance(balAfter))));
+        }
+    }
+
+    /// <summary>
+    /// Drops from the delete set any ledger row that is the last remaining mirror of a
+    /// posted tracking bill, and returns how many were spared.
+    ///
+    /// Deleting one is pointless and destabilising: the dual-source balance just counts the
+    /// bill from tracking instead (net change zero), and the next Fix Billing run sees a
+    /// "missing DR" and recreates the row. Leaving it alone keeps the two tools from
+    /// fighting over the same account.
+    /// </summary>
+    private int RemoveSoleMirrors(MySqlConnection conn, string regno, HashSet<long> dupTids)
+    {
+        if (dupTids.Count == 0) return 0;
+
+        string all = BuildTidExclusion(dupTids);   // the candidate set, as a SQL IN list
+        string sql =
+            "SELECT l.TID FROM fin_ledger l " +
+            "WHERE l.TID IN (" + all + ") AND l.accountcode=@reg AND l.transactionType='DR' " +
+            "  AND EXISTS ( " +
+            "    SELECT 1 FROM fin_studentfeestracking t " +
+            "    WHERE t.regno=@reg AND t.trans_type='Bill' AND t.post_status='Posted' " +
+            "      AND (l.voucherNo=t.TID OR l.folio=CONCAT('BillNo:',t.TID) OR l.tracking_ref=t.TID) " +
+            // ...and nothing that survives this clean-up still mirrors that same bill
+            "      AND NOT EXISTS ( " +
+            "        SELECT 1 FROM fin_ledger k " +
+            "        WHERE k.accountcode=@reg AND k.account_type='Student' AND k.transactionType='DR' " +
+            "          AND k.TID<>l.TID AND k.TID NOT IN (" + all + ") " +
+            "          AND (k.voucherNo=t.TID OR k.folio=CONCAT('BillNo:',t.TID) OR k.tracking_ref=t.TID) " +
+            "      ) " +
+            "  )";
+
+        List<long> spare = new List<long>();
+        using (MySqlCommand cmd = new MySqlCommand(sql, conn))
+        {
+            cmd.CommandTimeout = 60;
+            cmd.Parameters.AddWithValue("@reg", regno);
+            using (MySqlDataReader rdr = cmd.ExecuteReader())
+                while (rdr.Read()) spare.Add(Convert.ToInt64(rdr["TID"]));
         }
 
-        Response.Write(string.Format("{{\"ok\":true,\"deleted\":{0},\"balance_before\":\"{1}\",\"balance_after\":\"{2}\"}}",
-            deleted, JsEsc(FormatBalance(balBefore)), JsEsc(FormatBalance(balAfter))));
+        for (int i = 0; i < spare.Count; i++) dupTids.Remove(spare[i]);
+        return spare.Count;
+    }
+
+    /// <summary>
+    /// Removes income-account credits whose student debit no longer exists, so the GL is
+    /// not left crediting revenue for a charge that has been taken away.
+    /// </summary>
+    private int DeleteOrphanedIncomeCr(MySqlConnection conn, MySqlTransaction tx, string regno)
+    {
+        string sql =
+            "DELETE cr FROM fin_ledger cr " +
+            "WHERE cr.account_type='Chart Account' AND cr.transactionType='CR' " +
+            "  AND cr.tracking_ref IS NOT NULL " +
+            "  AND EXISTS (SELECT 1 FROM fin_studentfeestracking t WHERE t.TID=cr.tracking_ref AND t.regno=@reg) " +
+            "  AND NOT EXISTS ( " +
+            "    SELECT 1 FROM fin_ledger dr " +
+            "    WHERE dr.accountcode=@reg AND dr.account_type='Student' " +
+            "      AND dr.transactionType='DR' AND dr.tracking_ref=cr.tracking_ref " +
+            "  )";
+        using (MySqlCommand cmd = new MySqlCommand(sql, conn, tx))
+        {
+            cmd.CommandTimeout = 60;
+            cmd.Parameters.AddWithValue("@reg", regno);
+            return cmd.ExecuteNonQuery();
+        }
     }
 
     private decimal ComputeStudentBalance(MySqlConnection conn, string regno)

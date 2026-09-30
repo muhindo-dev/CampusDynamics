@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Web;                 // HttpContext, for the page-method auth guard
 using System.Web.Configuration;
 using System.Web.Services;
 using System.Web.UI;
@@ -18,9 +19,43 @@ public partial class COOPERP_NewScreens_OdelDashboard : Page
     private static string S(MySqlDataReader r, int i) { return r.IsDBNull(i) ? "" : Convert.ToString(r.GetValue(i)); }
     private static long L(MySqlDataReader r, int i) { return r.IsDBNull(i) ? 0L : Convert.ToInt64(r.GetValue(i)); }
 
+    /// <summary>
+    /// True when this request carries a signed-in eadmin session.
+    ///
+    /// Page methods bypass the redirect that protects the page itself, so every
+    /// [WebMethod] below has to ask for itself. Accepts either signal the eadmin
+    /// screens establish -- a forms-authentication identity or the Session["username"]
+    /// the older pages set -- because different entry points set one or the other.
+    /// </summary>
+    private static bool Authed()
+    {
+        try
+        {
+            HttpContext c = HttpContext.Current;
+            if (c == null) return false;
+            if (c.User != null && c.User.Identity != null && c.User.Identity.IsAuthenticated
+                && !string.IsNullOrEmpty(c.User.Identity.Name)) return true;
+            if (c.Session != null)
+            {
+                object u = c.Session["username"];
+                if (u != null && !string.IsNullOrEmpty(u.ToString().Trim())) return true;
+            }
+        }
+        catch { }
+        return false;
+    }
+
+    private static string NotSignedIn()
+    {
+        // 200 with success:false, not 401: a 401 is rewritten into the HTML login page
+        // and the caller reports a failed request instead of an expired session.
+        return Json.Serialize(new { success = false, message = "Your session has expired. Please sign in again, then retry." });
+    }
+
     [WebMethod(EnableSession = true)]
     public static string GetDashboard()
     {
+        if (!Authed()) return NotSignedIn();
         try
         {
             MarksScope scope = MarksScopeResolver.Resolve();
