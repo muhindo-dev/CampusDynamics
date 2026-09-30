@@ -764,7 +764,26 @@ public static partial class StudentRearrangeService
         //
         // The role check stays. Removing somebody's published mark is not an everyday edit, and
         // that check was never the one anybody was stuck behind.
-        if (x.resultId > 0)
+        //
+        // AND THE RESULT IS ONLY ORPHANED WHEN ITS LAST REGISTRATION GOES. acad_results is
+        // UNIQUE on (regno, courseid) with no term in the key, so there is ONE result row per
+        // course however many times the course is registered, and LoadReg hands back that same
+        // resultId for every one of them. Treating the result as belonging to whichever
+        // registration is being deleted destroyed a real mark: removing an empty duplicate of
+        // BEF2102 for MRU2023001191 took the 78/B+ that belonged to a different registration
+        // entirely. Counting what is left is the only honest test of orphanhood.
+        int siblings = 0;
+        using (var cmd = Cmd("SELECT COUNT(*) FROM campus_dynamics_portal.acad_course_registration " +
+                             "WHERE regno=@r AND UPPER(TRIM(courseID))=UPPER(TRIM(@c)) AND ID<>@i", c, t))
+        {
+            cmd.Parameters.AddWithValue("@r", sess.regno);
+            cmd.Parameters.AddWithValue("@c", x.course);
+            cmd.Parameters.AddWithValue("@i", x.id);
+            siblings = Convert.ToInt32(cmd.ExecuteScalar());
+        }
+        bool resultLosesItsHome = x.resultId > 0 && siblings == 0;
+
+        if (resultLosesItsHome)
         {
             if (!CanOverrideLock())
             {
@@ -798,7 +817,7 @@ public static partial class StudentRearrangeService
         // pk_value, so it needs nothing new to understand this. Same transaction, so the pair
         // can never come apart.
         bool resultRemoved = false;
-        if (x.resultId > 0)
+        if (resultLosesItsHome)
         {
             var rBefore = ReadRow(c, t, "campus_dynamics.acad_results", "ID", x.resultId);
             if (rBefore != null)

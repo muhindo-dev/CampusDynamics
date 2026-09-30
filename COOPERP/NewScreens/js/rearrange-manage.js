@@ -1130,12 +1130,25 @@ function requestDelete(regId) {
     var c = findCourse(regId);
     if (!c) return;
     var warn = '';
-    // The result is no longer left behind, so the warning no longer threatens an orphan. It
-    // says what actually happens, which is more serious, not less: the mark goes too.
-    if (c.resultId) warn = '<div class="rx-err">' + esc(c.course) + ' has a <b>published result</b> (grade ' +
-                           esc(c.grade || '—') + '). Removing the registration <b>also removes that ' +
-                           'result</b>, and the semester GPA is recalculated. Both are archived together and ' +
-                           'are restored together if this is reversed.</div>';
+    // One result row serves every registration of the same course, so removing a duplicate
+    // leaves the mark with somewhere to live and the mark stays. Only the last registration
+    // takes it. The warning has to make that distinction or it frightens people away from
+    // tidying duplicates, which is the very thing this screen is for.
+    if (c.resultId) {
+        var others = 0, rows = allRows();
+        for (var i = 0; i < rows.length; i++)
+            if (rows[i].regId !== regId && rows[i].course === c.course) others++;
+
+        warn = others > 0
+            ? '<div class="rx-warn">' + esc(c.course) + ' has a <b>published result</b> (grade ' +
+              esc(c.grade || '—') + '), but ' + others + ' other registration' + (others === 1 ? '' : 's') +
+              ' of this course remain' + (others === 1 ? 's' : '') + ', so the result is <b>kept</b> and ' +
+              'stays attached to those. Only the registration is removed.</div>'
+            : '<div class="rx-err">' + esc(c.course) + ' has a <b>published result</b> (grade ' +
+              esc(c.grade || '—') + ') and this is its <b>last registration</b>, so removing it <b>also ' +
+              'removes that result</b> and the semester GPA is recalculated. Both are archived together ' +
+              'and restored together if this is reversed.</div>';
+    }
     askReason({
         title: 'Remove this course registration', kind: 'remove',
         context: warn + '<div class="rx-warn">The registration is <b>archived, not destroyed</b>. ' +
