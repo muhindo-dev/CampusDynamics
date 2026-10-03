@@ -769,6 +769,17 @@ public static partial class StudentRearrangeService
         int regId = GI(op, "regId");
         string reason = GS(op, "reason");
 
+        // A negative regId is a classic result: the workspace draws result-only rows under
+        // -resultId. A page still running an older script sends those as an ordinary DELETE,
+        // which used to fail with "registration no longer on the record". The intent is
+        // unambiguous, so honour it here instead of refusing: route to the result removal,
+        // with all of its own guards, rather than making the operator work out why.
+        if (regId < 0)
+        {
+            op["resultId"] = -regId;
+            return DoDeleteResult(c, t, sess, batchId, seq, op);
+        }
+
         if (reason.Length < MinOpReason)
         { res.error = "Removing a course registration needs its own typed reason of at least " + MinOpReason + " characters."; return res; }
 
