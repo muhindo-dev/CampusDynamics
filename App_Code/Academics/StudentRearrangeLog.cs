@@ -256,6 +256,13 @@ public static partial class StudentRearrangeService
         }
         catch { err = "Log entry " + logId + " has a snapshot that cannot be read, so it cannot be reversed."; return null; }
 
+        // JavaScriptSerializer writes a DateTime as UTC milliseconds and reads it back as a UTC
+        // DateTime. The database's datetimes are local (EAT, UTC+3), so every timestamp out of a
+        // snapshot came back three hours early. The drift check then refused any reversal of a
+        // row carrying a real timestamp, and a reversal that did go through wrote those
+        // timestamps back three hours wrong. Converting to local here fixes both at the source.
+        LocalDates(before); LocalDates(after);
+
         var current = ReadRow(c, t, qualified, pkCol, pkVal);
 
         // ── ADD is undone by removing the row it created ──
@@ -326,6 +333,15 @@ public static partial class StudentRearrangeService
 
     /// <summary>Compares what this module left behind against what is there now. Returns a
     /// plain description of the first differences found, or null when the record is untouched.</summary>
+    private static void LocalDates(Dictionary<string, object> row)
+    {
+        if (row == null) return;
+        var keys = new List<string>(row.Keys);
+        foreach (string k in keys)
+            if (row[k] is DateTime && ((DateTime)row[k]).Kind == DateTimeKind.Utc)
+                row[k] = DateTime.SpecifyKind(((DateTime)row[k]).ToLocalTime(), DateTimeKind.Unspecified);
+    }
+
     private static string Drift(Dictionary<string, object> expected, Dictionary<string, object> current)
     {
         if (expected == null || current == null) return null;
@@ -334,6 +350,10 @@ public static partial class StudentRearrangeService
         {
             object nowv;
             if (!current.TryGetValue(kv.Key, out nowv)) continue;
+            // gpa is derived, not work anybody did: the batch recalculation stamps it after the
+            // log entry is written, and the reversal recalculates it again at the end. Treating
+            // it as a change made every published mark impossible to undo.
+            if (string.Equals(kv.Key, "gpa", StringComparison.OrdinalIgnoreCase)) continue;
             string a = kv.Value == null ? "" : Convert.ToString(kv.Value, CultureInfo.InvariantCulture);
             string b = nowv == null ? "" : Convert.ToString(nowv, CultureInfo.InvariantCulture);
             if (a == b) continue;

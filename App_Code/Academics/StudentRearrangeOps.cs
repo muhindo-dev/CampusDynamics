@@ -145,6 +145,10 @@ public static partial class StudentRearrangeService
 
                     var done = new List<object>();
                     int seq = 0;
+                    // Read BEFORE any change is applied. It used to be read after the loop, by
+                    // which time a published mark had already moved it, so the log and the save
+                    // summary reported the same CGPA as before and after however much it changed.
+                    double cgpaBefore = Cgpa(c, t, sess.regno);
                     foreach (var op in ops)
                     {
                         seq++;
@@ -179,7 +183,6 @@ public static partial class StudentRearrangeService
                     }
 
                     // ── Downstream recalculation, logged with old and new values ──
-                    double cgpaBefore = Cgpa(c, t, sess.regno);
                     var gpaMoves = Recalculate(c, t, sess.regno);
                     double cgpaAfter = Cgpa(c, t, sess.regno);
 
@@ -724,42 +727,149 @@ public static partial class StudentRearrangeService
         }
         var after = ReadRow(c, t, "campus_dynamics_portal.acad_course_registration", "ID", x.id);
 
+        // ── This screen works to finals ───────────────────────────────────────
+        // A mark entered or changed here IS the final result. There is no lecturer, HOD, dean
+        // or senate step after it: the registration is marked published, the result row is
+        // written to match, and the batch recalculation at the end of Save rewrites the
+        // semester GPA and the CGPA. Before this, a mark typed onto a course with no result yet
+        // went into the provisional columns and stopped there, so the student saw nothing and
+        // the status check showed it waiting for a lecturer who would never come.
+        string finalNote = Finalise(c, t, sess, batchId, seq, x, after, reason, isOverride, lockStatus);
+
+        // Logged AFTER finalising, so the after-image includes the published status. Logged
+        // before it, the reversal's drift check would find the row changed since the log and
+        // refuse to undo it.
+        after = ReadRow(c, t, "campus_dynamics_portal.acad_course_registration", "ID", x.id);
         LogEntry(c, t, sess, batchId, seq, "MARK_CHANGE", "campus_dynamics_portal", "acad_course_registration",
                  "ID", Convert.ToString(x.id), x.course, Json.Serialize(before), Json.Serialize(after),
                  reason, isOverride, isOverride ? "STATUS_LOCK" : null,
                  isOverride ? GS(op, "overrideReason") : null, lockStatus);
 
-        // A published result must follow the mark, or the transcript and the sheet disagree.
-        if (x.resultId > 0)
-        {
-            int total = 0;
-            object tv = after.ContainsKey("provisional_total_marks") ? after["provisional_total_marks"] : null;
-            if (tv != null) total = Convert.ToInt32(tv);
-            string grade = GradeOf(total);
-            double pt = PointOf(grade);
-
-            var b2 = ReadRow(c, t, "campus_dynamics.acad_results", "ID", x.resultId);
-            using (var cmd = Cmd("UPDATE campus_dynamics.acad_results SET score=@s, grade=@g, gradept=@p WHERE ID=@i", c, t))
-            {
-                cmd.Parameters.AddWithValue("@s", total);
-                cmd.Parameters.AddWithValue("@g", grade);
-                cmd.Parameters.AddWithValue("@p", pt);
-                cmd.Parameters.AddWithValue("@i", x.resultId);
-                cmd.ExecuteNonQuery();
-            }
-            var a2 = ReadRow(c, t, "campus_dynamics.acad_results", "ID", x.resultId);
-            LogEntry(c, t, sess, batchId, seq, "MARK_CHANGE", "campus_dynamics", "acad_results", "ID",
-                     Convert.ToString(x.resultId), x.course, Json.Serialize(b2), Json.Serialize(a2),
-                     reason, isOverride, isOverride ? "STATUS_LOCK" : null,
-                     isOverride ? GS(op, "overrideReason") : null, lockStatus);
-        }
-
         res.applied = true;
         res.summary = x.course + " " + (field == "cw" ? "coursework" : "exam") + " mark changed from " +
                       (oldVal == null ? "blank" : Convert.ToString(oldVal)) + " to " +
                       (newVal.HasValue ? newVal.Value.ToString() : "blank") + ", reason: " + reason +
-                      (isOverride ? " (results lock overridden at " + lockStatus + ")" : "");
+                      (isOverride ? " (results lock overridden at " + lockStatus + ")" : "") +
+                      finalNote;
         return res;
+    }
+
+    /// <summary>
+    /// Bring a registration whose marks were just written all the way to published.
+    ///
+    /// Only when BOTH components are present. Publishing on one of them would turn coursework
+    /// alone into a total, and almost always into an F the student never earned; that half-way
+    /// state is left provisional and said so in the summary, so nobody mistakes it for done.
+    ///
+    /// The stage is not written by hand. provisional_marks_status goes to 'published' and
+    /// MarkStageSync derives mark_stage from it, exactly as the Senate publish does, so this
+    /// screen and the pipeline can never disagree about what PUBLISHED means.
+    ///
+    /// acad_results is UNIQUE on (regno, courseid): one result row per course. If one exists,
+    /// whichever registration it was filed under, it is updated and moved to THIS registration's
+    /// term, because the registration records what the student sat. Otherwise it is created.
+    /// Both are logged with before and after images, so the ordinary reversal undoes them.
+    /// </summary>
+    private static string Finalise(MySqlConnection c, MySqlTransaction t, SessionInfo sess, long batchId,
+                                   int seq, RegRow x, Dictionary<string, object> after, string reason,
+                                   bool isOverride, string lockStatus)
+    {
+        object cwv = after.ContainsKey("provisional_course_work_marks") ? after["provisional_course_work_marks"] : null;
+        object exv = after.ContainsKey("provisional_exam_marks") ? after["provisional_exam_marks"] : null;
+        if (cwv == null || exv == null)
+            return " (not published yet: " + (cwv == null ? "coursework" : "exam") +
+                   " is blank, so there is no final total to publish)";
+
+        int total = Convert.ToInt32(cwv) + Convert.ToInt32(exv);
+        string grade = GradeOf(total);
+        double pt = PointOf(grade);
+        string actor = sess.actor ?? "";
+
+        // 1. The registration: published, stamped, and its stage derived the standard way.
+        using (var cmd = Cmd("UPDATE campus_dynamics_portal.acad_course_registration SET " +
+                             "provisional_total_marks=@tot, provisional_marks_status='published', " +
+                             "provisional_published_by=@a, provisional_published_date=NOW() WHERE ID=@i", c, t))
+        {
+            cmd.Parameters.AddWithValue("@tot", total);
+            cmd.Parameters.AddWithValue("@a", actor);
+            cmd.Parameters.AddWithValue("@i", x.id);
+            cmd.ExecuteNonQuery();
+        }
+        MarkStageSync.Sync(c, t, x.id, actor, "");
+
+        // 2. Where the result belongs: this registration's term and study year.
+        int studyYear = x.studyYear;
+        using (var cmd = Cmd("SELECT COALESCE(MAX(studyyear),0) FROM campus_dynamics.acad_registration " +
+                             "WHERE regno=@r AND acad_year=@a AND semester=@s", c, t))
+        {
+            cmd.Parameters.AddWithValue("@r", sess.regno);
+            cmd.Parameters.AddWithValue("@a", x.acadYear);
+            cmd.Parameters.AddWithValue("@s", x.semester);
+            int sy = Convert.ToInt32(cmd.ExecuteScalar());
+            if (sy > 0) studyYear = sy;
+        }
+        if (studyYear <= 0) studyYear = 1;
+
+        double cu = 0;
+        using (var cmd = Cmd("SELECT COALESCE(MAX(CreditUnit),0) FROM campus_dynamics.acad_course WHERE courseID=@c", c, t))
+        {
+            cmd.Parameters.AddWithValue("@c", x.course);
+            cu = Convert.ToDouble(cmd.ExecuteScalar());
+        }
+        bool retake = string.Equals((x.courseStatus ?? "").Trim(), "RETAKE", StringComparison.OrdinalIgnoreCase);
+
+        // 3. The result row: update the one that exists, or create it.
+        int rid = 0;
+        using (var cmd = Cmd("SELECT ID FROM campus_dynamics.acad_results WHERE regno=@r AND courseid=@c LIMIT 1", c, t))
+        {
+            cmd.Parameters.AddWithValue("@r", sess.regno);
+            cmd.Parameters.AddWithValue("@c", x.course);
+            object o = cmd.ExecuteScalar();
+            if (o != null && o != DBNull.Value) rid = Convert.ToInt32(o);
+        }
+
+        if (rid > 0)
+        {
+            var b = ReadRow(c, t, "campus_dynamics.acad_results", "ID", rid);
+            using (var cmd = Cmd("UPDATE campus_dynamics.acad_results SET score=@s, grade=@g, gradept=@p, " +
+                                 "acad=@a, semester=@sem, studyyear=@y, " +
+                                 "CreditUnits=CASE WHEN @cu>0 THEN @cu ELSE CreditUnits END WHERE ID=@i", c, t))
+            {
+                cmd.Parameters.AddWithValue("@s", total); cmd.Parameters.AddWithValue("@g", grade);
+                cmd.Parameters.AddWithValue("@p", pt); cmd.Parameters.AddWithValue("@a", x.acadYear);
+                cmd.Parameters.AddWithValue("@sem", x.semester); cmd.Parameters.AddWithValue("@y", studyYear);
+                cmd.Parameters.AddWithValue("@cu", cu); cmd.Parameters.AddWithValue("@i", rid);
+                cmd.ExecuteNonQuery();
+            }
+            var a = ReadRow(c, t, "campus_dynamics.acad_results", "ID", rid);
+            LogEntry(c, t, sess, batchId, seq, "MARK_CHANGE", "campus_dynamics", "acad_results", "ID",
+                     Convert.ToString(rid), x.course, Json.Serialize(b), Json.Serialize(a),
+                     reason, isOverride, isOverride ? "STATUS_LOCK" : null, null, lockStatus);
+        }
+        else
+        {
+            using (var cmd = Cmd("INSERT INTO campus_dynamics.acad_results " +
+                                 "(regno, courseid, acad, semester, studyyear, score, grade, gradept, CreditUnits, progid, is_retake, result_comment) " +
+                                 "VALUES (@r,@c,@a,@sem,@y,@s,@g,@p,@cu,@pg,@rt,@cm)", c, t))
+            {
+                cmd.Parameters.AddWithValue("@r", sess.regno); cmd.Parameters.AddWithValue("@c", x.course);
+                cmd.Parameters.AddWithValue("@a", x.acadYear); cmd.Parameters.AddWithValue("@sem", x.semester);
+                cmd.Parameters.AddWithValue("@y", studyYear); cmd.Parameters.AddWithValue("@s", total);
+                cmd.Parameters.AddWithValue("@g", grade); cmd.Parameters.AddWithValue("@p", pt);
+                cmd.Parameters.AddWithValue("@cu", cu); cmd.Parameters.AddWithValue("@pg", x.progId ?? "");
+                cmd.Parameters.AddWithValue("@rt", retake ? 1 : 0);
+                cmd.Parameters.AddWithValue("@cm", "Published from Student Rearrangement by " + actor);
+                cmd.ExecuteNonQuery();
+                rid = Convert.ToInt32(cmd.LastInsertedId);
+            }
+            var a = ReadRow(c, t, "campus_dynamics.acad_results", "ID", rid);
+            // Logged as ADD so the reversal removes the row it created.
+            LogEntry(c, t, sess, batchId, seq, "ADD", "campus_dynamics", "acad_results", "ID",
+                     Convert.ToString(rid), x.course, null, Json.Serialize(a),
+                     reason, isOverride, isOverride ? "STATUS_LOCK" : null, null, lockStatus);
+        }
+
+        return " and published as final: " + total + ", grade " + grade;
     }
 
     private static OpResult DoDelete(MySqlConnection c, MySqlTransaction t, SessionInfo sess,
