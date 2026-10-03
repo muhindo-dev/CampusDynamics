@@ -410,6 +410,57 @@ public static partial class StudentRearrangeService
                     }
             }
 
+            // ── results the classic system left behind ────────────────────────────────
+            // The query above starts FROM acad_course_registration, so a result with no
+            // registration is invisible to this screen however real it is. The migration that
+            // built the staged pipeline did not reach every row, and those stragglers still
+            // count towards the transcript and the CGPA: a mark nobody can see is a mark nobody
+            // can correct. They come in here as rows of their own, carrying no regId because no
+            // registration owns them, and the screen marks them so nobody mistakes one for an
+            // ordinary registration.
+            using (var cmd = Cmd(
+                "SELECT rs.ID, rs.courseid, COALESCE(NULLIF(co.courseName,''),rs.courseid) title, " +
+                "  rs.acad, rs.semester, COALESCE(rs.studyyear,0), rs.score, rs.grade, rs.gradept, " +
+                "  rs.gpa, rs.CreditUnits, COALESCE(rs.is_retake,0), COALESCE(rs.progid,'') " +
+                "FROM campus_dynamics.acad_results rs " +
+                "LEFT JOIN campus_dynamics.acad_course co ON co.courseID=rs.courseid " +
+                "WHERE rs.regno=@r AND NOT EXISTS ( " +
+                "   SELECT 1 FROM campus_dynamics_portal.acad_course_registration cr " +
+                "    WHERE cr.regno=rs.regno AND cr.courseID=rs.courseid) " +
+                "ORDER BY rs.acad, rs.semester, rs.courseid", c, null))
+            {
+                cmd.Parameters.AddWithValue("@r", regno);
+                using (var r = cmd.ExecuteReader())
+                    while (r.Read())
+                    {
+                        var cw = new CourseRow();
+                        cw.isClassic   = true;
+                        cw.resultId    = I(r, 0);
+                        // The whole screen keys rows by regId: the DOM node, the open/closed
+                        // state, the pending-change maps. A classic result has no registration,
+                        // and giving them all regId 0 would collapse every one of them onto the
+                        // same key. The negative result id is unique by construction, cannot
+                        // collide with a real registration, and its sign says which kind of row
+                        // this is without anyone having to look it up.
+                        cw.regId       = -cw.resultId;
+                        cw.course      = S(r, 1);
+                        cw.title       = S(r, 2);
+                        cw.acadYear    = S(r, 3);
+                        cw.semester    = I(r, 4);
+                        cw.studyYear   = I(r, 5);
+                        cw.score       = NI(r, 6);
+                        cw.grade       = S(r, 7);
+                        cw.gradePt     = r.IsDBNull(8) ? (object)null : Convert.ToDouble(r[8]);
+                        cw.gpa         = r.IsDBNull(9) ? (object)null : Convert.ToDouble(r[9]);
+                        cw.creditUnits = r.IsDBNull(10) ? (object)null : Convert.ToDouble(r[10]);
+                        cw.isRetake    = I(r, 11) == 1;
+                        cw.progId      = S(r, 12);
+                        cw.markStage   = "PUBLISHED";       // it is a final result, by definition
+                        cw.courseStatus = "";
+                        courses.Add(cw);
+                    }
+            }
+
             // A registration with no published result has no studyyear of its own. Infer it from
             // the semester registration that owns its academic year + semester, so it lands in
             // the right group instead of collapsing into "Year 0".
@@ -489,6 +540,10 @@ public static partial class StudentRearrangeService
         public string course, title, acadYear, courseStatus, regType, lecStatus, markStage, progId, grade, lockStatus;
         public object cw, exam, total, score, gradePt, gpa, creditUnits;
         public bool isRetake, locked;
+        /// <summary>A result carried over from the classic system that never got a registration
+        /// row in the staged pipeline. It is real and it counts towards the transcript, but no
+        /// registration owns it, so this screen could not see it until now.</summary>
+        public bool isClassic;
 
         public object ToJson()
         {
@@ -497,7 +552,7 @@ public static partial class StudentRearrangeService
                 regId, course, title, acadYear, semester, studyYear,
                 courseStatus, regType, lecStatus, markStage, progId,
                 cw, exam, total, resultId, score, grade, gradePt, gpa, creditUnits,
-                isRetake, lockStatus, locked,
+                isRetake, lockStatus, locked, isClassic,
                 curriculum = new { year = curYear, semester = curSem }
             };
         }
@@ -511,7 +566,18 @@ public static partial class StudentRearrangeService
     private static string Checksum(List<CourseRow> rows)
     {
         var sb = new StringBuilder();
-        rows.Sort(delegate (CourseRow a, CourseRow b) { return a.regId.CompareTo(b.regId); });
+        // Sort on more than regId. Every classic result carries regId 0, and List.Sort is not
+        // stable, so ordering on regId alone let equal keys come back in a different order from
+        // one load to the next and the checksum would differ for an unchanged record. The screen
+        // would then refuse to save, blaming a concurrent edit that never happened.
+        rows.Sort(delegate (CourseRow a, CourseRow b)
+        {
+            int k = a.regId.CompareTo(b.regId);
+            if (k != 0) return k;
+            k = a.resultId.CompareTo(b.resultId);
+            if (k != 0) return k;
+            return string.Compare(a.course, b.course, StringComparison.Ordinal);
+        });
         foreach (var r in rows)
             sb.Append(r.regId).Append('|').Append(r.course).Append('|').Append(r.acadYear).Append('|')
               .Append(r.semester).Append('|').Append(r.studyYear).Append('|').Append(r.courseStatus).Append('|')

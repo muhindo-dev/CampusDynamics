@@ -359,6 +359,19 @@
     padding: 1px 4px; flex: 0 0 auto; white-space: nowrap; cursor: help;
 }
 
+/* A result carried over from the classic system, with no registration behind it. The marker
+   is an asterisk rather than a word because it sits against the course code where there is
+   room for one character and no more, and because a footnote mark is exactly what this is:
+   the row is real, it just has a caveat. Indigo keeps it clear of the amber discrepancy
+   badge and the red of a pending deletion. */
+.rx-classic {
+    color: #4f46e5; font-weight: 800; font-size: 13px; line-height: 1;
+    margin-left: 2px; cursor: help; vertical-align: super;
+}
+/* The row itself gets a quiet rail, so a column of them reads as a group at a glance
+   without competing with the state colours a row can also carry. */
+.rx-course.rx-is-classic { box-shadow: inset 2px 0 0 #c7d2fe; }
+
 .rx-course__acts { display: flex; gap: 5px; align-items: center; margin-top: 6px; flex-wrap: wrap; }
 .rx-moveto { font-size: 10px; padding: 3px 5px; border: 1px solid #cbd5e1; background: #fff; border-radius: 0; font-family: inherit; }
 .rx-moveto:focus { outline: none; border-color: #174DA4; }

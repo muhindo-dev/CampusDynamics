@@ -571,6 +571,7 @@ function renderCourse(c, sl) {
     var open = !!OPEN[c.regId];
 
     var cls = 'rx-course';
+    if (c.isClassic) cls += ' rx-is-classic';
     if (del) cls += ' rx-is-deleted';
     else if (isNew) cls += ' rx-is-added';
     else if (moved) cls += ' rx-is-moved';
@@ -589,14 +590,19 @@ function renderCourse(c, sl) {
     var mapped = curY > 0 && curS > 0;
     var offCur = mapped && (curY !== sl.year || curS !== sl.sem);
 
-    var h = '<div class="' + cls + '" draggable="' + (del ? 'false' : 'true') + '" data-reg="' + c.regId + '" ' +
+    // A classic result has no registration to move, so it does not drag. Letting it be
+    // dragged would offer an operation that can only fail.
+    var h = '<div class="' + cls + '" draggable="' + (del || c.isClassic ? 'false' : 'true') + '" data-reg="' + c.regId + '" ' +
             'data-year="' + sl.year + '" data-sem="' + sl.sem + '">';
 
     /* ── the line you always see ── */
     h += '<div class="rx-course__hd" data-toggle="' + c.regId + '" role="button" tabindex="0" ' +
          'aria-expanded="' + (open ? 'true' : 'false') + '">';
     h += chev(open);
-    h += '<span class="rx-course__code">' + esc(c.course) + '</span>';
+    h += '<span class="rx-course__code">' + esc(c.course) +
+         (c.isClassic ? '<span class="rx-classic" title="Classic result: a mark carried over from the ' +
+                        'old system that has no course registration behind it. It still counts towards ' +
+                        'the transcript and the CGPA.">*</span>' : '') + '</span>';
     h += '<span class="rx-course__title" title="' + esc(c.title) + '">' + esc(c.title) + '</span>';
     if (c.isRetake) h += '<span class="rx-retake" title="Retake \u2014 never changed by a move">RT</span>';
     if (c.locked) h += '<span class="rx-lock' + (c.lockStatus === 'FINAL_PUBLISHED' ? ' rx-lock--final' : '') +
@@ -1129,6 +1135,29 @@ function onMarkEdit(regId, field, raw) {
 function requestDelete(regId) {
     var c = findCourse(regId);
     if (!c) return;
+
+    // A classic result has no registration, so there is nothing to archive but the mark
+    // itself. Say so plainly: this is the one case on this screen where the mark is the
+    // whole of what is being removed, rather than a consequence of removing something else.
+    if (c.isClassic) {
+        askReason({
+            title: 'Remove this classic result',
+            kind: 'remove',
+            context: '<div class="rx-err">' + esc(c.course) + ' is a <b>classic result</b> (grade ' +
+                     esc(c.grade || '—') + (c.score != null ? ', mark ' + esc(c.score) : '') +
+                     '). No course registration owns it, so removing it removes <b>the mark itself</b> ' +
+                     'and the semester GPA and CGPA are recalculated.</div>' +
+                     '<div class="rx-warn">It is <b>archived, not destroyed</b>, and can be restored ' +
+                     'in full from the Rearrangement Logs at any time.</div>',
+            min: DATA.minOpReason,
+            hint: 'At least ' + DATA.minOpReason + ' characters.'
+        }, function (rsn) {
+            PEND.deletes[regId] = { reason: rsn, resultId: c.resultId, classic: true };
+            render();
+        });
+        return;
+    }
+
     var warn = '';
     // One result row serves every registration of the same course, so removing a duplicate
     // leaves the mark with somewhere to live and the mark stays. Only the last registration
@@ -1428,8 +1457,15 @@ function buildOps() {
         if (mm.cw) ops.push({ op: 'MARK', regId: +k2, field: 'cw', value: mm.cw.to, reason: mm.cw.reason, overrideReason: mm.cw.overrideReason || '' });
         if (mm.exam) ops.push({ op: 'MARK', regId: +k2, field: 'exam', value: mm.exam.to, reason: mm.exam.reason, overrideReason: mm.exam.overrideReason || '' });
     }
-    for (var k3 in PEND.deletes) if (PEND.deletes.hasOwnProperty(k3))
-        ops.push({ op: 'DELETE', regId: +k3, reason: PEND.deletes[k3].reason });
+    for (var k3 in PEND.deletes) if (PEND.deletes.hasOwnProperty(k3)) {
+        var d = PEND.deletes[k3];
+        // A classic result is removed by its own operation, which carries the result id. The
+        // negative key the row is drawn under is a client-side identity and means nothing to
+        // the server, so it is deliberately not sent.
+        ops.push(d.classic
+            ? { op: 'DELETE_RESULT', resultId: d.resultId, reason: d.reason }
+            : { op: 'DELETE', regId: +k3, reason: d.reason });
+    }
     return ops;
 }
 
@@ -1474,12 +1510,21 @@ function plain(op) {
         case 'DELETE':
             c = findCourse(op.regId);
             return (c ? c.course : 'Course ' + op.regId) + ' registration removed (archived and reversible), reason: ' + op.reason;
+        case 'DELETE_RESULT':
+            // Found by result id, because a classic row's negative regId is never sent.
+            c = null;
+            for (var ci = 0, cr = allRows(); ci < cr.length; ci++)
+                if (cr[ci].resultId === op.resultId) { c = cr[ci]; break; }
+            return (c ? c.course : 'Result ' + op.resultId) +
+                   ' classic result removed, the mark itself (archived and reversible), reason: ' + op.reason;
     }
     return op.op;
 }
-var CLS = { MOVE: 'is-moved', ADD: 'is-added', DELETE: 'is-deleted', MARK: 'is-mark', REGSEM: 'is-regsem' };
+var CLS = { MOVE: 'is-moved', ADD: 'is-added', DELETE: 'is-deleted', MARK: 'is-mark', REGSEM: 'is-regsem',
+            DELETE_RESULT: 'is-deleted' };
 var GROUP = { REGSEM: 'Semester registrations', ADD: 'Courses added', MOVE: 'Courses moved',
-              MARK: 'Mark changes', DELETE: 'Registrations removed' };
+              MARK: 'Mark changes', DELETE: 'Registrations removed',
+              DELETE_RESULT: 'Classic results removed' };
 
 qs('rx-save').addEventListener('click', function () {
     var ops = buildOps();
@@ -1499,7 +1544,7 @@ qs('rx-save').addEventListener('click', function () {
     }
     if (warns.length) h += '<div class="rx-warn"><b>Warnings</b><br />• ' + warns.join('<br />• ') + '</div>';
 
-    var order = ['REGSEM', 'ADD', 'MOVE', 'MARK', 'DELETE'], n = 0;
+    var order = ['REGSEM', 'ADD', 'MOVE', 'MARK', 'DELETE', 'DELETE_RESULT'], n = 0;
     for (var g = 0; g < order.length; g++) {
         var kind = order[g];
         var items = ops.filter(function (o) { return o.op === kind; });

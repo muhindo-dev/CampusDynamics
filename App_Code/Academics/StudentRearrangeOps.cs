@@ -158,6 +158,7 @@ public static partial class StudentRearrangeService
                             case "MOVE":   r = DoMove(c, t, sess, batchId, seq, op); break;
                             case "MARK":   r = DoMark(c, t, sess, batchId, seq, op); break;
                             case "DELETE": r = DoDelete(c, t, sess, batchId, seq, op); break;
+                            case "DELETE_RESULT": r = DoDeleteResult(c, t, sess, batchId, seq, op); break;
                             default:       r = new OpResult { applied = false, error = "Unknown change type '" + kind + "'." }; break;
                         }
 
@@ -332,6 +333,34 @@ public static partial class StudentRearrangeService
                     rows.Add(cw);
                 }
         }
+        // Classic results are rows on the workspace too, so they are rows here. The two sides
+        // have to be built from the same facts or the optimistic lock compares different
+        // records and reports a conflict that nobody caused: with a classic result present and
+        // this query missing it, NO save for that student could ever succeed. Mirrors the
+        // workspace exactly, negative regId included, because the checksum hashes that field.
+        using (var cmd = Cmd(
+            "SELECT rs.ID, rs.courseid, rs.acad, rs.semester, COALESCE(rs.studyyear,0), rs.score, " +
+            "       COALESCE(rs.grade,'') " +
+            "FROM campus_dynamics.acad_results rs " +
+            "WHERE rs.regno=@r AND NOT EXISTS ( " +
+            "   SELECT 1 FROM campus_dynamics_portal.acad_course_registration cr " +
+            "    WHERE cr.regno=rs.regno AND cr.courseID=rs.courseid)", c, t))
+        {
+            cmd.Parameters.AddWithValue("@r", regno);
+            using (var r = cmd.ExecuteReader())
+                while (r.Read())
+                {
+                    var cw = new CourseRow();
+                    cw.resultId = I(r, 0);
+                    cw.regId = -cw.resultId;
+                    cw.course = S(r, 1); cw.acadYear = S(r, 2); cw.semester = I(r, 3);
+                    cw.studyYear = I(r, 4); cw.score = NI(r, 5); cw.grade = S(r, 6);
+                    cw.courseStatus = ""; cw.markStage = "PUBLISHED";
+                    cw.cw = null; cw.exam = null; cw.total = null;
+                    rows.Add(cw);
+                }
+        }
+
         // The workspace fills a missing studyyear from the semester registration; the checksum
         // must be computed on the same basis or it would never match.
         var byTerm = new Dictionary<string, int>();
@@ -838,6 +867,90 @@ public static partial class StudentRearrangeService
                            (x.score == null ? "no score" : Convert.ToString(x.score)) + ", grade " + x.grade + ")"
                          : "") +
                       ", reason: " + reason + " (archived and reversible)";
+        return res;
+    }
+
+    /// <summary>
+    /// Remove a result the classic system left behind, one that no registration owns.
+    ///
+    /// Deliberately its own operation rather than a branch of DoDelete. DoDelete is about a
+    /// registration and only reaches the result as a consequence; this is about the result
+    /// itself, and the two have different guards and different failure modes. Folding them
+    /// together is how a delete ends up doing something nobody asked it to, which is exactly
+    /// what happened the last time these two concerns were mixed.
+    ///
+    /// The row is archived into the log before it goes, under its own table, so the ordinary
+    /// reversal puts it back: ReverseOne restores from db_name, table_name and pk_value and
+    /// needs to know nothing about classic results. The batch recalculation at the end then
+    /// rewrites the semester GPA and the CGPA, which a removed mark certainly changes.
+    /// </summary>
+    private static OpResult DoDeleteResult(MySqlConnection c, MySqlTransaction t, SessionInfo sess,
+                                           long batchId, int seq, Dictionary<string, object> op)
+    {
+        var res = new OpResult();
+        int resultId = GI(op, "resultId");
+        string reason = GS(op, "reason");
+
+        if (resultId <= 0) { res.error = "No result was given to remove."; return res; }
+        if (reason.Length < MinOpReason)
+        {
+            res.error = "Removing a classic result needs its own typed reason of at least " +
+                        MinOpReason + " characters.";
+            return res;
+        }
+
+        // Deleting somebody's mark is the same weight of act whichever table it sits in.
+        if (!CanOverrideLock())
+        {
+            res.error = "Only the Academic Registrar, a Dean or a system administrator may remove a result.";
+            return res;
+        }
+
+        string course = "", acad = "", grade = ""; int sem = 0; object score = null;
+        using (var cmd = Cmd("SELECT courseid, acad, semester, score, grade FROM campus_dynamics.acad_results " +
+                             "WHERE ID=@i AND regno=@r", c, t))
+        {
+            cmd.Parameters.AddWithValue("@i", resultId);
+            cmd.Parameters.AddWithValue("@r", sess.regno);
+            using (var r = cmd.ExecuteReader())
+            {
+                if (!r.Read()) { res.error = "That result is no longer on this student's record."; return res; }
+                course = S(r, 0); acad = S(r, 1); sem = I(r, 2);
+                score = r.IsDBNull(3) ? null : (object)Convert.ToInt32(r[3]); grade = S(r, 4);
+            }
+        }
+
+        // If a registration has appeared since the screen was loaded then this is not a classic
+        // result any more, and removing it here would bypass the checks belonging to the
+        // registration it now has. Refuse, and say what to do instead.
+        int owners;
+        using (var cmd = Cmd("SELECT COUNT(*) FROM campus_dynamics_portal.acad_course_registration " +
+                             "WHERE regno=@r AND UPPER(TRIM(courseID))=UPPER(TRIM(@c))", c, t))
+        {
+            cmd.Parameters.AddWithValue("@r", sess.regno);
+            cmd.Parameters.AddWithValue("@c", course);
+            owners = Convert.ToInt32(cmd.ExecuteScalar());
+        }
+        if (owners > 0)
+        {
+            res.error = course + " now has a course registration, so it is no longer a classic result. " +
+                        "Reload the student and remove the registration instead, which takes the result with it.";
+            return res;
+        }
+
+        var before = ReadRow(c, t, "campus_dynamics.acad_results", "ID", resultId);
+        LogEntry(c, t, sess, batchId, seq, "DELETE", "campus_dynamics", "acad_results",
+                 "ID", Convert.ToString(resultId), course, Json.Serialize(before), null,
+                 reason, true, "CLASSIC_RESULT", reason, "CLASSIC");
+
+        using (var cmd = Cmd("DELETE FROM campus_dynamics.acad_results WHERE ID=@i", c, t))
+        { cmd.Parameters.AddWithValue("@i", resultId); cmd.ExecuteNonQuery(); }
+
+        res.applied = true;
+        res.summary = course + " classic result removed from " + (acad == "" ? "?" : acad) +
+                      " Semester " + sem + " (" + (score == null ? "no score" : Convert.ToString(score)) +
+                      ", grade " + (grade == "" ? "-" : grade) + "), reason: " + reason +
+                      " (archived and reversible)";
         return res;
     }
 
