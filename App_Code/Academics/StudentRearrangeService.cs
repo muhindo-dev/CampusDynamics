@@ -629,7 +629,18 @@ public static partial class StudentRearrangeService
     /// moved rather than merely that something was recomputed.</summary>
     private static List<object> Recalculate(MySqlConnection c, MySqlTransaction t, string regno)
     {
-        var before = ReadGpaMap(c, t, regno);
+        return Recalculate(c, t, regno, null);
+    }
+
+    /// <summary>
+    /// beforeMap, when given, is the GPA picture taken before the batch's changes ran. Without
+    /// it the "before" is read here, after rows have already been moved between semesters, and
+    /// the report says nothing changed when a semester's GPA plainly did.
+    /// </summary>
+    private static List<object> Recalculate(MySqlConnection c, MySqlTransaction t, string regno,
+                                            Dictionary<string, double> beforeMap)
+    {
+        var before = beforeMap ?? ReadGpaMap(c, t, regno);
 
         using (var cmd = Cmd(
             "UPDATE campus_dynamics.acad_results r JOIN (" +

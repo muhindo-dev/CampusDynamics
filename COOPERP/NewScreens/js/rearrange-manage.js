@@ -590,9 +590,9 @@ function renderCourse(c, sl) {
     var mapped = curY > 0 && curS > 0;
     var offCur = mapped && (curY !== sl.year || curS !== sl.sem);
 
-    // A classic result has no registration to move, so it does not drag. Letting it be
-    // dragged would offer an operation that can only fail.
-    var h = '<div class="' + cls + '" draggable="' + (del || c.isClassic ? 'false' : 'true') + '" data-reg="' + c.regId + '" ' +
+    // Classic results drag like any other row: the server re-terms the result itself, there
+    // being no registration to move.
+    var h = '<div class="' + cls + '" draggable="' + (del ? 'false' : 'true') + '" data-reg="' + c.regId + '" ' +
             'data-year="' + sl.year + '" data-sem="' + sl.sem + '">';
 
     /* ── the line you always see ── */

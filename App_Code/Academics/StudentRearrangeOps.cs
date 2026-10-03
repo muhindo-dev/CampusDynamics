@@ -149,6 +149,7 @@ public static partial class StudentRearrangeService
                     // which time a published mark had already moved it, so the log and the save
                     // summary reported the same CGPA as before and after however much it changed.
                     double cgpaBefore = Cgpa(c, t, sess.regno);
+                    var gpaBefore = ReadGpaMap(c, t, sess.regno);
                     foreach (var op in ops)
                     {
                         seq++;
@@ -183,7 +184,15 @@ public static partial class StudentRearrangeService
                     }
 
                     // ── Downstream recalculation, logged with old and new values ──
-                    var gpaMoves = Recalculate(c, t, sess.regno);
+                    // ── Harmonise, every save ──
+                    // Whatever the operations were, the student leaves this screen consistent:
+                    // every result sits in the term of a registration that owns it, and every
+                    // registration holding a result reads PUBLISHED. Each correction is logged
+                    // and reverses with the batch. See Harmonise for why this exists.
+                    var healed = Harmonise(c, t, sess, batchId, ref seq);
+                    foreach (string h in healed) done.Add(new { seq = seq, op = "HARMONISE", summary = h });
+
+                    var gpaMoves = Recalculate(c, t, sess.regno, gpaBefore);
                     double cgpaAfter = Cgpa(c, t, sess.regno);
 
                     LogEntry(c, t, sess, batchId, ++seq, "RECALC", "campus_dynamics", "acad_results", "regno",
@@ -566,6 +575,10 @@ public static partial class StudentRearrangeService
         int regId = GI(op, "regId"), toYear = GI(op, "toYear"), toSem = GI(op, "toSem");
         string reason = GS(op, "reason");
 
+        // A negative regId is a classic result (drawn under -resultId). It has no registration
+        // to move, so the result itself is re-termed.
+        if (regId < 0) return DoMoveResult(c, t, sess, batchId, seq, -regId, toYear, toSem, reason);
+
         var x = LoadReg(c, t, sess.regno, regId);
         if (x == null) { res.error = "That course registration is no longer on the student's record."; return res; }
         if (toYear <= 0 || toSem <= 0) { res.error = "The destination year and semester are missing."; return res; }
@@ -870,6 +883,191 @@ public static partial class StudentRearrangeService
         }
 
         return " and published as final: " + total + ", grade " + grade;
+    }
+
+    /// <summary>Re-term a classic result: one with no registration behind it.</summary>
+    private static OpResult DoMoveResult(MySqlConnection c, MySqlTransaction t, SessionInfo sess, long batchId,
+                                         int seq, int resultId, int toYear, int toSem, string reason)
+    {
+        var res = new OpResult();
+        if (toYear <= 0 || toSem <= 0) { res.error = "The destination year and semester are missing."; return res; }
+        string shape = TermShapeError(toYear, toSem);
+        if (shape != null) { res.error = shape; return res; }
+
+        var b = ReadRow(c, t, "campus_dynamics.acad_results", "ID", resultId);
+        if (b == null || !string.Equals(Convert.ToString(b["regno"]), sess.regno, StringComparison.OrdinalIgnoreCase))
+        { res.error = "That result is no longer on this student's record."; return res; }
+
+        string course = Convert.ToString(b["courseid"]);
+        string fromAcad = Convert.ToString(b["acad"]);
+        string basis;
+        string toAcad = AcadYearOf(c, t, sess.regno, toYear, toSem, fromAcad, out basis);
+        if (toAcad.Length == 0)
+        {
+            res.error = "Nothing on this student's record says which academic year Year " + toYear +
+                        " Semester " + toSem + " is. Register that semester in this sitting first.";
+            return res;
+        }
+
+        using (var cmd = Cmd("UPDATE campus_dynamics.acad_results SET acad=@a, semester=@s, studyyear=@y WHERE ID=@i", c, t))
+        {
+            cmd.Parameters.AddWithValue("@a", toAcad); cmd.Parameters.AddWithValue("@s", toSem);
+            cmd.Parameters.AddWithValue("@y", toYear); cmd.Parameters.AddWithValue("@i", resultId);
+            cmd.ExecuteNonQuery();
+        }
+        var a = ReadRow(c, t, "campus_dynamics.acad_results", "ID", resultId);
+        LogEntry(c, t, sess, batchId, seq, "MOVE", "campus_dynamics", "acad_results", "ID",
+                 Convert.ToString(resultId), course, Json.Serialize(b), Json.Serialize(a),
+                 reason, true, "CLASSIC_RESULT", reason, "CLASSIC");
+
+        res.applied = true;
+        res.summary = course + " classic result moved to Year " + toYear + " Semester " + toSem +
+                      " (" + toAcad + "), reason: " + reason;
+        return res;
+    }
+
+    /// <summary>
+    /// Make the student self-consistent. Runs at the end of every save.
+    ///
+    /// acad_results holds ONE row per course, with its own term. Registrations hold their own.
+    /// The portal pairs them by term, so when they disagree the student sees the mark in one
+    /// semester with blank coursework and exam, while this screen shows it in another. That is
+    /// exactly what MRU2025004159 showed: results published from a semester-2 duplicate, the
+    /// duplicate then removed, and the surviving semester-1 registration left holding the marks
+    /// at NOT_ENTERED while its result sat in a semester that no longer had any registration.
+    ///
+    /// The rule, applied course by course:
+    ///   1. A result whose term matches none of the course's registrations moves to the best
+    ///      one: complete marks first, then the most recent term. The registration records what
+    ///      the student sat, so it owns the term.
+    ///   2. The registration the result now sits under is PUBLISHED: a result exists, so the
+    ///      pipeline has, by definition, finished. Status goes through MarkStageSync, exactly as
+    ///      the Senate publish does.
+    /// Classic results (no registration at all) are left alone; they are moved by hand.
+    /// </summary>
+    /// <summary>
+    /// Has this term not started yet? MRU runs semester one from August and semester two from
+    /// January, so in October 2026 the current term is 2026/2027 semester one.
+    /// </summary>
+    private static bool IsFutureTerm(string acadYear, int semester)
+    {
+        int start;
+        if (string.IsNullOrEmpty(acadYear) || acadYear.Length < 4 || !int.TryParse(acadYear.Substring(0, 4), out start))
+            return false;
+        DateTime now = DateTime.Now;
+        int curStart = now.Month >= 8 ? now.Year : now.Year - 1;
+        int curSem = now.Month >= 8 ? 1 : 2;
+        if (start != curStart) return start > curStart;
+        return semester > curSem;
+    }
+
+    private static List<string> Harmonise(MySqlConnection c, MySqlTransaction t, SessionInfo sess,
+                                          long batchId, ref int seq)
+    {
+        var notes = new List<string>();
+        var results = new List<Dictionary<string, object>>();
+        using (var cmd = Cmd("SELECT ID, courseid, acad, semester FROM campus_dynamics.acad_results WHERE regno=@r", c, t))
+        {
+            cmd.Parameters.AddWithValue("@r", sess.regno);
+            using (var r = cmd.ExecuteReader())
+                while (r.Read())
+                    results.Add(new Dictionary<string, object> {
+                        { "id", I(r, 0) }, { "course", S(r, 1) }, { "acad", S(r, 2) }, { "sem", I(r, 3) } });
+        }
+
+        foreach (var res in results)
+        {
+            int rid = (int)res["id"]; string course = (string)res["course"];
+            string acad = (string)res["acad"]; int sem = (int)res["sem"];
+
+            // the course's registrations, best candidate first
+            var regs = new List<int[]>();     // { id, complete, matchesTerm }
+            var terms = new Dictionary<int, string[]>();
+            using (var cmd = Cmd(
+                "SELECT ID, acad_year, semester, " +
+                " (provisional_course_work_marks IS NOT NULL AND provisional_exam_marks IS NOT NULL) complete, " +
+                " COALESCE(mark_stage,'') " +
+                "FROM campus_dynamics_portal.acad_course_registration WHERE regno=@r AND courseID=@c " +
+                "ORDER BY complete DESC, acad_year DESC, semester DESC, ID DESC", c, t))
+            {
+                cmd.Parameters.AddWithValue("@r", sess.regno); cmd.Parameters.AddWithValue("@c", course);
+                using (var r = cmd.ExecuteReader())
+                    while (r.Read())
+                    {
+                        int id = I(r, 0); string ay = S(r, 1); int sm = I(r, 2);
+                        bool match = string.Equals(ay.Trim(), acad.Trim(), StringComparison.OrdinalIgnoreCase) && sm == sem;
+                        regs.Add(new[] { id, I(r, 3), match ? 1 : 0 });
+                        terms[id] = new[] { ay, Convert.ToString(sm), S(r, 4) };
+                    }
+            }
+            if (regs.Count == 0) continue;                 // classic: nobody owns it
+
+            int owner = 0;
+            foreach (var g in regs) if (g[2] == 1) { owner = g[0]; break; }
+
+            // 1. re-home a result filed under a term no registration holds
+            if (owner == 0)
+            {
+                owner = regs[0][0];
+                string toAcad = terms[owner][0]; int toSem = Convert.ToInt32(terms[owner][1]);
+
+                // Unless that registration is for a semester that has not happened yet. A mark
+                // cannot have been earned in the future, so there the REGISTRATION is the error
+                // (a course registered ahead into a later term) and moving the result into it
+                // would misfile a real mark. Leave the result where it was sat, and say so.
+                if (IsFutureTerm(toAcad, toSem))
+                {
+                    notes.Add(course + ": the result is in " + acad + " Semester " + sem + " but its registration is in " +
+                              toAcad + " Semester " + toSem + ", which has not happened yet. The result was left where it " +
+                              "was sat; move the registration back to " + acad + " Semester " + sem + ".");
+                    continue;
+                }
+                int sy = 0;
+                using (var cmd = Cmd("SELECT COALESCE(MAX(studyyear),0) FROM campus_dynamics.acad_registration " +
+                                     "WHERE regno=@r AND acad_year=@a AND semester=@s", c, t))
+                {
+                    cmd.Parameters.AddWithValue("@r", sess.regno); cmd.Parameters.AddWithValue("@a", toAcad);
+                    cmd.Parameters.AddWithValue("@s", toSem);
+                    sy = Convert.ToInt32(cmd.ExecuteScalar());
+                }
+                var b = ReadRow(c, t, "campus_dynamics.acad_results", "ID", rid);
+                using (var cmd = Cmd("UPDATE campus_dynamics.acad_results SET acad=@a, semester=@s, " +
+                                     "studyyear=CASE WHEN @y>0 THEN @y ELSE studyyear END WHERE ID=@i", c, t))
+                {
+                    cmd.Parameters.AddWithValue("@a", toAcad); cmd.Parameters.AddWithValue("@s", toSem);
+                    cmd.Parameters.AddWithValue("@y", sy); cmd.Parameters.AddWithValue("@i", rid);
+                    cmd.ExecuteNonQuery();
+                }
+                var a = ReadRow(c, t, "campus_dynamics.acad_results", "ID", rid);
+                LogEntry(c, t, sess, batchId, ++seq, "HARMONISE", "campus_dynamics", "acad_results", "ID",
+                         Convert.ToString(rid), course, Json.Serialize(b), Json.Serialize(a),
+                         "Result moved to the term of the registration that owns it", false, null, null, null);
+                notes.Add(course + " result moved from " + acad + " Semester " + sem + " to " + toAcad +
+                          " Semester " + toSem + ", where its registration is");
+            }
+
+            // 2. the owning registration is published
+            if (!string.Equals(terms[owner][2], "PUBLISHED", StringComparison.OrdinalIgnoreCase))
+            {
+                var b = ReadRow(c, t, "campus_dynamics_portal.acad_course_registration", "ID", owner);
+                using (var cmd = Cmd("UPDATE campus_dynamics_portal.acad_course_registration SET " +
+                                     "provisional_marks_status='published', " +
+                                     "provisional_published_by=COALESCE(NULLIF(provisional_published_by,''),@a), " +
+                                     "provisional_published_date=COALESCE(provisional_published_date,NOW()) WHERE ID=@i", c, t))
+                {
+                    cmd.Parameters.AddWithValue("@a", sess.actor ?? ""); cmd.Parameters.AddWithValue("@i", owner);
+                    cmd.ExecuteNonQuery();
+                }
+                MarkStageSync.Sync(c, t, owner, sess.actor ?? "", "");
+                var a = ReadRow(c, t, "campus_dynamics_portal.acad_course_registration", "ID", owner);
+                LogEntry(c, t, sess, batchId, ++seq, "HARMONISE", "campus_dynamics_portal", "acad_course_registration",
+                         "ID", Convert.ToString(owner), course, Json.Serialize(b), Json.Serialize(a),
+                         "Registration holds a published result, so it is published", false, null, null, null);
+                notes.Add(course + " registration marked PUBLISHED (it holds a published result; was " +
+                          (terms[owner][2] == "" ? "blank" : terms[owner][2]) + ")");
+            }
+        }
+        return notes;
     }
 
     private static OpResult DoDelete(MySqlConnection c, MySqlTransaction t, SessionInfo sess,
