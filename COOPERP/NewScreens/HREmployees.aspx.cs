@@ -1741,9 +1741,26 @@ public partial class COOPERP_NewScreens_HREmployees : System.Web.UI.Page
             if (!string.IsNullOrEmpty(email))
                 log.Add("Username set to email address '" + email + "'.");
 
+            // No email and no username: the staff code. The eadmin sign-in resolves a staff
+            // code through hrm_employee, so it is a username the person can actually use, and
+            // it is the one identifier every employee record carries. Refusing here is what
+            // left the 113 employees without an email unable to get an account at all.
+            string empCode = "";
+            try
+            {
+                DataTable dc = ExecuteQuery("SELECT EMP_CODE FROM hrm_employee WHERE empID=@id", new MySqlParameter("@id", empID));
+                if (dc.Rows.Count > 0) empCode = NormalizeLoginValue(dc.Rows[0]["EMP_CODE"]);
+            }
+            catch { }
+            if (string.IsNullOrEmpty(targetUsername) && !string.IsNullOrEmpty(empCode))
+            {
+                targetUsername = empCode;
+                log.Add("No email or username on record, so the staff code '" + empCode + "' is used as the username.");
+            }
+
             if (string.IsNullOrEmpty(targetUsername))
             {
-                WriteJson(new Dictionary<string, object> { { "error", "Cannot derive a username — employee has no email and no existing username on record." } });
+                WriteJson(new Dictionary<string, object> { { "error", "Cannot derive a username: the employee has no email, no username and no staff code. Add an email to the employee record, then fix the login." } });
                 return;
             }
 
@@ -1762,141 +1779,57 @@ public partial class COOPERP_NewScreens_HREmployees : System.Web.UI.Page
                 log.Add("Username already set to '" + targetUsername + "' — no change needed.");
             }
 
-            // Find or provision membership account
-            MembershipUser user;
-            MembershipProvider provider;
-            bool provisioned = false;
-
-            if (!TryResolveMembershipUser(targetUsername, email, out user, out provider))
+            // ── Make the account right in BOTH places a member of staff signs in ──────
+            //
+            // eadmin signs in through the default provider (campus_dynamics). The staff side of
+            // the portal signs in through MySQLMembershipProviderAdmin (campus_dynamics_portal).
+            // The old repair searched both, stopped at the FIRST account it found, repaired that
+            // one and reported "Login fix complete". For 119 employees the first one was the
+            // portal account, so eadmin was never touched and still had no account for them:
+            // the fix succeeded, and the person still could not sign in.
+            //
+            // Each store is now checked and repaired on its own, both get the same password, and
+            // the result is proved by an actual ValidateUser against each, which is exactly what
+            // the two sign-in screens call.
+            string finalPassword = !string.IsNullOrEmpty(manualPassword) ? manualPassword : GenerateStrongPassword();
+            if (finalPassword.Length < 6)
             {
-                log.Add("No membership account found — provisioning...");
-                string provisionError;
-                string provisionedUsername;
-                bool autoCreated = AutoProvisionMembershipAccount(empName, targetUsername, email, out provisionedUsername, out provisionError);
-                if (!autoCreated)
-                {
-                    WriteJson(new Dictionary<string, object>
-                    {
-                        { "error", "Account provision failed: " + provisionError },
-                        { "log", log }
-                    });
-                    return;
-                }
-                log.Add("Provisioned membership account '" + provisionedUsername + "'.");
-                provisioned = true;
-
-                if (!TryResolveMembershipUser(provisionedUsername, email, out user, out provider))
-                {
-                    if (!TryResolveMembershipUser(targetUsername, email, out user, out provider))
-                    {
-                        WriteJson(new Dictionary<string, object>
-                        {
-                            { "error", "Account was provisioned but could not be resolved. Please retry in a moment." },
-                            { "log", log }
-                        });
-                        return;
-                    }
-                }
-            }
-            else
-            {
-                log.Add("Found existing account '" + user.UserName + "' via " + provider.Name + ".");
-
-                // If the account was found under a different username (e.g. display name 'Dr. Patrick'
-                // instead of the email), rename it in my_aspnet_users so login by email works.
-                // IMPORTANT: use the connection string that belongs to the provider that found the account —
-                // MySQLMembershipProviderAdmin points at campus_dynamics_portal, not campus_dynamics.
-                if (!string.Equals(user.UserName, targetUsername, StringComparison.OrdinalIgnoreCase))
-                {
-                    try
-                    {
-                        string renameConnStr = string.Equals(provider.Name, "MySQLMembershipProviderAdmin",
-                            StringComparison.OrdinalIgnoreCase)
-                            ? ConfigurationManager.ConnectionStrings["campus_dynamics_portalConnectionString"].ConnectionString
-                            : ConnStr;
-
-                        using (var renameConn = new MySqlConnection(renameConnStr))
-                        {
-                            renameConn.Open();
-                            using (var cmd = new MySqlCommand(
-                                "UPDATE my_aspnet_users SET name=@n WHERE name=@o", renameConn))
-                            {
-                                cmd.Parameters.AddWithValue("@n", targetUsername);
-                                cmd.Parameters.AddWithValue("@o", user.UserName);
-                                int affected = cmd.ExecuteNonQuery();
-                                if (affected == 0)
-                                    log.Add("Warning: rename had no effect (account may already be correct in that database).");
-                            }
-                        }
-                        log.Add("Renamed membership account from '" + user.UserName + "' to '" + targetUsername + "'.");
-
-                        // Re-resolve so the user object reflects the new username
-                        MembershipUser renamedUser;
-                        MembershipProvider renamedProvider;
-                        if (TryResolveMembershipUser(targetUsername, email, out renamedUser, out renamedProvider))
-                        {
-                            user = renamedUser;
-                            provider = renamedProvider;
-                        }
-                    }
-                    catch (Exception renameEx)
-                    {
-                        log.Add("Warning: could not rename membership account — " + renameEx.Message);
-                    }
-                }
-            }
-
-            // Unlock if locked out
-            if (user.IsLockedOut)
-            {
-                provider.UnlockUser(user.UserName);
-                log.Add("Account was locked — now unlocked.");
-            }
-
-            // Reset password
-            string generatedPassword = provider.ResetPassword(user.UserName, null);
-            if (string.IsNullOrEmpty(generatedPassword))
-            {
-                WriteJson(new Dictionary<string, object>
-                {
-                    { "error", "Password reset returned empty. Please retry." },
-                    { "log", log }
-                });
+                WriteJson(new Dictionary<string, object> { { "error", "Password too short. Use at least 6 characters." }, { "log", log } });
                 return;
             }
+            bool customApplied = !string.IsNullOrEmpty(manualPassword);
+            log.Add(customApplied ? "Password set to the value given." : "Password generated.");
 
-            string finalPassword = generatedPassword;
-            bool customApplied = false;
+            var alts = new List<string>();
+            if (!string.IsNullOrEmpty(existingUsername)) alts.Add(existingUsername);
+            if (!string.IsNullOrEmpty(email)) alts.Add(email);
+            if (!string.IsNullOrEmpty(empCode)) alts.Add(empCode);
 
-            if (!string.IsNullOrEmpty(manualPassword))
+            bool provisioned = false;
+            MembershipUser user = null;
+            var stores = new List<KeyValuePair<string, string>>
             {
-                if (manualPassword.Length < 6)
+                new KeyValuePair<string, string>("eadmin", null),
+                new KeyValuePair<string, string>("portal", "MySQLMembershipProviderAdmin")
+            };
+            foreach (var st in stores)
+            {
+                MembershipProvider p = st.Value == null ? Membership.Provider : Membership.Providers[st.Value];
+                if (p == null) { log.Add(st.Key + ": provider not configured, skipped."); continue; }
+                string err; bool created;
+                MembershipUser u = EnsureLogin(p, StoreConn(p), targetUsername, email, alts, finalPassword, st.Key, log, out created, out err);
+                if (u == null)
                 {
-                    WriteJson(new Dictionary<string, object>
-                    {
-                        { "error", "Password too short. Use at least 6 characters." },
-                        { "log", log }
-                    });
+                    WriteJson(new Dictionary<string, object> { { "error", st.Key + " account could not be fixed: " + err }, { "log", log } });
                     return;
                 }
-                bool changed = provider.ChangePassword(user.UserName, generatedPassword, manualPassword);
-                if (!changed)
-                {
-                    WriteJson(new Dictionary<string, object>
-                    {
-                        { "error", "Could not apply specified password. Try a stronger one or leave blank for auto-generate." },
-                        { "log", log }
-                    });
-                    return;
-                }
-                finalPassword = manualPassword;
-                customApplied = true;
-                log.Add("Password set to specified value.");
+                provisioned |= created;
+                if (st.Value == null) user = u;
             }
-            else
-            {
-                log.Add("Password auto-generated.");
-            }
+
+            // Roles live against the username. A login that was renamed leaves its role behind
+            // under the old name, and a login with no role signs in to an empty menu.
+            FixRoles(targetUsername, alts, log);
 
             // ── Does the account now actually resolve to this employee? ──────────────
             //
@@ -1945,6 +1878,206 @@ public partial class COOPERP_NewScreens_HREmployees : System.Web.UI.Page
         {
             WriteJson(new Dictionary<string, object> { { "error", ex.Message } });
         }
+    }
+
+    private string StoreConn(MembershipProvider p)
+    {
+        return string.Equals(p.Name, "MySQLMembershipProviderAdmin", StringComparison.OrdinalIgnoreCase)
+            ? ConfigurationManager.ConnectionStrings["campus_dynamics_portalConnectionString"].ConnectionString
+            : ConnStr;
+    }
+
+    /// <summary>
+    /// One store: find the account by its proper username, then by email, then by any older
+    /// name it was created under; rename a found account to the proper username; create it
+    /// through the provider if there is none; approve it; unlock it; set the password; and prove
+    /// it with ValidateUser. Returns null with the reason when it cannot.
+    ///
+    /// Creation goes through provider.CreateUser, not hand-written INSERTs. The provider owns the
+    /// password hash, the salt and the application id; rows written around it are rows it may
+    /// not recognise.
+    /// </summary>
+    private MembershipUser EnsureLogin(MembershipProvider p, string conn, string target, string email,
+                                       List<string> alts, string password, string label, List<string> log,
+                                       out bool created, out string error)
+    {
+        created = false; error = "";
+        MembershipUser u = null;
+        try { u = p.GetUser(target, false); } catch { }
+
+        if (u == null)
+        {
+            var tries = new List<string>(alts);
+            if (!string.IsNullOrEmpty(email))
+            {
+                try { string byMail = p.GetUserNameByEmail(email); if (!string.IsNullOrEmpty(byMail)) tries.Insert(0, byMail); } catch { }
+            }
+            foreach (string n in tries)
+            {
+                if (string.IsNullOrEmpty(n) || string.Equals(n, target, StringComparison.OrdinalIgnoreCase)) continue;
+                MembershipUser old = null;
+                try { old = p.GetUser(n, false); } catch { }
+                if (old == null) continue;
+                try
+                {
+                    using (var c = new MySqlConnection(conn))
+                    {
+                        c.Open();
+                        using (var cmd = new MySqlCommand("UPDATE my_aspnet_users SET name=@n WHERE name=@o", c))
+                        {
+                            cmd.Parameters.AddWithValue("@n", target);
+                            cmd.Parameters.AddWithValue("@o", old.UserName);
+                            cmd.ExecuteNonQuery();
+                        }
+                    }
+                    log.Add(label + ": account found as '" + old.UserName + "', renamed to '" + target + "'.");
+                    u = p.GetUser(target, false);
+                }
+                catch (Exception ex) { log.Add(label + ": found '" + old.UserName + "' but could not rename it: " + ex.Message); }
+                break;
+            }
+        }
+
+        if (u == null)
+        {
+            // A users row with no membership row is invisible to the provider and blocks
+            // CreateUser with DuplicateUserName. It holds nothing usable, so it goes.
+            try
+            {
+                using (var c = new MySqlConnection(conn))
+                {
+                    c.Open();
+                    using (var cmd = new MySqlCommand(
+                        "DELETE u FROM my_aspnet_users u LEFT JOIN my_aspnet_membership m ON m.userId=u.id " +
+                        "WHERE u.name=@n AND m.userId IS NULL", c))
+                    {
+                        cmd.Parameters.AddWithValue("@n", target);
+                        if (cmd.ExecuteNonQuery() > 0) log.Add(label + ": removed a broken half-account for '" + target + "'.");
+                    }
+                }
+            }
+            catch { }
+
+            // provider.CreateUser cannot work here: MySql.Web 6.6.7 inserts into my_aspnet_users
+            // positionally (VALUES(NULL, app, name, 0, date), no column list), and this table
+            // has gained user_verification_status, verified_email and user_type, so every call
+            // dies with "Column count doesn't match value count" and comes back as a bare
+            // ProviderError. That is why no account could be created from this screen. The two
+            // rows are written here with explicit columns instead, and the password is then set
+            // through the provider, so the hash and salt are still entirely the provider's.
+            try { CreateLoginRows(conn, target, email); }
+            catch (Exception ex) { error = "create failed: " + ex.Message; return null; }
+            u = p.GetUser(target, false);
+            if (u == null) { error = "the account was written but the provider cannot see it"; return null; }
+            created = true;
+            log.Add(label + ": no account existed, created '" + target + "'.");
+        }
+        else log.Add(label + ": account '" + u.UserName + "' exists.");
+
+        try
+        {
+            if (!u.IsApproved) { u.IsApproved = true; p.UpdateUser(u); log.Add(label + ": account was not approved (sign-in is refused for that), now approved."); }
+            if (u.IsLockedOut) { p.UnlockUser(u.UserName); log.Add(label + ": account was locked, now unlocked."); }
+            string tmp = p.ResetPassword(u.UserName, null);
+            if (!p.ChangePassword(u.UserName, tmp, password)) { error = "the password could not be set"; return null; }
+
+            // Staff are LECTURER in both stores. The old repair wrote user_type 'user' and
+            // user_verification_status 1, which the enum stores as ALUMNI, onto staff accounts.
+            using (var c = new MySqlConnection(conn))
+            {
+                c.Open();
+                using (var cmd = new MySqlCommand(
+                    "UPDATE my_aspnet_users SET user_type='LECTURER', " +
+                    "user_verification_status=CASE WHEN user_verification_status='ALUMNI' THEN NULL ELSE user_verification_status END " +
+                    "WHERE name=@n AND (IFNULL(user_type,'') NOT IN ('LECTURER','STAFF') OR user_verification_status='ALUMNI')", c))
+                {
+                    cmd.Parameters.AddWithValue("@n", target);
+                    if (cmd.ExecuteNonQuery() > 0) log.Add(label + ": account type corrected to staff (LECTURER).");
+                }
+            }
+        }
+        catch (Exception ex) { error = ex.Message; return null; }
+
+        bool ok = false;
+        try { ok = p.ValidateUser(target, password); } catch { }
+        if (!ok) { error = "the account is set up but signing in with the new password still fails"; return null; }
+        log.Add(label + ": verified, signing in as '" + target + "' with the new password works.");
+        return p.GetUser(target, false);
+    }
+
+    /// <summary>
+    /// Write a new login's two rows with explicit columns. The password column holds a random
+    /// placeholder that nothing can sign in with; the caller replaces it through the provider.
+    /// </summary>
+    private void CreateLoginRows(string conn, string name, string email)
+    {
+        using (var c = new MySqlConnection(conn))
+        {
+            c.Open();
+            using (var tx = c.BeginTransaction())
+            {
+                int appId = 1;
+                using (var cmd = new MySqlCommand("SELECT id FROM my_aspnet_applications WHERE name='/' LIMIT 1", c, tx))
+                {
+                    object o = cmd.ExecuteScalar();
+                    if (o != null && o != DBNull.Value) appId = Convert.ToInt32(o);
+                }
+                long uid;
+                using (var cmd = new MySqlCommand(
+                    "INSERT INTO my_aspnet_users (applicationId, name, isAnonymous, lastActivityDate, user_type, verified_email) " +
+                    "VALUES (@a, @n, 0, UTC_TIMESTAMP(), 'LECTURER', @e)", c, tx))
+                {
+                    cmd.Parameters.AddWithValue("@a", appId);
+                    cmd.Parameters.AddWithValue("@n", name);
+                    cmd.Parameters.AddWithValue("@e", string.IsNullOrEmpty(email) ? (object)DBNull.Value : email);
+                    cmd.ExecuteNonQuery();
+                    uid = cmd.LastInsertedId;
+                }
+                byte[] key = new byte[16];
+                new System.Security.Cryptography.RNGCryptoServiceProvider().GetBytes(key);
+                using (var cmd = new MySqlCommand(
+                    "INSERT INTO my_aspnet_membership (userId, Email, Comment, Password, PasswordKey, PasswordFormat, " +
+                    " IsApproved, LastActivityDate, LastLoginDate, LastPasswordChangedDate, CreationDate, IsLockedOut, " +
+                    " LastLockedOutDate, FailedPasswordAttemptCount, FailedPasswordAttemptWindowStart, " +
+                    " FailedPasswordAnswerAttemptCount, FailedPasswordAnswerAttemptWindowStart) " +
+                    "VALUES (@u, @e, '', @pw, @k, 1, 1, UTC_TIMESTAMP(), UTC_TIMESTAMP(), UTC_TIMESTAMP(), UTC_TIMESTAMP(), 0, " +
+                    " UTC_TIMESTAMP(), 0, UTC_TIMESTAMP(), 0, UTC_TIMESTAMP())", c, tx))
+                {
+                    cmd.Parameters.AddWithValue("@u", uid);
+                    cmd.Parameters.AddWithValue("@e", string.IsNullOrEmpty(email) ? (object)DBNull.Value : email);
+                    cmd.Parameters.AddWithValue("@pw", Guid.NewGuid().ToString("N"));
+                    cmd.Parameters.AddWithValue("@k", Convert.ToBase64String(key));
+                    cmd.ExecuteNonQuery();
+                }
+                tx.Commit();
+            }
+        }
+    }
+
+    /// <summary>Carry roles from older names to the proper username; warn if there are none.</summary>
+    private void FixRoles(string target, List<string> alts, List<string> log)
+    {
+        try
+        {
+            foreach (string n in alts)
+            {
+                if (string.IsNullOrEmpty(n) || string.Equals(n, target, StringComparison.OrdinalIgnoreCase)) continue;
+                int moved = ExecuteNonQuery(
+                    "UPDATE sys_user_roles SET username=@t WHERE username=@o AND role_id NOT IN " +
+                    "(SELECT role_id FROM (SELECT role_id FROM sys_user_roles WHERE username=@t) x)",
+                    new MySqlParameter("@t", target), new MySqlParameter("@o", n));
+                if (moved > 0) log.Add("Moved " + moved + " role assignment(s) from the old name '" + n + "'.");
+            }
+            DataTable r = ExecuteQuery(
+                "SELECT GROUP_CONCAT(ro.role_name SEPARATOR ', ') roles FROM sys_user_roles ur JOIN sys_roles ro ON ro.id=ur.role_id " +
+                "WHERE ur.username=@t AND ur.is_active=1 AND ro.is_active=1 AND (ur.expires_at IS NULL OR ur.expires_at>NOW())",
+                new MySqlParameter("@t", target));
+            string roles = r.Rows.Count > 0 ? SafeVal(r.Rows[0]["roles"]) : "";
+            log.Add(string.IsNullOrEmpty(roles)
+                ? "WARNING: this login has no active role, so eadmin will open with an empty menu. Assign one in Access Control."
+                : "Roles: " + roles + ".");
+        }
+        catch (Exception ex) { log.Add("Roles could not be checked: " + ex.Message); }
     }
 
     private void WriteSetPhotoAjax()
