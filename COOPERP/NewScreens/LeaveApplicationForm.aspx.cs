@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Configuration;
+using System.Globalization;
 using System.Text;
 using System.Web;
 using MySql.Data.MySqlClient;
@@ -69,13 +70,15 @@ public partial class COOPERP_NewScreens_LeaveApplicationForm : System.Web.UI.Pag
     {
         litPageTitle.Text   = "New Leave Application";
         litStatusBadge.Text = StatusBadge("DRAFT");
-        litHeaderSub.Text   = "Complete all sections and submit for HOD/Supervisor approval.";
+        litHeaderSub.Text   = "Fill in Section 1 and submit it to your Supervisor / HOD.";
         litAppId.Text       = "0";
         litPrintBtn.Text    = "";
+        litLetterRef.Text   = "New application";
         litTimeline.Text    = BuildTimeline("DRAFT", "", "", "");
 
-        string supOptions   = LoadSupervisorOptions();
-        litSection1.Text    = BuildSection1Editable(null, screenName, supOptions);
+        StaffProfile prof   = LoadStaffProfile(username);
+        if (string.IsNullOrEmpty(prof.Name)) prof.Name = screenName;
+        litSection1.Text    = BuildSection1Editable(null, prof, username);
         litSection2.Text    = SectionLocked("2", "Section 2 — Head of Department Approval",
                                   "Waiting for employee to submit the application.");
         litSection3.Text    = SectionLocked("3", "Section 3 — Human Resources Department",
@@ -85,11 +88,8 @@ public partial class COOPERP_NewScreens_LeaveApplicationForm : System.Web.UI.Pag
         litAuditTrail.Text  = "";
 
         var ab = new StringBuilder();
-        ab.Append("<button type=\"button\" class=\"lf-btn lf-btn--outline\" id=\"btnSaveDraft\" onclick=\"saveDraft(false)\">Save Draft</button>");
-        ab.Append("<button type=\"button\" class=\"lf-btn lf-btn--primary\" id=\"btnSubmitApp\" onclick=\"saveDraft(true)\">" +
-                  "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"12\" height=\"12\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><line x1=\"22\" y1=\"2\" x2=\"11\" y2=\"13\"/><polygon points=\"22 2 15 22 11 13 2 9 22 2\"/></svg>" +
-                  " Submit Application</button>");
-        ab.Append("<span class=\"lf-actions__note\">Application will be forwarded to the selected supervisor for HOD approval.</span>");
+        ab.Append(DraftButtons());
+        ab.Append("<span class=\"lf-actions__note\">Save a draft to finish later. Submitting sends it to the Supervisor / HOD you chose.</span>");
         litActionBar.Text = ab.ToString();
     }
 
@@ -114,8 +114,13 @@ public partial class COOPERP_NewScreens_LeaveApplicationForm : System.Web.UI.Pag
         string createdBy = S(app, "created_by");
         string supUser   = S(app, "supervisor_username");
 
-        // Access check: employees see only their own
-        if (!isAdmin && !isHr && !isVc && !isHod &&
+        // Only the assigned Supervisor / HOD (or an admin) can act - the same rule
+        // the hod_approve / hod_decline handlers enforce.
+        bool isAssignedHod = !string.IsNullOrEmpty(supUser) &&
+                             string.Equals(supUser.Trim(), username.Trim(), StringComparison.OrdinalIgnoreCase);
+
+        // Access check: employees see only their own; the assigned supervisor sees theirs
+        if (!isAdmin && !isHr && !isVc && !isHod && !isAssignedHod &&
             !string.Equals(createdBy, username, StringComparison.OrdinalIgnoreCase))
         {
             litSection1.Text  = "<div style=\"color:#dc2626;padding:20px;\">You do not have permission to view this application.</div>";
@@ -130,6 +135,9 @@ public partial class COOPERP_NewScreens_LeaveApplicationForm : System.Web.UI.Pag
                               " &nbsp;·&nbsp; " + FormatDate(app, "leave_from") +
                               " to " + FormatDate(app, "leave_to");
         litAppId.Text       = appId.ToString();
+        string submittedOn  = FormatDate(app, "employee_submitted_at");
+        litLetterRef.Text   = "Application #" + appId +
+                              (string.IsNullOrEmpty(submittedOn) ? "" : " &nbsp;&middot;&nbsp; Submitted " + HttpUtility.HtmlEncode(submittedOn));
         litPrintBtn.Text    =
             "<button type=\"button\" class=\"lf-btn lf-btn--outline\" onclick=\"printForm()\">" +
             "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"11\" height=\"11\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><polyline points=\"6 9 6 2 18 2 18 9\"/><path d=\"M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2\"/><rect x=\"6\" y=\"14\" width=\"12\" height=\"8\"/></svg>" +
@@ -140,13 +148,17 @@ public partial class COOPERP_NewScreens_LeaveApplicationForm : System.Web.UI.Pag
         // ── Section 1 ──────────────────────────────────────────────────────────
         bool canEditDraft = (status == "DRAFT") &&
             (isAdmin || string.Equals(createdBy, username, StringComparison.OrdinalIgnoreCase));
-        litSection1.Text = canEditDraft
-            ? BuildSection1Editable(app, screenName, LoadSupervisorOptions())
-            : BuildSection1Readonly(app);
+        if (canEditDraft)
+        {
+            // Fill any blank employee details from the creator's staff record.
+            StaffProfile prof = LoadStaffProfile(createdBy);
+            litSection1.Text = BuildSection1Editable(app, prof, username);
+        }
+        else
+            litSection1.Text = BuildSection1Readonly(app);
 
         // ── Section 2 ──────────────────────────────────────────────────────────
-        bool isAssignedHod = string.Equals(supUser, username, StringComparison.OrdinalIgnoreCase);
-        bool canActHod = (status == "SUBMITTED") && (isAdmin || isHod || isAssignedHod);
+        bool canActHod = (status == "SUBMITTED") && (isAdmin || isAssignedHod);
 
         if (status == "DRAFT")
             litSection2.Text = SectionLocked("2", "Section 2 — Head of Department Approval",
@@ -193,7 +205,37 @@ public partial class COOPERP_NewScreens_LeaveApplicationForm : System.Web.UI.Pag
 
         litAuditTrail.Text = BuildAuditTrail(appId);
         litActionBar.Text  = BuildActionBar(app, appId, status, username,
-            isAdmin, isHr, isVc, isHod, canEditDraft, canActHod, canActHr, canActVc);
+            isAdmin, isHr, isVc, isHod, canEditDraft, canActHod, canActHr, canActVc) +
+            AppJsData(app);
+    }
+
+    // Values the approver modals pre-fill from (dates, days, cover arrangement).
+    private static string AppJsData(Dictionary<string, object> app)
+    {
+        int nd = N(app, "num_days");
+        string summary =
+            "<strong>" + HttpUtility.HtmlEncode(S(app, "emp_name")) + "</strong> &middot; " +
+            HttpUtility.HtmlEncode(LeaveTypeLabel(S(app, "leave_type"))) + "<br/>" +
+            HttpUtility.HtmlEncode(LongDate(app, "leave_from")) + " to " +
+            HttpUtility.HtmlEncode(LongDate(app, "leave_to")) +
+            (nd > 0 ? " &middot; " + nd + (nd == 1 ? " day" : " days") : "");
+        return "<script>window.LF_APP={" +
+            "from:" + JsStr(DateVal(app, "leave_from")) + "," +
+            "to:"   + JsStr(DateVal(app, "leave_to"))   + "," +
+            "days:" + nd + "," +
+            "cover:"   + JsStr(S(app, "substitute_arrangement")) + "," +
+            "summary:" + JsStr(summary) + "};</script>";
+    }
+
+    private static string DraftButtons()
+    {
+        return
+            "<button type=\"button\" class=\"lf-btn lf-btn--outline\" id=\"btnSaveDraft\" onclick=\"saveDraft(false)\">" +
+            "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"12\" height=\"12\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><path d=\"M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z\"/><polyline points=\"17 21 17 13 7 13 7 21\"/><polyline points=\"7 3 7 8 15 8\"/></svg>" +
+            " Save Draft</button>" +
+            "<button type=\"button\" class=\"lf-btn lf-btn--primary\" id=\"btnSubmitApp\" onclick=\"saveDraft(true)\">" +
+            "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"12\" height=\"12\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><line x1=\"22\" y1=\"2\" x2=\"11\" y2=\"13\"/><polygon points=\"22 2 15 22 11 13 2 9 22 2\"/></svg>" +
+            " Submit Application</button>";
     }
 
     // ══════════════════════════════════════════════════════════════════════════
@@ -277,118 +319,169 @@ public partial class COOPERP_NewScreens_LeaveApplicationForm : System.Web.UI.Pag
     //  SECTION 1 — EMPLOYEE DETAILS
     // ══════════════════════════════════════════════════════════════════════════
 
-    private string BuildSection1Editable(Dictionary<string, object> app, string screenName, string supOptions)
+    private const string ReqMark = "<span class=\"lf-req\" title=\"Required\">*</span>";
+
+    private static readonly string[][] LeaveTypes =
     {
-        string empName  = app != null ? S(app, "emp_name")   : screenName;
-        string empCode  = app != null ? S(app, "emp_code")   : "";
-        string dept     = app != null ? S(app, "faculty_dept") : "";
-        string office   = app != null ? S(app, "office_location") : "";
-        string position = app != null ? S(app, "position_held")   : "";
-        string address  = app != null ? S(app, "residence_address") : "";
-        string mobile   = app != null ? S(app, "mobile_contact")  : "";
-        string nokName  = app != null ? S(app, "nok_name")   : "";
-        string nokAddr  = app != null ? S(app, "nok_address") : "";
-        string nokMob   = app != null ? S(app, "nok_mobile")  : "";
-        string lvType   = app != null ? S(app, "leave_type")  : "annual";
+        new[] { "annual",      "Annual leave",       "Your yearly paid leave entitlement." },
+        new[] { "study",       "Study leave",        "Time off for approved courses or examinations." },
+        new[] { "sick",        "Sick leave",         "Illness, injury or medical treatment." },
+        new[] { "maternity",   "Maternity leave",    "Before and after the birth of your child." },
+        new[] { "bereavement", "Family bereavement", "Death or burial of a close family member." }
+    };
+
+    private string BuildSection1Editable(Dictionary<string, object> app, StaffProfile prof, string currentUser)
+    {
+        if (prof == null) prof = new StaffProfile();
+
+        // Saved draft values win; blanks fall back to the staff record.
+        string empName  = Pick(app, "emp_name",          prof.Name);
+        string empCode  = Pick(app, "emp_code",          prof.Code);
+        string dept     = Pick(app, "faculty_dept",      prof.Dept);
+        string position = Pick(app, "position_held",     prof.Position);
+        string office   = Pick(app, "office_location",   "");
+        string mobile   = Pick(app, "mobile_contact",    prof.Mobile);
+        string address  = Pick(app, "residence_address", prof.Residence);
+        string nokName  = Pick(app, "nok_name",          prof.NokName);
+        string nokMob   = Pick(app, "nok_mobile",        prof.NokPhone);
+        string nokAddr  = Pick(app, "nok_address",       "");
+        string lvType   = app != null ? S(app, "leave_type") : "";
         string lvFrom   = app != null ? DateVal(app, "leave_from") : "";
         string lvTo     = app != null ? DateVal(app, "leave_to")   : "";
-        int    numDays  = app != null ? N(app, "num_days")    : 0;
         string subst    = app != null ? S(app, "substitute_arrangement") : "";
-        string supUname = app != null ? S(app, "supervisor_username") : "";
-        string supDispName = app != null ? S(app, "supervisor_name") : "";
+
+        // Approver: the draft's choice, else the supervisor on the staff record.
+        string supUser  = app != null ? S(app, "supervisor_username") : "";
+        string supName  = app != null ? S(app, "supervisor_name")     : "";
+        bool   supForce = !string.IsNullOrEmpty(supUser);      // keep a saved choice even if no longer listed
+        if (string.IsNullOrEmpty(supUser) && !string.IsNullOrEmpty(prof.SupUsername))
+        {
+            supUser  = prof.SupUsername;
+            supName  = prof.SupName;
+            supForce = prof.SupCanApprove;
+        }
+        bool supFound;
+        string supOptions = BuildSupervisorOptions(LoadSupervisors(), supUser, supName, supForce, currentUser, out supFound);
+
+        bool fromRecord = prof.EmpId > 0;
 
         var sb = new StringBuilder();
-        sb.Append("<div class=\"lf-section lf-section--active\">");
+        sb.Append("<div class=\"lf-section lf-section--active\" id=\"sec1\">");
         sb.Append("<div class=\"lf-section__head\">");
         sb.Append("<div class=\"lf-section__num\">1</div>");
-        sb.Append("<div class=\"lf-section__title\">Section 1 — Employee Details &amp; Leave Request</div>");
-        sb.Append("<span class=\"lf-section__badge badge--waiting\">Filling</span>");
-        sb.Append("</div><div class=\"lf-section__body\">");
+        sb.Append("<div class=\"lf-section__title\">Section 1 &mdash; Leave Request</div>");
+        sb.Append("<span class=\"lf-section__badge badge--waiting\">Draft</span>");
+        sb.Append("</div><div class=\"lf-section__body lf-form\" id=\"sec1Form\">");
+        sb.Append("<p class=\"lf-intro\">Fields marked " + ReqMark + " are needed to submit. You can save a draft at any time and finish later.</p>");
 
-        sb.Append("<div class=\"lf-grid lf-grid--3\" style=\"margin-bottom:14px;\">");
-        sb.Append(LfField("Employee Name *", "empName", "text", empName, "Full name as per records"));
-        sb.Append(LfField("Employee Code", "empCode", "text", empCode, "e.g. MRU-001"));
-        sb.Append(LfField("Faculty / Department / Section", "empDept", "text", dept, ""));
+        // ── (a) Leave requested ─────────────────────────────────────────────
+        sb.Append(GroupHead(IconCalendar, "Leave requested", ""));
+        sb.Append("<div class=\"lf-leave-grid\">");
+
+        sb.Append("<div class=\"lf-field\" id=\"fld_leaveType\">");
+        sb.Append("<span class=\"lf-label\" id=\"lblLeaveType\">Type of leave" + ReqMark + "</span>");
+        sb.Append("<div class=\"lf-radios\" role=\"radiogroup\" aria-labelledby=\"lblLeaveType\">");
+        bool known = false;
+        foreach (string[] lt in LeaveTypes)
+        {
+            bool chk = string.Equals(lt[0], lvType, StringComparison.OrdinalIgnoreCase);
+            if (chk) known = true;
+            sb.Append(LvTypeRadio(lt[0], lt[1], lt[2], chk));
+        }
+        if (!known && !string.IsNullOrEmpty(lvType))   // legacy value saved on an old draft
+            sb.Append(LvTypeRadio(lvType, LeaveTypeLabel(lvType), "Saved on this draft.", true));
+        sb.Append("</div><div class=\"lf-err\" role=\"alert\"></div></div>");
+
+        sb.Append("<div style=\"min-width:0;\">");
+        sb.Append("<div class=\"lf-grid\">");
+        sb.Append(Fld("leaveFrom", "First day", true,
+            InputHtml("leaveFrom", "date", lvFrom, ""), ""));
+        sb.Append(Fld("leaveTo", "Last day", true,
+            InputHtml("leaveTo", "date", lvTo, ""), ""));
+        sb.Append("</div>");
+        sb.Append("<div class=\"lf-days\" id=\"leaveSummary\" aria-live=\"polite\"></div>");
+        sb.Append("<div style=\"margin-top:12px;\">");
+        sb.Append(Fld("substituteArrangement", "Who will cover your duties?", true,
+            TextareaHtml("substituteArrangement", subst,
+                "Name and title of the colleague, and what they will handle. e.g. Ms. Jane Nakato, Assistant Lecturer, will take my classes."),
+            ""));
+        sb.Append("</div></div>");
+        sb.Append("</div>");   // lf-leave-grid
+        sb.Append("</div>");   // group (opened by GroupHead)
+
+        // ── (b) Approver ─────────────────────────────────────────────────────
+        sb.Append(GroupHead(IconUserCheck, "Approver", ""));
+        string supHint = "Your request goes to this person first, then to Human Resources and the Vice Chancellor. Type a name to jump to it.";
+        if (app == null && supFound && !string.IsNullOrEmpty(prof.SupUsername))
+            supHint = "Pre-selected from your staff record. " + supHint;
+        else if (app == null && !string.IsNullOrEmpty(prof.SupName) && !supFound)
+            supHint = "Your staff record lists " + HttpUtility.HtmlEncode(prof.SupName) +
+                      " as your supervisor, but they cannot approve leave online yet. Choose your Head of Department from the list. " + supHint;
+        sb.Append("<div class=\"lf-grid\"><div class=\"lf-span\" style=\"max-width:520px;\">");
+        sb.Append(Fld("supUsername", "Supervisor / Head of Department", true,
+            "<select id=\"supUsername\"><option value=\"\">Select your Supervisor / HOD</option>" + supOptions + "</select>",
+            supHint));
+        sb.Append("</div></div>");
         sb.Append("</div>");
 
-        sb.Append("<div class=\"lf-grid\" style=\"margin-bottom:14px;\">");
-        sb.Append(LfField("Office Location", "officeLocation", "text", office, "Building / Office"));
-        sb.Append(LfField("Position Held", "positionHeld", "text", position, "e.g. Senior Lecturer"));
+        // ── (c) Your details ────────────────────────────────────────────────
+        sb.Append(GroupHead(IconUser, "Your details",
+            fromRecord ? "Filled in from your staff record. Correct anything that is out of date." : ""));
+        sb.Append("<div class=\"lf-grid lf-grid--3\">");
+        sb.Append(Fld("empName", "Full name", true, InputHtml("empName", "text", empName, "As on your staff record"), ""));
+        sb.Append(Fld("empCode", "Employee code", false, InputHtml("empCode", "text", empCode, "e.g. MRU0123"), ""));
+        sb.Append(Fld("mobileContact", "Mobile number", true, InputHtml("mobileContact", "tel", mobile, "e.g. 0772 123456"), ""));
+        sb.Append(Fld("empDept", "Faculty / department / section", true, InputHtml("empDept", "text", dept, "e.g. Faculty of Education"), ""));
+        sb.Append(Fld("positionHeld", "Position held", false, InputHtml("positionHeld", "text", position, "e.g. Senior Lecturer"), ""));
+        sb.Append(Fld("officeLocation", "Office location", false, InputHtml("officeLocation", "text", office, "Building and room, e.g. Admin Block, Room 4"), ""));
+        sb.Append("</div>");
         sb.Append("</div>");
 
-        sb.Append("<div class=\"lf-grid\" style=\"margin-bottom:14px;\">");
-        sb.Append(LfTextarea("Residence Address During Leave", "residenceAddress", address, "Home address where you can be reached"));
-        sb.Append(LfField("Mobile Contact", "mobileContact", "tel", mobile, "+256 ..."));
+        // ── (d) While you are on leave ──────────────────────────────────────
+        sb.Append(GroupHead(IconHome, "While you are on leave", "So the University can reach you or your family if needed."));
+        sb.Append("<div class=\"lf-grid\">");
+        sb.Append("<div class=\"lf-span\">");
+        sb.Append(Fld("residenceAddress", "Where you will stay", false,
+            TextareaHtml("residenceAddress", address, "Village / town, district, and a landmark if helpful"), ""));
         sb.Append("</div>");
-
-        sb.Append("<div class=\"lf-grid lf-grid--3\" style=\"margin-bottom:14px;\">");
-        sb.Append(LfField("Next of Kin / Spouse / Parent Name", "nokName", "text", nokName, "Emergency contact name"));
-        sb.Append(LfTextarea("NOK Address", "nokAddress", nokAddr, ""));
-        sb.Append(LfField("NOK Mobile", "nokMobile", "tel", nokMob, "+256 ..."));
         sb.Append("</div>");
-
-        // Leave type radio grid
-        sb.Append("<div style=\"margin-bottom:14px;\">");
-        sb.Append("<label style=\"display:block;font-size:10px;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.4px;margin-bottom:6px;\">Leave Type *</label>");
-        sb.Append("<div class=\"leave-type-grid\">");
-        sb.Append(LvTypeRadio("annual",      "Annual Leave",       lvType));
-        sb.Append(LvTypeRadio("study",       "Study Leave",        lvType));
-        sb.Append(LvTypeRadio("sick",        "Sick Leave",         lvType));
-        sb.Append(LvTypeRadio("maternity",   "Maternity Leave",    lvType));
-        sb.Append(LvTypeRadio("bereavement", "Family Bereavement", lvType));
+        sb.Append("<div class=\"lf-grid lf-grid--3\" style=\"margin-top:14px;\">");
+        sb.Append(Fld("nokName", "Next of kin", false, InputHtml("nokName", "text", nokName, "Name and relationship, e.g. Sarah Kato (wife)"), ""));
+        sb.Append(Fld("nokMobile", "Next of kin phone", false, InputHtml("nokMobile", "tel", nokMob, "e.g. 0701 123456"), ""));
+        sb.Append(Fld("nokAddress", "Next of kin address", false, InputHtml("nokAddress", "text", nokAddr, "Village / town, district"), ""));
         sb.Append("</div>");
-        sb.AppendFormat("<input type=\"hidden\" id=\"leaveType\" value=\"{0}\" />", HttpUtility.HtmlAttributeEncode(lvType));
         sb.Append("</div>");
-
-        // Dates + Days
-        sb.Append("<div class=\"lf-grid lf-grid--3\" style=\"margin-bottom:14px;\">");
-        sb.AppendFormat("<div class=\"lf-field\"><label>Leave From *</label><input type=\"date\" id=\"leaveFrom\" value=\"{0}\" onchange=\"autoCalcDays()\" /></div>", HttpUtility.HtmlAttributeEncode(lvFrom));
-        sb.AppendFormat("<div class=\"lf-field\"><label>Leave To *</label><input type=\"date\" id=\"leaveTo\" value=\"{0}\" onchange=\"autoCalcDays()\" /></div>", HttpUtility.HtmlAttributeEncode(lvTo));
-        sb.AppendFormat("<div class=\"lf-field\"><label>Number of Days</label><input type=\"number\" id=\"numDays\" value=\"{0}\" readonly style=\"background:var(--surf);\" /></div>", numDays > 0 ? numDays.ToString() : "");
-        sb.Append("</div>");
-
-        // Substitute
-        sb.Append("<div style=\"margin-bottom:14px;\">");
-        sb.Append(LfTextarea("Substitute / Coverage Arrangement", "substituteArrangement", subst, "Who will cover your duties and how…"));
-        sb.Append("</div>");
-
-        // Supervisor dropdown
-        sb.Append("<div class=\"lf-grid\" style=\"margin-bottom:4px;\">");
-        sb.Append("<div class=\"lf-field\"><label>Supervisor / Head of Department *</label>");
-        sb.Append("<select id=\"supUsername\"><option value=\"\">— Select Supervisor / HOD —</option>");
-        sb.Append(supOptions);
-        sb.Append("</select></div></div>");
 
         sb.Append("</div></div>"); // body + section
-
-        // JS: sync radio → hidden field + pre-select supervisor
-        sb.Append("<script>");
-        sb.Append("document.querySelectorAll('[name=leaveTypeRadio]').forEach(function(r){r.addEventListener('change',function(){document.getElementById('leaveType').value=this.value;});});");
-        if (!string.IsNullOrEmpty(supUname))
-        {
-            string safeU = supUname.Replace("\\", "\\\\").Replace("'", "\\'");
-            string safeN = (string.IsNullOrEmpty(supDispName) ? supUname : supDispName).Replace("\\", "\\\\").Replace("'", "\\'");
-            sb.AppendFormat(
-                "(function(){{var s=document.getElementById('supUsername'),found=false;" +
-                "for(var i=0;i<s.options.length;i++)if(s.options[i].value==='{0}'){{s.selectedIndex=i;found=true;break;}}" +
-                "if(!found&&'{0}'){{var o=document.createElement('option');o.value='{0}';o.text='{1}';o.selected=true;s.add(o);}}" +
-                "}})();",
-                safeU, safeN);
-        }
-        sb.Append("</script>");
-
         return sb.ToString();
     }
 
-    private static string LvTypeRadio(string value, string label, string selected)
+    private static string LvTypeRadio(string value, string label, string desc, bool chk)
     {
-        bool chk = string.Equals(value, selected, StringComparison.OrdinalIgnoreCase);
+        string v = HttpUtility.HtmlAttributeEncode(value);
         return string.Format(
-            "<div class=\"leave-type-opt\">" +
-            "<input type=\"radio\" name=\"leaveTypeRadio\" id=\"lt_{0}\" value=\"{0}\"{1} />" +
-            "<label for=\"lt_{0}\">{2}</label></div>",
-            value, chk ? " checked" : "", HttpUtility.HtmlEncode(label));
+            "<label class=\"lf-radio{3}\" for=\"lt_{0}\">" +
+            "<input type=\"radio\" name=\"leaveTypeRadio\" id=\"lt_{0}\" value=\"{0}\"{4} />" +
+            "<span class=\"lf-radio__text\"><span class=\"lf-radio__title\">{1}</span>" +
+            "<span class=\"lf-radio__desc\">{2}</span></span></label>",
+            v, HttpUtility.HtmlEncode(label), HttpUtility.HtmlEncode(desc),
+            chk ? " is-checked" : "", chk ? " checked" : "");
     }
+
+    // Opens a group; the caller closes it with "</div>".
+    private static string GroupHead(string icon, string title, string note)
+    {
+        return "<div class=\"lf-group\"><div class=\"lf-group__head\">" +
+               "<span class=\"lf-group__icon\">" + icon + "</span>" +
+               "<span class=\"lf-group__title\">" + HttpUtility.HtmlEncode(title) + "</span>" +
+               (string.IsNullOrEmpty(note) ? "" : "<span class=\"lf-group__note\">" + HttpUtility.HtmlEncode(note) + "</span>") +
+               "</div>";
+    }
+
+    private const string IconCalendar  = "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"13\" height=\"13\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><rect x=\"3\" y=\"4\" width=\"18\" height=\"18\"/><line x1=\"16\" y1=\"2\" x2=\"16\" y2=\"6\"/><line x1=\"8\" y1=\"2\" x2=\"8\" y2=\"6\"/><line x1=\"3\" y1=\"10\" x2=\"21\" y2=\"10\"/></svg>";
+    private const string IconUserCheck = "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"13\" height=\"13\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><path d=\"M16 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2\"/><circle cx=\"8.5\" cy=\"7\" r=\"4\"/><polyline points=\"17 11 19 13 23 9\"/></svg>";
+    private const string IconUser      = "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"13\" height=\"13\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><path d=\"M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2\"/><circle cx=\"12\" cy=\"7\" r=\"4\"/></svg>";
+    private const string IconHome      = "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"13\" height=\"13\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><path d=\"M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z\"/><polyline points=\"9 22 9 12 15 12 15 22\"/></svg>";
 
     private static string BuildSection1Readonly(Dictionary<string, object> app)
     {
@@ -401,51 +494,100 @@ public partial class COOPERP_NewScreens_LeaveApplicationForm : System.Web.UI.Pag
         var sb = new StringBuilder();
         sb.AppendFormat("<div class=\"lf-section {0}\">", cls);
         sb.Append("<div class=\"lf-section__head\">");
-        sb.Append("<div class=\"lf-section__num\">&#10003;</div>");
-        sb.Append("<div class=\"lf-section__title\">Section 1 — Employee Details &amp; Leave Request</div>");
+        sb.Append("<div class=\"lf-section__num\">1</div>");
+        sb.Append("<div class=\"lf-section__title\">Section 1 &mdash; Leave Request</div>");
         sb.Append(badge);
         sb.Append("</div><div class=\"lf-section__body\">");
 
-        sb.Append("<div class=\"lf-grid lf-grid--3\" style=\"margin-bottom:14px;\">");
-        sb.Append(RoField("Employee Name",                 S(app, "emp_name")));
-        sb.Append(RoField("Employee Code",                 S(app, "emp_code")));
-        sb.Append(RoField("Faculty / Department / Section",S(app, "faculty_dept")));
-        sb.Append("</div>");
-        sb.Append("<div class=\"lf-grid\" style=\"margin-bottom:14px;\">");
-        sb.Append(RoField("Office Location", S(app, "office_location")));
-        sb.Append(RoField("Position Held",   S(app, "position_held")));
-        sb.Append("</div>");
-        sb.Append("<div class=\"lf-grid\" style=\"margin-bottom:14px;\">");
-        sb.Append(RoField("Residence Address", S(app, "residence_address")));
-        sb.Append(RoField("Mobile Contact",    S(app, "mobile_contact")));
-        sb.Append("</div>");
-        sb.Append("<div class=\"lf-grid lf-grid--3\" style=\"margin-bottom:14px;\">");
-        sb.Append(RoField("Next of Kin Name", S(app, "nok_name")));
-        sb.Append(RoField("NOK Address",      S(app, "nok_address")));
-        sb.Append(RoField("NOK Mobile",       S(app, "nok_mobile")));
-        sb.Append("</div>");
-        sb.Append("<div class=\"lf-grid lf-grid--3\" style=\"margin-bottom:14px;\">");
-        sb.Append(RoField("Leave Type",     LeaveTypeLabel(S(app, "leave_type"))));
-        sb.Append(RoField("From",           FormatDate(app, "leave_from")));
-        sb.Append(RoField("To",             FormatDate(app, "leave_to")));
-        sb.Append("</div>");
-        sb.Append("<div class=\"lf-grid\" style=\"margin-bottom:14px;\">");
         int nd = N(app, "num_days");
-        sb.Append(RoField("Number of Days",           nd > 0 ? nd + " days" : "—"));
-        sb.Append(RoField("Substitute Arrangement",   S(app, "substitute_arrangement")));
-        sb.Append("</div>");
+        sb.Append("<div class=\"lf-ro-group\"><div class=\"lf-ro-title\">Leave requested</div><dl class=\"lf-dl\">");
+        sb.Append(Dl("Type of leave", LeaveTypeLabel(S(app, "leave_type")), false));
+        sb.Append(Dl("Number of days", nd > 0 ? nd + (nd == 1 ? " day" : " days") : "", false));
+        sb.Append(Dl("First day", LongDate(app, "leave_from"), false));
+        sb.Append(Dl("Last day",  LongDate(app, "leave_to"),   false));
+        sb.Append(Dl("Cover arrangement", S(app, "substitute_arrangement"), true));
+        sb.Append("</dl></div>");
+
         string supDisp = S(app, "supervisor_name");
-        string supUser = S(app, "supervisor_username");
-        string supFull = string.IsNullOrEmpty(supDisp) ? supUser : supDisp + (!string.IsNullOrEmpty(supUser) ? " (" + supUser + ")" : "");
-        sb.Append(RoField("Supervisor / HOD", supFull));
+        if (string.IsNullOrEmpty(supDisp)) supDisp = S(app, "supervisor_username");
+        sb.Append("<div class=\"lf-ro-group\"><div class=\"lf-ro-title\">Approver</div><dl class=\"lf-dl\">");
+        sb.Append(Dl("Supervisor / HOD", supDisp, true));
+        sb.Append("</dl></div>");
+
+        sb.Append("<div class=\"lf-ro-group\"><div class=\"lf-ro-title\">Employee details</div><dl class=\"lf-dl\">");
+        sb.Append(Dl("Full name",       S(app, "emp_name"),        false));
+        sb.Append(Dl("Employee code",   S(app, "emp_code"),        false));
+        sb.Append(Dl("Department",      S(app, "faculty_dept"),    false));
+        sb.Append(Dl("Position held",   S(app, "position_held"),   false));
+        sb.Append(Dl("Office location", S(app, "office_location"), false));
+        sb.Append(Dl("Mobile number",   S(app, "mobile_contact"),  false));
+        sb.Append("</dl></div>");
+
+        sb.Append("<div class=\"lf-ro-group\"><div class=\"lf-ro-title\">While on leave</div><dl class=\"lf-dl\">");
+        sb.Append(Dl("Staying at",          S(app, "residence_address"), true));
+        sb.Append(Dl("Next of kin",         S(app, "nok_name"),          false));
+        sb.Append(Dl("Next of kin phone",   S(app, "nok_mobile"),        false));
+        sb.Append(Dl("Next of kin address", S(app, "nok_address"),       true));
+        sb.Append("</dl></div>");
 
         string submitted = FormatDateTime(app, "employee_submitted_at");
         if (!string.IsNullOrEmpty(submitted))
-            sb.AppendFormat("<p style=\"font-size:10px;color:var(--muted);margin:12px 0 0;\">Submitted on {0}</p>",
-                HttpUtility.HtmlEncode(submitted));
+            sb.AppendFormat("<p class=\"lf-meta\">Submitted on {0}</p>", HttpUtility.HtmlEncode(submitted));
+
+        // Signature lines appear on the printed form only.
+        sb.Append("<div class=\"lf-sign\"><div>Employee&rsquo;s signature and date</div><div>Supervisor / HOD signature and date</div></div>");
 
         sb.Append("</div></div>");
         return sb.ToString();
+    }
+
+    // One dt/dd pair of the read-only definition list; wide pairs take a full row.
+    private static string Dl(string label, string value, bool wide)
+    {
+        bool empty = string.IsNullOrWhiteSpace(value);
+        string cls = ((wide ? "lf-dl__wide " : "") + (empty ? "lf-dl__empty" : "")).Trim();
+        return string.Format("<dt{0}>{1}</dt><dd{2}>{3}</dd>",
+            wide ? " style=\"grid-column:1;\"" : "",
+            HttpUtility.HtmlEncode(label),
+            cls.Length > 0 ? " class=\"" + cls + "\"" : "",
+            empty ? "&mdash;" : HttpUtility.HtmlEncode(value.Trim()));
+    }
+
+    // Field wrapper: label + control + optional hint + inline error slot.
+    private static string Fld(string id, string label, bool required, string control, string hintHtml)
+    {
+        return "<div class=\"lf-field\" id=\"fld_" + id + "\">" +
+               "<label for=\"" + id + "\">" + HttpUtility.HtmlEncode(label) + (required ? ReqMark : "") + "</label>" +
+               control +
+               (string.IsNullOrEmpty(hintHtml) ? "" : "<div class=\"lf-hint\">" + hintHtml + "</div>") +
+               "<div class=\"lf-err\" role=\"alert\"></div></div>";
+    }
+
+    private static string InputHtml(string id, string type, string value, string placeholder)
+    {
+        return string.Format("<input type=\"{0}\" id=\"{1}\" value=\"{2}\" placeholder=\"{3}\" maxlength=\"250\" />",
+            type, id, HttpUtility.HtmlAttributeEncode(value ?? ""), HttpUtility.HtmlAttributeEncode(placeholder ?? ""));
+    }
+
+    private static string TextareaHtml(string id, string value, string placeholder)
+    {
+        return string.Format("<textarea id=\"{0}\" placeholder=\"{1}\" rows=\"2\">{2}</textarea>",
+            id, HttpUtility.HtmlAttributeEncode(placeholder ?? ""), HttpUtility.HtmlEncode(value ?? ""));
+    }
+
+    private static string Pick(Dictionary<string, object> app, string key, string fallback)
+    {
+        string v = app != null ? S(app, key).Trim() : "";
+        return v.Length > 0 ? v : (fallback ?? "");
+    }
+
+    private static string LongDate(Dictionary<string, object> d, string key)
+    {
+        object v;
+        if (!d.TryGetValue(key, out v) || v == null || v is DBNull) return "";
+        DateTime dt; if (v is DateTime) dt = (DateTime)v;
+        else if (!DateTime.TryParse(v.ToString(), out dt)) return "";
+        return dt.ToString("ddd d MMM yyyy", CultureInfo.InvariantCulture);
     }
 
     // ══════════════════════════════════════════════════════════════════════════
@@ -582,7 +724,7 @@ public partial class COOPERP_NewScreens_LeaveApplicationForm : System.Web.UI.Pag
         sb.Append(RoField("HR Effective From", FormatDate(app, "hr_effective_from")));
         sb.Append(RoField("HR Effective To",   FormatDate(app, "hr_effective_to")));
         sb.Append("</div>");
-        sb.Append("<p style=\"font-size:11px;color:var(--muted);margin:0;\">Use the Grant, Not Grant, or Postpone buttons in the action bar to issue a decision.</p>");
+        sb.Append("<p style=\"font-size:11px;color:var(--muted);margin:0;\">Use <strong>Record VC Decision</strong> in the action bar to grant, not grant or postpone this leave.</p>");
         sb.Append("</div></div>");
         return sb.ToString();
     }
@@ -632,24 +774,23 @@ public partial class COOPERP_NewScreens_LeaveApplicationForm : System.Web.UI.Pag
 
         if (canEditDraft)
         {
-            sb.Append("<button type=\"button\" class=\"lf-btn lf-btn--outline\" id=\"btnSaveDraft\" onclick=\"saveDraft(false)\">Save Draft</button>");
-            sb.Append("<button type=\"button\" class=\"lf-btn lf-btn--primary\" id=\"btnSubmitApp\" onclick=\"saveDraft(true)\">Submit Application</button>");
+            sb.Append(DraftButtons());
         }
         if (canActHod)
         {
-            sb.Append("<button type=\"button\" class=\"lf-btn lf-btn--success\" onclick=\"openModal('modalHodApprove')\">Approve &amp; Forward to HR</button>");
+            sb.Append("<button type=\"button\" class=\"lf-btn lf-btn--success\" onclick=\"openHodApprove()\">Approve &amp; Forward to HR</button>");
             sb.Append("<button type=\"button\" class=\"lf-btn lf-btn--danger\" onclick=\"openModal('modalHodDecline')\">Decline</button>");
         }
         if (canActHr)
         {
-            sb.Append("<button type=\"button\" class=\"lf-btn lf-btn--success\" onclick=\"openModal('modalHrApprove')\">Approve &amp; Forward to VC</button>");
+            sb.Append("<button type=\"button\" class=\"lf-btn lf-btn--success\" onclick=\"openHrApprove()\">Approve &amp; Forward to VC</button>");
             sb.Append("<button type=\"button\" class=\"lf-btn lf-btn--danger\" onclick=\"openModal('modalHrDecline')\">Decline</button>");
         }
         if (canActVc)
         {
-            sb.Append("<button type=\"button\" class=\"lf-btn lf-btn--success\" onclick=\"openModal('modalVcGrant')\">Grant Leave</button>");
-            sb.Append("<button type=\"button\" class=\"lf-btn lf-btn--warn\" onclick=\"openVcOther('NOT_GRANTED')\">Not Grant</button>");
-            sb.Append("<button type=\"button\" class=\"lf-btn lf-btn--outline\" onclick=\"openVcOther('POSTPONED')\">Postpone</button>");
+            sb.Append("<button type=\"button\" class=\"lf-btn lf-btn--primary\" onclick=\"openVcDecision('')\">" +
+                "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"12\" height=\"12\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><polyline points=\"9 11 12 14 22 4\"/><path d=\"M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11\"/></svg>" +
+                " Record VC Decision</button>");
         }
 
         // Cancel for admin/HR
@@ -842,6 +983,8 @@ public partial class COOPERP_NewScreens_LeaveApplicationForm : System.Web.UI.Pag
         string supName = FormStr("supervisor_name");
         if (submit && string.IsNullOrEmpty(supUser))
         { Err("Please select a Supervisor / HOD."); return; }
+        if (submit && !isAdmin && string.Equals(supUser.Trim(), username.Trim(), StringComparison.OrdinalIgnoreCase))
+        { Err("You cannot approve your own leave. Please choose your Supervisor / HOD."); return; }
 
         string newStatus = submit ? "SUBMITTED" : "DRAFT";
 
@@ -940,7 +1083,8 @@ public partial class COOPERP_NewScreens_LeaveApplicationForm : System.Web.UI.Pag
 
     private void AjaxHodApprove(string username, string screenName, string ip, bool isAdmin, bool isHod)
     {
-        if (!isAdmin && !isHod) { Err("Access denied."); return; }
+        // No role gate here: the assigned Supervisor / HOD (whatever their role) or an
+        // admin may act - enforced by the supervisor_username check below.
         int    appId      = FormInt("id");
         string handoverTo = FormStr("hod_handover_to");
         string notes      = FormStr("hod_notes");
@@ -988,7 +1132,8 @@ public partial class COOPERP_NewScreens_LeaveApplicationForm : System.Web.UI.Pag
 
     private void AjaxHodDecline(string username, string screenName, string ip, bool isAdmin, bool isHod)
     {
-        if (!isAdmin && !isHod) { Err("Access denied."); return; }
+        // No role gate here: the assigned Supervisor / HOD (whatever their role) or an
+        // admin may act - enforced by the supervisor_username check below.
         int    appId  = FormInt("id");
         string reason = FormStr("reason");
         if (string.IsNullOrEmpty(reason)) { Err("A reason is required."); return; }
@@ -1189,66 +1334,245 @@ public partial class COOPERP_NewScreens_LeaveApplicationForm : System.Web.UI.Pag
     //  SUPERVISOR OPTIONS
     // ══════════════════════════════════════════════════════════════════════════
 
-    private string LoadSupervisorOptions()
+    private const string ApproverRolesSql = "'dean','registrar','hr_manager','admin','hod'";
+
+    // Everyone who can be chosen as Supervisor / HOD: [0]=login username, [1]=display name, [2]=role label.
+    // (The previous version joined hrm_employee.username, a column that does not exist, so it
+    //  always fell back to bare usernames. The staff login column is hrm_employee.usernames.)
+    private List<string[]> LoadSupervisors()
     {
-        var sb = new StringBuilder();
+        var list = new List<string[]>();
         try
         {
             using (var conn = new MySqlConnection(ConnStr()))
             {
                 conn.Open();
-                const string sql = @"
-                    SELECT DISTINCT ur.username,
-                        COALESCE(e.emp_name, ur.username) AS sup_name
+                string sql = @"
+                    SELECT ur.username,
+                           (SELECT e.emp_name FROM hrm_employee e
+                             WHERE e.usernames = ur.username ORDER BY e.empID LIMIT 1) AS emp_name,
+                           GROUP_CONCAT(DISTINCT r.role_code) AS roles
                     FROM sys_user_roles ur
-                    JOIN sys_roles r ON r.id=ur.role_id
-                        AND r.role_code IN ('dean','registrar','hr_manager','admin','hod')
-                    LEFT JOIN hrm_employee e ON e.username=ur.username
-                    WHERE ur.is_active=1
-                    ORDER BY sup_name";
-
+                    JOIN sys_roles r ON r.id = ur.role_id AND r.role_code IN (" + ApproverRolesSql + @")
+                    WHERE ur.is_active = 1
+                      AND (ur.expires_at IS NULL OR ur.expires_at > NOW())
+                    GROUP BY ur.username";
                 using (var cmd = new MySqlCommand(sql, conn))
                 using (var dr  = cmd.ExecuteReader())
                 {
                     while (dr.Read())
                     {
-                        string uname = dr[0].ToString();
-                        string disp  = dr[1].ToString();
-                        sb.AppendFormat("<option value=\"{0}\">{1}</option>",
-                            HttpUtility.HtmlAttributeEncode(uname),
-                            HttpUtility.HtmlEncode(disp));
+                        string u = dr[0].ToString().Trim();
+                        if (u.Length == 0) continue;
+                        string n = dr.IsDBNull(1) ? "" : dr[1].ToString().Trim();
+                        string roles = dr.IsDBNull(2) ? "" : dr[2].ToString();
+                        list.Add(new[] { u, n.Length > 0 ? n : u, RoleLabel(roles) });
                     }
                 }
             }
         }
-        catch
+        catch { /* an empty list still lets a saved choice render */ }
+        list.Sort(delegate(string[] a, string[] b) { return string.Compare(a[1], b[1], StringComparison.OrdinalIgnoreCase); });
+        return list;
+    }
+
+    private static string RoleLabel(string roles)
+    {
+        string r = "," + (roles ?? "").ToLowerInvariant() + ",";
+        if (r.Contains(",dean,"))       return "Dean";
+        if (r.Contains(",hod,"))        return "HOD";
+        if (r.Contains(",registrar,"))  return "Registrar";
+        if (r.Contains(",hr_manager,")) return "HR";
+        return "";
+    }
+
+    // Renders the <option>s. The option text carries the role; data-name carries the plain
+    // name that is posted as supervisor_name (unchanged contract).
+    private static string BuildSupervisorOptions(List<string[]> list, string selUser, string selName,
+        bool forceSelected, string currentUser, out bool found)
+    {
+        found = false;
+        string sel = (selUser ?? "").Trim();
+        string me  = (currentUser ?? "").Trim();
+        var sb = new StringBuilder();
+        foreach (string[] s in list)
         {
-            // Fallback: just query usernames without employee name join
-            try
+            bool isSel = sel.Length > 0 && string.Equals(s[0], sel, StringComparison.OrdinalIgnoreCase);
+            // Nobody approves their own leave: hide the applicant unless already saved.
+            if (!isSel && me.Length > 0 && string.Equals(s[0], me, StringComparison.OrdinalIgnoreCase)) continue;
+            if (isSel) found = true;
+            sb.Append(SupOption(s[0], s[1], s[2], isSel));
+        }
+        if (!found && sel.Length > 0 && forceSelected)
+        {
+            sb.Insert(0, SupOption(sel, string.IsNullOrEmpty(selName) ? sel : selName, "", true));
+            found = true;
+        }
+        return sb.ToString();
+    }
+
+    private static string SupOption(string user, string name, string role, bool selected)
+    {
+        return string.Format("<option value=\"{0}\" data-name=\"{1}\"{2}>{3}</option>",
+            HttpUtility.HtmlAttributeEncode(user),
+            HttpUtility.HtmlAttributeEncode(name),
+            selected ? " selected" : "",
+            HttpUtility.HtmlEncode(string.IsNullOrEmpty(role) ? name : name + " (" + role + ")"));
+    }
+
+    // ══════════════════════════════════════════════════════════════════════════
+    //  STAFF PROFILE (pre-fill for a new application)
+    // ══════════════════════════════════════════════════════════════════════════
+
+    private sealed class StaffProfile
+    {
+        public int    EmpId;
+        public string Name = "", Code = "", Dept = "", Position = "", Mobile = "", Residence = "";
+        public string NokName = "", NokPhone = "";
+        public string SupUsername = "", SupName = "";
+        public bool   SupCanApprove;   // supervisor has an active RBAC role (can open this page)
+    }
+
+    // Matches the login to hrm_employee: usernames (case-insensitive, trimmed), else
+    // EMP_CODE, else emp_email - each only when it identifies exactly one employee.
+    private StaffProfile LoadStaffProfile(string username)
+    {
+        var p = new StaffProfile();
+        string u = (username ?? "").Trim();
+        if (u.Length == 0) return p;
+        try
+        {
+            using (var conn = new MySqlConnection(ConnStr()))
             {
-                using (var conn = new MySqlConnection(ConnStr()))
+                conn.Open();
+                int empId = UniqueEmpId(conn, "LOWER(TRIM(usernames)) = LOWER(@u)", u);
+                if (empId <= 0) empId = UniqueEmpId(conn, "LOWER(TRIM(EMP_CODE)) = LOWER(@u)", u);
+                if (empId <= 0 && u.IndexOf('@') > 0) empId = UniqueEmpId(conn, "LOWER(TRIM(emp_email)) = LOWER(@u)", u);
+                if (empId <= 0) return p;
+                p.EmpId = empId;
+
+                const string sql = @"
+                    SELECT e.emp_name, e.EMP_CODE, e.emp_phone, e.contact_person, e.relation,
+                           e.phone_contacts, e.current_residence,
+                           d.dept_name, j.jobname, hd.dept_name AS home_dept,
+                           s.emp_name AS sup_name, s.usernames AS sup_login
+                    FROM hrm_employee e
+                    LEFT JOIN hrm_emp_contracts c ON c.ID = (
+                         SELECT c2.ID FROM hrm_emp_contracts c2
+                          WHERE c2.empID = e.empID AND c2.contractStatus = 'VALID'
+                          ORDER BY c2.contractStart DESC, c2.ID DESC LIMIT 1)
+                    LEFT JOIN hrm_departments d  ON d.ID  = c.departmentID
+                    LEFT JOIN hrm_jobs        j  ON j.ID  = c.jobID
+                    LEFT JOIN hrm_departments hd ON hd.ID = e.dept_id
+                    LEFT JOIN hrm_employee    s  ON s.empID = e.supervisorID AND s.empID <> e.empID
+                    WHERE e.empID = @id";
+                using (var cmd = new MySqlCommand(sql, conn))
                 {
-                    conn.Open();
-                    const string sql = @"
-                        SELECT DISTINCT ur.username FROM sys_user_roles ur
-                        JOIN sys_roles r ON r.id=ur.role_id
-                            AND r.role_code IN ('dean','registrar','hr_manager','admin','hod')
-                        WHERE ur.is_active=1 ORDER BY ur.username";
-                    using (var cmd = new MySqlCommand(sql, conn))
-                    using (var dr  = cmd.ExecuteReader())
+                    cmd.Parameters.AddWithValue("@id", empId);
+                    using (var dr = cmd.ExecuteReader())
                     {
-                        while (dr.Read())
+                        if (dr.Read())
                         {
-                            string u = dr[0].ToString();
-                            sb.AppendFormat("<option value=\"{0}\">{0}</option>",
-                                HttpUtility.HtmlAttributeEncode(u));
+                            p.Name      = Col(dr, "emp_name");
+                            p.Code      = Col(dr, "EMP_CODE");
+                            p.Mobile    = CleanPhone(Col(dr, "emp_phone"));
+                            p.Residence = CleanText(Col(dr, "current_residence")).Replace("\r", "").Replace("\n", ", ");
+                            p.Dept      = Col(dr, "dept_name");
+                            if (p.Dept.Length == 0) p.Dept = Col(dr, "home_dept");
+                            p.Position  = Col(dr, "jobname");
+
+                            string nok = CleanText(Col(dr, "contact_person"));
+                            string rel = CleanText(Col(dr, "relation"));
+                            if (nok.Length > 0)
+                            {
+                                p.NokName  = rel.Length > 0 && nok.IndexOf(rel, StringComparison.OrdinalIgnoreCase) < 0
+                                    ? nok + " (" + rel.ToLowerInvariant() + ")" : nok;
+                                p.NokPhone = CleanPhone(Col(dr, "phone_contacts"));
+                            }
+
+                            p.SupName     = Col(dr, "sup_name");
+                            p.SupUsername = Col(dr, "sup_login");
                         }
                     }
                 }
+
+                if (p.SupUsername.Length > 0)
+                {
+                    using (var cmd = new MySqlCommand(@"
+                        SELECT COUNT(*) FROM sys_user_roles ur
+                        JOIN sys_roles r ON r.id = ur.role_id AND r.is_active = 1
+                        WHERE ur.username = @u AND ur.is_active = 1
+                          AND (ur.expires_at IS NULL OR ur.expires_at > NOW())", conn))
+                    {
+                        cmd.Parameters.AddWithValue("@u", p.SupUsername);
+                        p.SupCanApprove = Convert.ToInt32(cmd.ExecuteScalar()) > 0;
+                    }
+                }
             }
-            catch { /* silent */ }
         }
-        return sb.ToString();
+        catch { /* pre-fill is a convenience; never break the form */ }
+        return p;
+    }
+
+    private static int UniqueEmpId(MySqlConnection conn, string where, string u)
+    {
+        using (var cmd = new MySqlCommand("SELECT empID FROM hrm_employee WHERE " + where + " LIMIT 2", conn))
+        {
+            cmd.Parameters.AddWithValue("@u", u);
+            int id = 0, n = 0;
+            using (var dr = cmd.ExecuteReader())
+                while (dr.Read()) { n++; id = Convert.ToInt32(dr[0]); }
+            return n == 1 ? id : 0;
+        }
+    }
+
+    private static string Col(MySqlDataReader dr, string name)
+    {
+        object v = dr[name];
+        return (v == null || v is DBNull) ? "" : v.ToString().Trim();
+    }
+
+    // HR records use "-", "0", "1" etc. as placeholders; keep only real text.
+    private static string CleanText(string s)
+    {
+        s = (s ?? "").Trim().Trim('-', '.', ',', ' ').Trim();
+        if (s.Length < 2) return "";
+        foreach (char ch in s) if (char.IsLetter(ch)) return s;
+        return "";
+    }
+
+    private static string CleanPhone(string s)
+    {
+        s = (s ?? "").Trim().Trim('-', ' ').Trim();
+        int digits = 0;
+        foreach (char ch in s) if (char.IsDigit(ch)) digits++;
+        return digits >= 9 ? s : "";
+    }
+
+    // JavaScript string literal safe to place inside a <script> block.
+    private static string JsStr(string s)
+    {
+        if (s == null) return "\"\"";
+        var sb = new StringBuilder("\"");
+        foreach (char c in s)
+        {
+            switch (c)
+            {
+                case '\\': sb.Append("\\\\"); break;
+                case '"':  sb.Append("\\\""); break;
+                case '\n': sb.Append("\\n");  break;
+                case '\r': sb.Append("\\r");  break;
+                case '<':  sb.Append("\\u003c"); break;
+                case '>':  sb.Append("\\u003e"); break;
+                case '&':  sb.Append("\\u0026"); break;
+                case (char)0x2028: sb.Append("\\u2028"); break;
+                case (char)0x2029: sb.Append("\\u2029"); break;
+                default:
+                    if (c < ' ') sb.AppendFormat("\\u{0:x4}", (int)c); else sb.Append(c);
+                    break;
+            }
+        }
+        return sb.Append('"').ToString();
     }
 
     // ══════════════════════════════════════════════════════════════════════════

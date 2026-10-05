@@ -305,8 +305,9 @@ public partial class COOPERP_NewScreens_LeaveApplications : System.Web.UI.Page
             // HOD sees: their own + submissions from their supervised users
             return "AND (created_by = @uname OR supervisor_username = @uname)";
 
-        // Regular employee sees only their own
-        return "AND created_by = @uname";
+        // Regular employee sees their own, plus any application they were chosen to
+        // approve as Supervisor / HOD (e.g. users whose role is 'hod').
+        return "AND (created_by = @uname OR supervisor_username = @uname)";
     }
 
     private static void AddRoleParams(MySqlCommand cmd, string roleCode, string username,
