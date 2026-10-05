@@ -222,6 +222,23 @@ public partial class COOPERP_NewScreens_HRDashboard : System.Web.UI.Page
         if (expiring > 0)
             sb.AppendFormat("<div class='hr-alert hr-alert--warn'><strong>{0} contract(s)</strong> expire within 30 days. <a href='HRContracts.aspx' style='color:inherit;font-weight:600;'>View contracts</a></div>", expiring);
 
+        // Contract renewals: applications waiting for HR, and contracts ending within 3 months with no application
+        try
+        {
+            long renewalsWithHr = Scalar(conn, "SELECT COUNT(*) FROM hr_contract_renewals WHERE status = 'AWAITING_HR'");
+            long expiringNoApp = Scalar(conn,
+                @"SELECT COUNT(*) FROM (SELECT e.empID, hr_current_contract_id(e.empID) AS cid FROM hrm_employee e
+                                         WHERE IFNULL(e.employment_status,'ACTIVE') = 'ACTIVE') x
+                  JOIN hrm_emp_contracts c ON c.ID = x.cid
+                  WHERE c.contractStatus NOT IN ('TERMINATED','RESIGNED')
+                    AND c.contractEnd BETWEEN DATE_SUB(CURDATE(), INTERVAL 60 DAY) AND DATE_ADD(CURDATE(), INTERVAL 90 DAY)
+                    AND NOT EXISTS (SELECT 1 FROM hr_contract_renewals a WHERE a.contract_id = c.ID AND a.status <> 'WITHDRAWN')");
+            if (renewalsWithHr > 0 || expiringNoApp > 0)
+                sb.AppendFormat("<div class='hr-alert hr-alert--warn'>Contract renewals: <strong>{0}</strong> application(s) awaiting HR verification &middot; <strong>{1}</strong> contract(s) ending within 3 months with no application. <a href='ContractRenewals.aspx' style='color:inherit;font-weight:600;'>Open Contract Renewals</a></div>",
+                    renewalsWithHr, expiringNoApp);
+        }
+        catch { /* renewal tables missing - keep the dashboard working */ }
+
         // Pending payroll runs (not yet processed)
         long pendingPayrolls = Scalar(conn, "SELECT COUNT(*) FROM hrm_payroll WHERE payroll_status = 'PENDING'");
         if (pendingPayrolls > 0)

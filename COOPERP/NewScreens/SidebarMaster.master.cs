@@ -413,6 +413,10 @@ public partial class COOPERP_NewScreens_SidebarMaster : System.Web.UI.MasterPage
             case "hrcontracts":
                 title = "Contracts";
                 break;
+            case "contractrenewals":
+            case "contractrenewalview":
+                title = "Contract Renewals";
+                break;
             case "hrpayroll":
                 title = "Payroll Management";
                 break;

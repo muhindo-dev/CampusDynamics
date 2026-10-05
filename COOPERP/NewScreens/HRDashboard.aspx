@@ -300,6 +300,12 @@
                 </div>
                 <div><div class="hr-ql__title">Contracts</div><div class="hr-ql__sub">Employment contracts &amp; pay scales</div></div>
             </a>
+            <a href="ContractRenewals.aspx" class="hr-ql">
+                <div class="hr-ql__icon" style="background:#e8f0fe;color:#05275C;">
+                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>
+                </div>
+                <div><div class="hr-ql__title">Contract Renewals</div><div class="hr-ql__sub">Applications, Council &amp; new contracts</div></div>
+            </a>
             <a href="HRPayroll.aspx" class="hr-ql">
                 <div class="hr-ql__icon" style="background:#ede9fe;color:#5b21b6;">
                     <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="1" x2="12" y2="23"/><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></svg>
