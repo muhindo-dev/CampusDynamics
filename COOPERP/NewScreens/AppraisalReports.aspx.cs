@@ -48,6 +48,16 @@ public partial class COOPERP_NewScreens_AppraisalReports : System.Web.UI.Page
         string ajax = (Request.QueryString["ajax"] ?? "").Trim().ToLower();
         if (ajax == "exportcsv")
         {
+            // The ?ajax= path runs here, BEFORE SidebarMaster's login check, so it must
+            // gate itself or the full staff score list is downloadable anonymously.
+            if (!IsCallerAuthenticated())
+            {
+                Response.Clear();
+                Response.ContentType = "text/plain";
+                Response.Write("Your session has expired. Please sign in again, then retry the export.");
+                try { Response.End(); } catch (System.Threading.ThreadAbortException) { }
+                return;
+            }
             HandleExportCsv();
             return;
         }
@@ -246,12 +256,12 @@ public partial class COOPERP_NewScreens_AppraisalReports : System.Web.UI.Page
         string where = BuildWhereClause("ar", "e", conn);
         string sql = string.Format(
             @"SELECT
-                SUM(CASE WHEN ar.final_percentage >= 90 THEN 1 ELSE 0 END)                               AS outstanding,
-                SUM(CASE WHEN ar.final_percentage >= 75 AND ar.final_percentage < 90 THEN 1 ELSE 0 END)  AS very_good,
-                SUM(CASE WHEN ar.final_percentage >= 60 AND ar.final_percentage < 75 THEN 1 ELSE 0 END)  AS good,
-                SUM(CASE WHEN ar.final_percentage >= 50 AND ar.final_percentage < 60 THEN 1 ELSE 0 END)  AS fair,
-                SUM(CASE WHEN ar.final_percentage < 50 THEN 1 ELSE 0 END)                                AS poor,
-                COUNT(CASE WHEN ar.status = 'COMPLETED' THEN 1 END)                                      AS total_completed
+                SUM(CASE WHEN appraisal_classify(ar.final_percentage) = 'Exceptional'        THEN 1 ELSE 0 END) AS c_exc,
+                SUM(CASE WHEN appraisal_classify(ar.final_percentage) = 'Above Expectations' THEN 1 ELSE 0 END) AS c_above,
+                SUM(CASE WHEN appraisal_classify(ar.final_percentage) = 'Satisfactory'       THEN 1 ELSE 0 END) AS c_sat,
+                SUM(CASE WHEN appraisal_classify(ar.final_percentage) = 'Development Needed' THEN 1 ELSE 0 END) AS c_dev,
+                SUM(CASE WHEN appraisal_classify(ar.final_percentage) = 'Unsatisfactory'     THEN 1 ELSE 0 END) AS c_unsat,
+                COUNT(ar.final_percentage)                                                                     AS total_completed
               FROM appraisal_records ar
               INNER JOIN hrm_employee e ON e.empID = ar.employee_id
               {0}
@@ -266,12 +276,14 @@ public partial class COOPERP_NewScreens_AppraisalReports : System.Web.UI.Page
             if (dt.Rows.Count == 0) return;
             DataRow r = dt.Rows[0];
 
+            // Denominator = scored COMPLETED + HR_REVIEWED records (the WHERE below
+            // restricts to both), so the bands always add up to 100%.
             int totalComp   = SafeInt(r["total_completed"]);
-            int outstanding = SafeInt(r["outstanding"]);
-            int veryGood    = SafeInt(r["very_good"]);
-            int good        = SafeInt(r["good"]);
-            int fair        = SafeInt(r["fair"]);
-            int poor        = SafeInt(r["poor"]);
+            int exc         = SafeInt(r["c_exc"]);
+            int above       = SafeInt(r["c_above"]);
+            int sat         = SafeInt(r["c_sat"]);
+            int dev         = SafeInt(r["c_dev"]);
+            int unsat       = SafeInt(r["c_unsat"]);
 
             StringBuilder sb = new StringBuilder();
 
@@ -281,11 +293,12 @@ public partial class COOPERP_NewScreens_AppraisalReports : System.Web.UI.Page
             }
             else
             {
-                AppendDistBar(sb, "Outstanding (\u226590%)", outstanding, totalComp, "#28a745");
-                AppendDistBar(sb, "Very Good (75\u201389%)", veryGood, totalComp, "#17a2b8");
-                AppendDistBar(sb, "Good (60\u201374%)", good, totalComp, "#174DA4");
-                AppendDistBar(sb, "Fair (50\u201359%)", fair, totalComp, "#f59e0b");
-                AppendDistBar(sb, "Poor (<50%)", poor, totalComp, "#dc3545");
+                // Canonical scale (SQL appraisal_classify): 90 / 75 / 60 / 50
+                AppendDistBar(sb, "Exceptional (\u226590%)", exc, totalComp, "#28a745");
+                AppendDistBar(sb, "Above Expectations (75\u201389%)", above, totalComp, "#17a2b8");
+                AppendDistBar(sb, "Satisfactory (60\u201374%)", sat, totalComp, "#174DA4");
+                AppendDistBar(sb, "Development Needed (50\u201359%)", dev, totalComp, "#f59e0b");
+                AppendDistBar(sb, "Unsatisfactory (&lt;50%)", unsat, totalComp, "#dc3545");
             }
 
             litDistBars.Text = sb.ToString();
@@ -410,7 +423,7 @@ public partial class COOPERP_NewScreens_AppraisalReports : System.Web.UI.Page
                     rowNum++;
                     string status = SafeStr(r["status"]);
                     string score = FormatScore(r["final_percentage"]);
-                    string classif = SafeStr(r["classification"]);
+                    string classif = Classify(r["final_percentage"], SafeStr(r["classification"]));
                     if (string.IsNullOrEmpty(classif)) classif = "\u2014";
 
                     sb.Append("<tr>");
@@ -460,7 +473,7 @@ public partial class COOPERP_NewScreens_AppraisalReports : System.Web.UI.Page
                         ar.staff_category AS 'Category',
                         ar.status AS 'Status',
                         ar.final_percentage AS 'Score (%)',
-                        ar.classification AS 'Classification',
+                        IFNULL(appraisal_classify(ar.final_percentage), ar.classification) AS 'Classification',
                         sup.emp_name AS 'Supervisor',
                         s.session_title AS 'Session',
                         DATE_FORMAT(ar.employee_submitted_at,'%Y-%m-%d %H:%i') AS 'Employee Submitted',
@@ -580,6 +593,44 @@ public partial class COOPERP_NewScreens_AppraisalReports : System.Web.UI.Page
         if (d >= 60) return "color:#174DA4;";
         if (d >= 50) return "color:#f59e0b;";
         return "color:#dc3545;";
+    }
+
+    /// <summary>
+    /// The one classification scale (mirrors SQL appraisal_classify): 90 Exceptional,
+    /// 75 Above Expectations, 60 Satisfactory, 50 Development Needed, else Unsatisfactory.
+    /// Computed from the percentage so older records stored under retired labels read the same.
+    /// </summary>
+    private static string Classify(object pct, string fallback)
+    {
+        if (pct == null || pct == DBNull.Value) return fallback ?? "";
+        decimal d;
+        if (!decimal.TryParse(pct.ToString(), out d)) return fallback ?? "";
+        if (d >= 90) return "Exceptional";
+        if (d >= 75) return "Above Expectations";
+        if (d >= 60) return "Satisfactory";
+        if (d >= 50) return "Development Needed";
+        return "Unsatisfactory";
+    }
+
+    /// <summary>Forms ticket OR Session["username"] (see eadmin anonymous ?action= fix).</summary>
+    private bool IsCallerAuthenticated()
+    {
+        try
+        {
+            if (User != null && User.Identity != null && User.Identity.IsAuthenticated
+                && !string.IsNullOrEmpty(User.Identity.Name)) return true;
+        }
+        catch { }
+        try
+        {
+            if (Session != null)
+            {
+                object u = Session["username"];
+                if (u != null && !string.IsNullOrEmpty(u.ToString().Trim())) return true;
+            }
+        }
+        catch { }
+        return false;
     }
 
     private string FormatCategory(string cat)

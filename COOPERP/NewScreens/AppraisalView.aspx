@@ -246,6 +246,33 @@
 .pa-batch-info strong{color:var(--brand);}
 .pa-batch-emp-list{background:#fafbfc;border:1px solid #e0e5ed;border-radius:4px;padding:8px 12px;max-height:110px;overflow-y:auto;font-size:12px;color:#555;margin-bottom:14px;line-height:1.6;}
 
+/* ── Unassigned reviewer ── */
+.pa-list-stat--norev{background:#fff7ed;color:#9a3412;border:1px solid #fdba74;}
+.pa-norev-badge{display:inline-block;padding:2px 7px;font-size:10px;font-weight:700;background:#fff7ed;color:#9a3412;border:1px solid #fdba74;border-radius:0;white-space:nowrap;}
+
+/* ── Council-format header + KPA table + sign-off ── */
+.pa-info-grid--3{grid-template-columns:repeat(3,minmax(0,1fr));}
+@media(max-width:900px){.pa-info-grid--3{grid-template-columns:repeat(2,minmax(0,1fr));}}
+@media(max-width:600px){.pa-info-grid--3{grid-template-columns:1fr;}}
+.pa-b-table td{vertical-align:top;}
+tr.pa-b-na td{background:#f3f4f6 !important;color:#9ca3af !important;}
+.pa-tag{display:inline-block;margin-left:4px;padding:1px 5px;font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:.3px;background:#e8eef8;color:#174DA4;border-radius:0;vertical-align:1px;}
+.pa-ev-list{display:flex;flex-direction:column;gap:3px;margin-top:4px;}
+.pa-ev-file{display:inline-flex;align-items:center;gap:4px;font-size:11px;color:#174DA4;text-decoration:none;word-break:break-all;}
+.pa-ev-file:hover{text-decoration:underline;}
+.pa-ev-file svg{flex-shrink:0;color:#05275C;}
+.pa-sign-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px;}
+@media(max-width:800px){.pa-sign-grid{grid-template-columns:1fr;}}
+.pa-sign-item{border:1px solid #e0e5ed;border-radius:4px;padding:10px 12px;background:#fafbfc;}
+.pa-sign-name{font-size:14px;font-weight:700;color:#05275C;margin-top:4px;}
+.pa-sign-date{font-size:11px;color:#888;margin-top:2px;}
+.pa-sign-none{font-size:12px;color:#999;font-style:italic;margin-top:4px;}
+.pa-ack{display:inline-block;margin-top:4px;padding:2px 10px;font-size:12px;font-weight:700;border-radius:0;}
+.pa-ack--agree{background:#d4edda;color:#155724;}
+.pa-ack--disagree{background:#f8d7da;color:#721c24;}
+.pa-ack-comment{font-size:12px;color:#444;margin-top:6px;line-height:1.45;}
+.hw-ack-box{padding:10px 14px;background:#fafbfc;border:1px solid #e0e5ed;font-size:12px;color:#333;}
+
 /* ── Print ── */
 @media print{
     .pa-page-header__actions,.pa-detail-back,.cd-sidebar,.pa-filter-bar,.pa-pager,.pa-actions,.pa-modal-overlay,.pa-batch-bar,.pa-list-stats{display:none !important;}
@@ -306,6 +333,10 @@
             <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 2v6h-6"/><path d="M21 13a9 9 0 1 1-3-7.7L21 8"/></svg>
             Re-open
         </button>
+        <button type="button" class="pa-batch-btn pa-batch-btn--outline" id="btnBatchAssign" onclick="batchAssignReviewer()" disabled title="Assign the same reviewer to every selected record">
+            <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M16 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="8.5" cy="7" r="4"/><line x1="20" y1="8" x2="20" y2="14"/><line x1="23" y1="11" x2="17" y2="11"/></svg>
+            Assign Reviewer
+        </button>
         <div class="pa-batch-divider"></div>
         <button type="button" class="pa-batch-btn pa-batch-btn--danger" id="btnBatchCancel" onclick="batchCancel()" disabled>
             <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/></svg>
@@ -320,7 +351,7 @@
 <!-- Filter + Grid Card -->
 <div class="cd-card">
     <div class="pa-filter-bar">
-        <input type="text" id="txtSearch" placeholder="&#x1F50D; Search name or staff code..." onkeyup="debounceFilter()" autocomplete="off" />
+        <input type="text" id="txtSearch" placeholder="Search name or staff code..." onkeyup="debounceFilter()" autocomplete="off" />
         <select id="selStatus" onchange="applyFilter()">
             <option value="">All Statuses</option>
             <option value="PENDING">Not Started</option>
@@ -340,6 +371,16 @@
         </select>
         <select id="selSession" onchange="applyFilter()">
             <asp:Literal ID="litSessionOptions" runat="server" />
+        </select>
+        <select id="selReviewer" onchange="applyFilter()" title="Reviewer assignment">
+            <option value="">All Reviewers</option>
+            <option value="none">No reviewer assigned</option>
+        </select>
+        <select id="selPageSize" onchange="applyFilter()" title="Rows per page">
+            <option value="25">25 / page</option>
+            <option value="50">50 / page</option>
+            <option value="100">100 / page</option>
+            <option value="200">200 / page</option>
         </select>
         <button type="button" class="hr-btn hr-btn--outline hr-btn--sm" onclick="clearFilters()" title="Clear all filters">
             <svg xmlns="http://www.w3.org/2000/svg" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
@@ -445,19 +486,16 @@
         </div>
         <div id="hwPanel1">
             <div class="pa-modal__body">
-                <div class="hw-step-label">Step 1 of 3 &mdash; Review &amp; Declaration</div>
+                <div class="hw-step-label">Step 1 of 3 &mdash; Review</div>
                 <div class="hw-score-box">
                     <div class="hw-score-box__name" id="hwEmpName">—</div>
                     <div class="hw-score-box__meta" id="hwEmpMeta">—</div>
                     <div class="hw-score-chips" id="hwScoreChips"></div>
                 </div>
                 <div class="hw-field-group">
-                    <div class="hw-field-label">Declaration</div>
-                    <div class="hw-field-sub">As HR Officer, I confirm I have reviewed this completed appraisal and the results presented above.</div>
-                    <div class="hw-radios">
-                        <label class="sc-r sc-r--text"><input type="radio" class="sc-r__inp" name="hr_declaration" value="AGREE" /> AGREE</label>
-                        <label class="sc-r sc-r--text"><input type="radio" class="sc-r__inp" name="hr_declaration" value="DISAGREE" /> DISAGREE</label>
-                    </div>
+                    <div class="hw-field-label">Employee acknowledgement of the rating</div>
+                    <div class="hw-field-sub">Recorded by the employee after the supervisor's rating (read-only).</div>
+                    <div class="hw-ack-box" id="hwAck">&mdash;</div>
                 </div>
             </div>
             <div class="pa-modal__foot">
@@ -470,7 +508,7 @@
                 <div class="hw-step-label">Step 2 of 3 &mdash; HR Assessment</div>
                 <div class="hw-field-group">
                     <div class="hw-field-label">HR Overall Performance Rating</div>
-                    <div class="hw-field-sub">1&nbsp;=&nbsp;Poor &nbsp;|&nbsp; 2&nbsp;=&nbsp;Fair &nbsp;|&nbsp; 3&nbsp;=&nbsp;Good &nbsp;|&nbsp; 4&nbsp;=&nbsp;Very Good &nbsp;|&nbsp; 5&nbsp;=&nbsp;Outstanding</div>
+                    <div class="hw-field-sub">Academic: 5&nbsp;Exceptional &middot; 4&nbsp;Above Expectations &middot; 3&nbsp;Satisfactory &middot; 2&nbsp;Development Needed &middot; 1&nbsp;Unsatisfactory<br/>Administrative &amp; Support: 5&nbsp;Excellent &middot; 4&nbsp;Very Good &middot; 3&nbsp;Good &middot; 2&nbsp;Fair &middot; 1&nbsp;Poor</div>
                     <div class="sc-radios">
                         <label class="sc-r"><input type="radio" class="sc-r__inp" name="hr_rating" value="1" /> 1</label>
                         <label class="sc-r"><input type="radio" class="sc-r__inp" name="hr_rating" value="2" /> 2</label>
@@ -547,15 +585,8 @@
                     <div class="hw-score-box__meta">Same rating &amp; recommendation will apply to all eligible records</div>
                 </div>
                 <div class="hw-field-group">
-                    <div class="hw-field-label">Declaration</div>
-                    <div class="hw-radios">
-                        <label class="sc-r sc-r--text"><input type="radio" class="sc-r__inp" name="bhr_declaration" value="AGREE" /> AGREE</label>
-                        <label class="sc-r sc-r--text"><input type="radio" class="sc-r__inp" name="bhr_declaration" value="DISAGREE" /> DISAGREE</label>
-                    </div>
-                </div>
-                <div class="hw-field-group">
                     <div class="hw-field-label">Overall Performance Rating</div>
-                    <div class="hw-field-sub">1&nbsp;=&nbsp;Poor &nbsp;|&nbsp; 2&nbsp;=&nbsp;Fair &nbsp;|&nbsp; 3&nbsp;=&nbsp;Good &nbsp;|&nbsp; 4&nbsp;=&nbsp;Very Good &nbsp;|&nbsp; 5&nbsp;=&nbsp;Outstanding</div>
+                    <div class="hw-field-sub">Academic: 5&nbsp;Exceptional &middot; 4&nbsp;Above Expectations &middot; 3&nbsp;Satisfactory &middot; 2&nbsp;Development Needed &middot; 1&nbsp;Unsatisfactory<br/>Administrative &amp; Support: 5&nbsp;Excellent &middot; 4&nbsp;Very Good &middot; 3&nbsp;Good &middot; 2&nbsp;Fair &middot; 1&nbsp;Poor</div>
                     <div class="sc-radios">
                         <label class="sc-r"><input type="radio" class="sc-r__inp" name="bhr_rating" value="1" /> 1</label>
                         <label class="sc-r"><input type="radio" class="sc-r__inp" name="bhr_rating" value="2" /> 2</label>
@@ -608,13 +639,14 @@
 <div class="pa-modal-overlay" id="supModal">
     <div class="pa-modal" style="width:500px;max-width:94vw;">
         <div class="pa-modal__head">
-            <span class="pa-modal__title">Change Supervisor</span>
+            <span class="pa-modal__title" id="supModalTitle">Change Supervisor</span>
             <button type="button" class="pa-modal__close" onclick="closeSupModal()">&times;</button>
         </div>
         <div class="pa-modal__body">
             <div style="margin-bottom:14px;padding:10px 14px;background:#f0f4f8;border:1px solid #c5d3e8;border-radius:4px;font-size:13px;color:#333;">
-                Current supervisor: <strong id="supCurrentLabel">—</strong>
+                <span id="supCurrentPrefix">Current supervisor:</span> <strong id="supCurrentLabel">—</strong>
             </div>
+            <div style="font-size:11px;color:#888;margin:-6px 0 12px;">An employee can never be assigned as their own reviewer. Every change is recorded in the appraisal audit log.</div>
             <div class="hw-field-group">
                 <div class="hw-field-label">Search &amp; Select New Supervisor</div>
                 <input type="text" id="supSearchInput"
@@ -678,11 +710,15 @@ function applyFilter() {
     var st  = (document.getElementById('selStatus')   || {}).value || '';
     var cat = (document.getElementById('selCategory') || {}).value || '';
     var sid = (document.getElementById('selSession')  || {}).value || '';
+    var rev = (document.getElementById('selReviewer') || {}).value || '';
+    var ps  = (document.getElementById('selPageSize') || {}).value || '';
     var url = 'AppraisalView.aspx?';
     if (q)   url += 'q='      + encodeURIComponent(q)   + '&';
     if (st)  url += 'status=' + encodeURIComponent(st)  + '&';
     if (cat) url += 'cat='    + encodeURIComponent(cat) + '&';
     if (sid && sid !== '0') url += 'sid=' + sid + '&';
+    if (rev === 'none') url += 'rev=none&';
+    if (ps && ps !== '25') url += 'ps=' + encodeURIComponent(ps) + '&';
     window.location.href = url.replace(/&$/, '');
 }
 function clearFilters() {
@@ -691,6 +727,7 @@ function clearFilters() {
     el = document.getElementById('selStatus');   if (el) el.value = '';
     el = document.getElementById('selCategory'); if (el) el.value = '';
     el = document.getElementById('selSession');  if (el) el.value = '0';
+    el = document.getElementById('selReviewer'); if (el) el.value = '';
     applyFilter();
 }
 // Restore filter values from URL
@@ -701,6 +738,13 @@ function clearFilters() {
     el = document.getElementById('selStatus');   if (el) el.value = params.get('status') || '';
     el = document.getElementById('selCategory'); if (el) el.value = params.get('cat')    || '';
     el = document.getElementById('selSession');  if (el && params.get('sid')) el.value = params.get('sid');
+    el = document.getElementById('selReviewer'); if (el) el.value = params.get('rev') === 'none' ? 'none' : '';
+    el = document.getElementById('selPageSize'); if (el && params.get('ps')) el.value = params.get('ps');
+    // Users without HR/admin access can browse but not act: no selection / batch bar.
+    if (window.PA_READ_ONLY) {
+        var hide = document.querySelectorAll('.pa-col-chk');
+        for (var i = 0; i < hide.length; i++) hide[i].style.display = 'none';
+    }
 })();
 
 // ═══════════════════════════════════════════════════════
@@ -727,7 +771,9 @@ function rowData(tr) {
         session:  tr.getAttribute('data-session') || '',
         score:    tr.getAttribute('data-score')   || '',
         pct:      tr.getAttribute('data-pct')     || '',
-        cls:      tr.getAttribute('data-cls')     || ''
+        cls:      tr.getAttribute('data-cls')     || '',
+        ack:      tr.getAttribute('data-ack')     || '',
+        reviewer: tr.getAttribute('data-reviewer') || ''
     };
 }
 
@@ -801,6 +847,7 @@ function updateBatchBar() {
     el = document.getElementById('btnBatchReturn'); if (el) el.disabled = !canReturn;
     el = document.getElementById('btnBatchReopen'); if (el) el.disabled = !canReopen;
     el = document.getElementById('btnBatchCancel'); if (el) el.disabled = !canCancel;
+    el = document.getElementById('btnBatchAssign'); if (el) el.disabled = n === 0;
 }
 
 function getEligibleRids(statuses) {
@@ -839,6 +886,7 @@ function openHrWizardFromRowBtn(btn) {
     window.HR_WIZARD_SCORE = tr.getAttribute('data-score') || '';
     window.HR_WIZARD_PCT   = tr.getAttribute('data-pct')   || '';
     window.HR_WIZARD_CLS   = tr.getAttribute('data-cls')   || '';
+    window.HR_WIZARD_ACK   = tr.getAttribute('data-ack')   || '';
     openHrWizardFromData();
 }
 
@@ -887,8 +935,6 @@ function bhwGoPanel(n) {
 }
 
 function bhwStep1Next() {
-    if (!document.querySelector('#batchHrModal input[name="bhr_declaration"]:checked'))
-        { showPaToast('Please select AGREE or DISAGREE', 'err'); return; }
     if (!document.querySelector('#batchHrModal input[name="bhr_rating"]:checked'))
         { showPaToast('Please select a rating', 'err'); return; }
     if (!document.querySelector('#batchHrModal input[name="bhr_recommendation"]:checked'))
@@ -898,20 +944,19 @@ function bhwStep1Next() {
 
 function bhrSubmit() {
     if (_bhrBusy) return;
-    var dec  = document.querySelector('#batchHrModal input[name="bhr_declaration"]:checked');
     var rat  = document.querySelector('#batchHrModal input[name="bhr_rating"]:checked');
     var rec  = document.querySelector('#batchHrModal input[name="bhr_recommendation"]:checked');
-    if (!dec || !rat || !rec) { showPaToast('Please complete all fields', 'err'); return; }
+    if (!rat || !rec) { showPaToast('Please complete all fields', 'err'); return; }
     _bhrBusy = true;
     var btn = document.getElementById('btnBhrSubmit');
     if (btn) { btn.disabled = true; btn.textContent = 'Submitting...'; }
     adminAjax('batch_hr_input', {
-        rids: _bhrEligible, declaration: dec.value,
+        rids: _bhrEligible,
         rating: parseInt(rat.value, 10), recommendation: rec.value,
         comments: (document.getElementById('bhrComments') || {}).value || ''
     }, function(res) {
         _bhrBusy = false;
-        if (btn) { btn.disabled = false; btn.innerHTML = '✓ Submit Batch HR Review'; }
+        if (btn) { btn.disabled = false; btn.textContent = 'Submit Batch HR Review'; }
         if (res.ok) {
             closeBatchHrModal();
             showPaToast((res.count || _bhrEligible.length) + ' record(s) HR-reviewed', 'ok');
@@ -1113,6 +1158,7 @@ function openHrWizardFromData() {
     if (window.HR_WIZARD_CLS)   chips += '<span class="hw-chip hw-chip--cls">' + escHtml(window.HR_WIZARD_CLS) + '</span>';
     document.getElementById('hwScoreChips').innerHTML = chips;
     document.getElementById('hwOfficerName').textContent = window.HR_WIZARD_OFFICER || 'HR Officer';
+    document.getElementById('hwAck').textContent = window.HR_WIZARD_ACK || 'Not yet acknowledged';
 
     var inps = document.querySelectorAll('#hrModal input.sc-r__inp');
     for (var i = 0; i < inps.length; i++) inps[i].checked = false;
@@ -1134,8 +1180,6 @@ function hwGoPanel(n) {
     }
 }
 function hwStep1Next() {
-    if (!document.querySelector('#hrModal input[name="hr_declaration"]:checked'))
-        { showPaToast('Please select AGREE or DISAGREE', 'err'); return; }
     hwGoPanel(2);
 }
 function hwStep2Next() {
@@ -1147,20 +1191,19 @@ function hwStep2Next() {
 }
 function hrSubmit() {
     if (_hrBusy) return;
-    var dec = document.querySelector('#hrModal input[name="hr_declaration"]:checked');
     var rat = document.querySelector('#hrModal input[name="hr_rating"]:checked');
     var rec = document.querySelector('#hrModal input[name="hr_recommendation"]:checked');
-    if (!dec || !rat || !rec) { showPaToast('Please complete all steps', 'err'); return; }
+    if (!rat || !rec) { showPaToast('Please complete all steps', 'err'); return; }
     _hrBusy = true;
     var btn = document.getElementById('btnHrSubmit');
     if (btn) { btn.disabled = true; btn.textContent = 'Submitting...'; }
     adminAjax('hr_input', {
-        rid: _hrRid, declaration: dec.value,
+        rid: _hrRid,
         rating: parseInt(rat.value, 10), recommendation: rec.value,
         comments: document.getElementById('hrComments').value.trim()
     }, function(res) {
         _hrBusy = false;
-        if (btn) { btn.disabled = false; btn.innerHTML = '✓ Submit HR Review'; }
+        if (btn) { btn.disabled = false; btn.textContent = 'Submit HR Review'; }
         if (res.ok) {
             closeHrModal();
             showPaToast(res.message || 'HR review submitted', 'ok');
@@ -1173,6 +1216,7 @@ function hrSubmit() {
 //  CHANGE SUPERVISOR
 // ═══════════════════════════════════════════════════════
 var _supRid    = 0;
+var _supRids   = [];   // non-empty = bulk "Assign Reviewer"
 var _supBusy   = false;
 var _supAll    = [];   // [{id, name, code}]
 
@@ -1181,18 +1225,32 @@ function changeSupervisorFromRow(btn) {
     if (!tr) return;
     closeAllMenus();
     _supRid = parseInt(tr.getAttribute('data-rid') || '0', 10);
+    _supRids = [];
     var reviewer = tr.getAttribute('data-reviewer') || '—';
     _openSupModal(reviewer);
 }
 
 function changeSupervisorFromDetailBtn(btn) {
     _supRid  = parseInt(btn.getAttribute('data-rid')      || '0', 10);
+    _supRids = [];
     var reviewer = btn.getAttribute('data-reviewer') || '—';
     _openSupModal(reviewer);
 }
 
+function batchAssignReviewer() {
+    var rids = [];
+    for (var r in _sel) rids.push(parseInt(r, 10));
+    if (!rids.length) { showPaToast('Select at least one record', 'err'); return; }
+    _supRid = 0;
+    _supRids = rids;
+    _openSupModal(rids.length + ' selected record' + (rids.length === 1 ? '' : 's'));
+}
+
 function _openSupModal(currentSup) {
     _supBusy = false;
+    var bulk = _supRids.length > 0;
+    document.getElementById('supModalTitle').textContent = bulk ? 'Assign Reviewer' : 'Change Supervisor';
+    document.getElementById('supCurrentPrefix').textContent = bulk ? 'Applies to:' : 'Current supervisor:';
     document.getElementById('supCurrentLabel').textContent = currentSup || '—';
     document.getElementById('supSearchInput').value = '';
     document.getElementById('supSelect').innerHTML = '<option disabled value="">Loading…</option>';
@@ -1250,7 +1308,10 @@ function confirmChangeSupervisor() {
     _supBusy = true;
     var btn = document.getElementById('btnSupConfirm');
     if (btn) { btn.disabled = true; btn.textContent = 'Saving…'; }
-    adminAjax('admin_change_supervisor', { rid: _supRid, new_reviewer_id: newId }, function(res) {
+    var bulk = _supRids.length > 0;
+    var action = bulk ? 'batch_change_supervisor' : 'admin_change_supervisor';
+    var payload = bulk ? { rids: _supRids, new_reviewer_id: newId } : { rid: _supRid, new_reviewer_id: newId };
+    adminAjax(action, payload, function(res) {
         _supBusy = false;
         if (btn) { btn.disabled = false; btn.textContent = 'Confirm Change'; }
         if (res.ok) {

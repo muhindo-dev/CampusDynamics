@@ -199,7 +199,7 @@
         </div>
         <div class="pa-kpi__body">
             <div class="pa-kpi__val"><asp:Literal ID="litKpiOutstanding" runat="server" Text="0" /></div>
-            <div class="pa-kpi__label">Outstanding</div>
+            <div class="pa-kpi__label">Not Yet Completed</div>
         </div>
     </div>
     <div class="pa-kpi pa-kpi--purple">

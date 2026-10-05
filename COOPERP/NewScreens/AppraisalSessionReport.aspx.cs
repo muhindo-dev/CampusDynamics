@@ -28,7 +28,7 @@ public partial class COOPERP_NewScreens_AppraisalSessionReport : System.Web.UI.P
         public int     Total, Completed, Pending, InProgress, Cancelled, ScoreCount;
         public decimal SumScore;
         public decimal? HighScore, LowScore;
-        public int     Exceptional, VeryGood, Good, Fair, Unsatisfactory, NotScored;
+        public int     Exceptional, AboveExp, Satisfactory, DevNeeded, Unsatisfactory, NotScored;
     }
 
     // ═══════════════════════════════════════════════════════════════════════
@@ -36,6 +36,13 @@ public partial class COOPERP_NewScreens_AppraisalSessionReport : System.Web.UI.P
     // ═══════════════════════════════════════════════════════════════════════
     protected void Page_Load(object sender, EventArgs e)
     {
+        // Standalone page (no SidebarMaster), so nothing else checks the login:
+        // without this the whole staff roster with scores was readable anonymously.
+        if (!IsCallerAuthenticated())
+        {
+            Response.Redirect("~/Default.aspx?ReturnUrl=" + HttpUtility.UrlEncode(Request.RawUrl), true);
+            return;
+        }
         if (QsSid <= 0) { ShowError("Invalid or missing session ID."); return; }
         if (!IsPostBack)
         {
@@ -93,7 +100,7 @@ public partial class COOPERP_NewScreens_AppraisalSessionReport : System.Web.UI.P
                          IFNULL(e.emp_phone,'')       AS emp_phone,
                          IFNULL(d.dept_name,'')       AS department,
                          IFNULL(j.jobname,'')         AS designation,
-                         IFNULL(rev.emp_name,'Not Assigned') AS reviewer_name
+                         IFNULL(rev.emp_name,'Not Assigned') AS live_reviewer_name
                   FROM appraisal_records ar
                   INNER JOIN hrm_employee e ON e.empID = ar.employee_id
                   LEFT JOIN hrm_emp_contracts c ON c.ID = (
@@ -116,7 +123,7 @@ public partial class COOPERP_NewScreens_AppraisalSessionReport : System.Web.UI.P
                          IFNULL(e.emp_phone,'') AS emp_phone,
                          '' AS department,
                          IFNULL(e.EmpType,'') AS designation,
-                         IFNULL(rev.emp_name,'Not Assigned') AS reviewer_name
+                         IFNULL(rev.emp_name,'Not Assigned') AS live_reviewer_name
                   FROM appraisal_records ar
                   INNER JOIN hrm_employee e  ON e.empID = ar.employee_id
                   LEFT JOIN  hrm_employee rev ON rev.empID = ar.reviewer_id
@@ -133,7 +140,7 @@ public partial class COOPERP_NewScreens_AppraisalSessionReport : System.Web.UI.P
         // ── Aggregate in one pass ─────────────────────────────────────────
         int total = dtRecs.Rows.Count;
         int completed = 0, pending = 0, inProgress = 0, cancelled = 0;
-        int exceptional = 0, veryGood = 0, good = 0, fair = 0, unsatisfactory = 0, notScored = 0;
+        int exceptional = 0, aboveExp = 0, satisfactory = 0, devNeeded = 0, unsatisfactory = 0, notScored = 0;
         int scoreCount = 0;
         decimal sumScore = 0m;
         decimal? highScore = null, lowScore = null;
@@ -169,11 +176,15 @@ public partial class COOPERP_NewScreens_AppraisalSessionReport : System.Web.UI.P
                 if (!cs.HighScore.HasValue || pct > cs.HighScore.Value) cs.HighScore = pct;
                 if (!cs.LowScore.HasValue  || pct < cs.LowScore.Value)  cs.LowScore  = pct;
 
-                if      (pct >= 90) { exceptional++;   cs.Exceptional++; }
-                else if (pct >= 75) { veryGood++;      cs.VeryGood++; }
-                else if (pct >= 60) { good++;           cs.Good++; }
-                else if (pct >= 40) { fair++;           cs.Fair++; }
-                else                { unsatisfactory++; cs.Unsatisfactory++; }
+                // One scale (SQL appraisal_classify): 90 / 75 / 60 / 50
+                switch (Classify(pct))
+                {
+                    case "Exceptional":        exceptional++;    cs.Exceptional++;    break;
+                    case "Above Expectations": aboveExp++;       cs.AboveExp++;       break;
+                    case "Satisfactory":       satisfactory++;   cs.Satisfactory++;   break;
+                    case "Development Needed": devNeeded++;      cs.DevNeeded++;      break;
+                    default:                   unsatisfactory++; cs.Unsatisfactory++; break;
+                }
             }
             else if (isDone)
             {
@@ -285,11 +296,11 @@ public partial class COOPERP_NewScreens_AppraisalSessionReport : System.Web.UI.P
             "<span class='rep-sec-note'>{0}</span></div>", scoredNote);
         html.Append("<div class='avoid-break'>");
         html.Append("<div class='class-chart'>");
-        html.Append(ClassRow("Exceptional",    "&#8805;90%",   exceptional,    scoreCount, "#16a34a"));
-        html.Append(ClassRow("Very Good",      "75&ndash;89%", veryGood,       scoreCount, "#2563eb"));
-        html.Append(ClassRow("Good",           "60&ndash;74%", good,           scoreCount, "#0891b2"));
-        html.Append(ClassRow("Fair",           "40&ndash;59%", fair,           scoreCount, "#d97706"));
-        html.Append(ClassRow("Unsatisfactory", "&lt;40%",      unsatisfactory, scoreCount, "#dc2626"));
+        html.Append(ClassRow("Exceptional",        "&#8805;90%",   exceptional,    scoreCount, "#16a34a"));
+        html.Append(ClassRow("Above Expectations", "75&ndash;89%", aboveExp,       scoreCount, "#2563eb"));
+        html.Append(ClassRow("Satisfactory",       "60&ndash;74%", satisfactory,   scoreCount, "#0891b2"));
+        html.Append(ClassRow("Development Needed", "50&ndash;59%", devNeeded,      scoreCount, "#d97706"));
+        html.Append(ClassRow("Unsatisfactory",     "&lt;50%",      unsatisfactory, scoreCount, "#dc2626"));
         html.Append("</div>");
 
         if (scoreCount > 0)
@@ -361,9 +372,9 @@ public partial class COOPERP_NewScreens_AppraisalSessionReport : System.Web.UI.P
             string scoreStr = hasScore
                 ? Convert.ToDecimal(r["final_percentage"]).ToString("F1") + "%"
                 : "&mdash;";
-            string classStr = isDone && r["classification"] != DBNull.Value
-                ? SafeStr(r["classification"])
-                : "";
+            string classStr = hasScore
+                ? Classify(Convert.ToDecimal(r["final_percentage"]))
+                : (isDone && r["classification"] != DBNull.Value ? SafeStr(r["classification"]) : "");
             string scoreColor = hasScore ? ClassColor(Convert.ToDecimal(r["final_percentage"])) : "#9ca3af";
             string classBg    = hasScore ? ClassColor(Convert.ToDecimal(r["final_percentage"])) + "22" : "#f3f4f6";
             string classColor2= hasScore ? ClassColor(Convert.ToDecimal(r["final_percentage"])) : "#9ca3af";
@@ -374,7 +385,7 @@ public partial class COOPERP_NewScreens_AppraisalSessionReport : System.Web.UI.P
                 Enc(SafeStr(r["emp_name"])), Enc(SafeStr(r["EMP_CODE"])));
             html.AppendFormat("<td>{0}</td>", Enc(SafeStr(r["department"])));
             html.AppendFormat("<td>{0}</td>", Enc(SafeStr(r["designation"])));
-            html.AppendFormat("<td>{0}</td>", Enc(SafeStr(r["reviewer_name"])));
+            html.AppendFormat("<td>{0}</td>", Enc(SafeStr(r["live_reviewer_name"])));
             html.AppendFormat(
                 "<td><span class='st-badge st-{0}'>{1}</span></td>",
                 StatusBadgeMod(st), FmtStatus(st));
@@ -552,8 +563,39 @@ public partial class COOPERP_NewScreens_AppraisalSessionReport : System.Web.UI.P
         if (pct >= 90) return "#16a34a";
         if (pct >= 75) return "#2563eb";
         if (pct >= 60) return "#0891b2";
-        if (pct >= 40) return "#d97706";
+        if (pct >= 50) return "#d97706";
         return "#dc2626";
+    }
+
+    /// <summary>The one classification scale - mirrors SQL appraisal_classify().</summary>
+    private static string Classify(decimal pct)
+    {
+        if (pct >= 90) return "Exceptional";
+        if (pct >= 75) return "Above Expectations";
+        if (pct >= 60) return "Satisfactory";
+        if (pct >= 50) return "Development Needed";
+        return "Unsatisfactory";
+    }
+
+    /// <summary>Forms ticket OR Session["username"] (same rule as the other eadmin screens).</summary>
+    private bool IsCallerAuthenticated()
+    {
+        try
+        {
+            if (User != null && User.Identity != null && User.Identity.IsAuthenticated
+                && !string.IsNullOrEmpty(User.Identity.Name)) return true;
+        }
+        catch { }
+        try
+        {
+            if (Session != null)
+            {
+                object u = Session["username"];
+                if (u != null && !string.IsNullOrEmpty(u.ToString().Trim())) return true;
+            }
+        }
+        catch { }
+        return false;
     }
 
     private string StatusBadgeMod(string st)
@@ -618,7 +660,9 @@ public partial class COOPERP_NewScreens_AppraisalSessionReport : System.Web.UI.P
     {
         litContent.Text = string.Format(
             "<div style='padding:40pt;text-align:center;'>" +
-            "<div style='font-size:16pt;color:#dc2626;font-weight:bold;margin-bottom:10pt;'>&#9888; Error</div>" +
+            "<div style='font-size:16pt;color:#dc2626;font-weight:bold;margin-bottom:10pt;'>" +
+            "<svg xmlns='http://www.w3.org/2000/svg' width='18' height='18' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' style='vertical-align:-3px;margin-right:6px'>" +
+            "<path d='M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z'/><line x1='12' y1='9' x2='12' y2='13'/><line x1='12' y1='17' x2='12.01' y2='17'/></svg>Error</div>" +
             "<div style='font-size:10pt;color:#555;'>{0}</div>" +
             "</div>", msg);
     }

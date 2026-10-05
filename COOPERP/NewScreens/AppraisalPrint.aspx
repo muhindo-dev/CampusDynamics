@@ -463,6 +463,14 @@ body {
     border-left: 2.5pt solid #174DA4;
 }
 
+/* ── Council-format header, KPA table, e-signatures ── */
+.council-grid .label { width: 17%; }
+.na-row td { background: #f1f3f6 !important; color: #8a94a3; }
+.ev-files { margin-top: 2pt; font-size: 7.5pt; color: #174DA4; }
+.esign { margin-top: 6pt; font-size: 8pt; color: #05275C; border: 0.5pt dashed #9fb3d6; padding: 3pt 5pt; background: #f4f7fc; }
+.ack-comment { font-size: 8.5pt; margin-top: 4pt; color: #333; }
+.decl-checked { font-weight: bold; color: #05275C; }
+
 /* ── Page break utilities ── */
 .page-break  { page-break-before: always; }
 .avoid-break { page-break-inside: avoid; }
@@ -484,9 +492,9 @@ body {
 
 <!-- Screen-only toolbar -->
 <div class="no-print">
-    <button class="back-btn" onclick="history.back()">&#8592; Back</button>
+    <button class="back-btn" onclick="history.back()"><svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="vertical-align:-2px"><line x1="19" y1="12" x2="5" y2="12"/><polyline points="12 19 5 12 12 5"/></svg> Back</button>
     <span class="toolbar-title">Appraisal Print Preview</span>
-    <button onclick="window.print()">&#128438;&nbsp; Print / Save as PDF</button>
+    <button onclick="window.print()"><svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="vertical-align:-2px"><polyline points="6 9 6 2 18 2 18 9"/><path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"/><rect x="6" y="14" width="12" height="8"/></svg>&nbsp; Print / Save as PDF</button>
 </div>
 
 <div class="print-wrapper">

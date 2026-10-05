@@ -307,6 +307,9 @@
     </div>
 </div>
 
+<!-- Records with no reviewer (nobody can ever review them until HR assigns one) -->
+<asp:Literal ID="litUnassignedBanner" runat="server" />
+
 <!-- ══ KPI GRID (4 × 2) ══════════════════════════════════════ -->
 <div class="pa-kpi-grid">
 
@@ -316,7 +319,7 @@
         </div>
         <div class="pa-kpi__body">
             <div class="pa-kpi__val"><asp:Literal ID="litKpiTotal" runat="server" Text="0" /></div>
-            <div class="pa-kpi__label">Total (Valid Contracts)</div>
+            <div class="pa-kpi__label">Total Records</div>
         </div>
     </div>
 

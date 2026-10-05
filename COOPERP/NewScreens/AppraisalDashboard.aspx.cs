@@ -76,6 +76,7 @@ public partial class COOPERP_NewScreens_AppraisalDashboard : System.Web.UI.Page
             {
                 conn.Open();
                 LoadKpis(conn);
+                LoadUnassignedReviewers(conn);
                 LoadPipeline(conn);
                 LoadActionRequired(conn);
                 LoadCategoryBreakdown(conn);
@@ -99,11 +100,11 @@ public partial class COOPERP_NewScreens_AppraisalDashboard : System.Web.UI.Page
         return "";
     }
 
-    // Only count appraisals for employees that currently hold a VALID contract.
-    // Expired / terminated / resigned staff are excluded from all stats.
-    private const string ValidContractFilter =
-        " AND EXISTS (SELECT 1 FROM hrm_emp_contracts vc" +
-        "             WHERE vc.empID = ar.employee_id AND vc.contractStatus = 'VALID')";
+    // Counts are counts of appraisal_records for the session(s) - the same population
+    // AppraisalView, AppraisalReports and the session report show. (A VALID-contract
+    // filter used to be applied here only, so the dashboard disagreed with every
+    // other screen; 116 active employees have no VALID contract row at all.)
+    private const string ValidContractFilter = "";
 
     // ═══════════════════════════════════════════════════════════════════
     //  KPI CARDS
@@ -161,6 +162,44 @@ public partial class COOPERP_NewScreens_AppraisalDashboard : System.Web.UI.Page
     }
 
     // ═══════════════════════════════════════════════════════════════════
+    //  UNASSIGNED REVIEWERS - open records nobody can review until HR assigns one
+    // ═══════════════════════════════════════════════════════════════════
+    private void LoadUnassignedReviewers(MySqlConnection conn)
+    {
+        string sql =
+            @"SELECT COUNT(*) AS cnt
+              FROM appraisal_records ar
+              WHERE (ar.reviewer_id IS NULL OR ar.reviewer_id = 0)
+                AND ar.status NOT IN ('COMPLETED','HR_REVIEWED','CANCELLED')" +
+            (QsSession > 0 ? " AND ar.session_id = " + QsSession
+                           : " AND ar.session_id IN (SELECT session_id FROM appraisal_sessions WHERE status = 'ACTIVE')");
+        int cnt = SafeInt(ExecuteQuery(conn, sql).Rows[0]["cnt"]);
+        if (cnt == 0) { litUnassignedBanner.Text = ""; return; }
+
+        int linkSid = QsSession;
+        if (linkSid == 0)
+        {
+            DataTable dtAct = ExecuteQuery(conn, "SELECT session_id FROM appraisal_sessions WHERE status = 'ACTIVE' ORDER BY created_at DESC LIMIT 1");
+            if (dtAct.Rows.Count > 0) linkSid = SafeInt(dtAct.Rows[0]["session_id"]);
+        }
+        string link = "AppraisalView.aspx?rev=none&amp;ps=200" + (linkSid > 0 ? "&amp;sid=" + linkSid : "");
+        litUnassignedBanner.Text = string.Format(
+            "<div class='pa-banner'>" +
+            "<div class='pa-banner__icon'>" +
+            "<svg xmlns='http://www.w3.org/2000/svg' width='18' height='18' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2'>" +
+            "<path d='M16 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2'/><circle cx='8.5' cy='7' r='4'/>" +
+            "<line x1='18' y1='8' x2='23' y2='13'/><line x1='23' y1='8' x2='18' y2='13'/></svg>" +
+            "</div>" +
+            "<div class='pa-banner__body'>" +
+            "<div class='pa-banner__title'>{0} open appraisal{1} with no reviewer</div>" +
+            "<div class='pa-banner__sub'>No reviewer could be resolved (supervisor / department head). HR must assign one before these can be reviewed.</div>" +
+            "</div>" +
+            "<a href='{2}' class='pa-banner__btn'>Assign reviewers &rarr;</a>" +
+            "</div>",
+            cnt, cnt == 1 ? "" : "s", link);
+    }
+
+    // ═══════════════════════════════════════════════════════════════════
     //  PIPELINE (7 workflow stages)
     // ═══════════════════════════════════════════════════════════════════
     private void LoadPipeline(MySqlConnection conn)
@@ -201,9 +240,9 @@ public partial class COOPERP_NewScreens_AppraisalDashboard : System.Web.UI.Page
         string sessionWhere = ValidContractFilter + (QsSession > 0 ? " AND ar.session_id = " + QsSession : "");
         string deptExpr = BuildDepartmentSqlExpression(conn, "e");
 
-        bool hasSupervisorId = ColumnExists(conn, "appraisal_records", "supervisor_id");
-        string supervisorJoin   = hasSupervisorId ? "LEFT JOIN hrm_employee sup ON sup.empID = ar.supervisor_id" : "";
-        string supervisorSelect = hasSupervisorId ? "IFNULL(sup.emp_name, 'Unassigned')" : "'Unassigned'";
+        // The reviewer lives in appraisal_records.reviewer_id (there is no supervisor_id).
+        string supervisorJoin   = "LEFT JOIN hrm_employee sup ON sup.empID = ar.reviewer_id";
+        string supervisorSelect = "IFNULL(sup.emp_name, 'Unassigned')";
 
         string sql = string.Format(
             @"SELECT ar.record_id, e.emp_name, e.EMP_CODE,
@@ -212,7 +251,7 @@ public partial class COOPERP_NewScreens_AppraisalDashboard : System.Web.UI.Page
                      {1} AS supervisor_name,
                      ar.updated_at,
                      ar.final_percentage,
-                     IFNULL(ar.classification,'') AS classification,
+                     IFNULL(appraisal_classify(ar.final_percentage), IFNULL(ar.classification,'')) AS classification,
                      DATEDIFF(CURDATE(), ar.updated_at) AS days_waiting
               FROM appraisal_records ar
               INNER JOIN hrm_employee e ON e.empID = ar.employee_id

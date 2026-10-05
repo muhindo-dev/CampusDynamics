@@ -234,19 +234,13 @@ public partial class COOPERP_NewScreens_AppraisalSessions : System.Web.UI.Page
     // ═══════════════════════════════════════════════════════════════════
     private void SeedCompetencyTemplates(MySqlConnection conn)
     {
-        // Version-aware: check if Academic C1.1 already has the correct official text
-        const string expectedC11 = "This lecturer's class sessions were well organised";
-        using (MySqlCommand vchk = new MySqlCommand(
-            "SELECT competency_name FROM appraisal_competency_templates WHERE staff_category='ACADEMIC' AND competency_code='C1.1' LIMIT 1", conn))
+        // Seed ONLY an empty table. Templates are maintained by HR on the
+        // CompetencyTemplates screen; this used to DELETE every template whenever the
+        // Academic C1.1 wording differed from the built-in text, silently wiping HR's edits.
+        using (MySqlCommand vchk = new MySqlCommand("SELECT COUNT(*) FROM appraisal_competency_templates", conn))
         {
-            object existing = vchk.ExecuteScalar();
-            if (existing != null && existing.ToString() == expectedC11)
-                return; // templates are already at the correct version
+            if (Convert.ToInt32(vchk.ExecuteScalar()) > 0) return;
         }
-
-        // Clear stale templates (safe: section_c rows already copied names at record creation)
-        using (MySqlCommand del = new MySqlCommand("DELETE FROM appraisal_competency_templates", conn))
-            del.ExecuteNonQuery();
 
         // ── ACADEMIC STAFF — 45 explicit criteria (form states 50; 5 unconfirmed with HR)
         // Formula: x / 250 * 100
@@ -429,6 +423,15 @@ public partial class COOPERP_NewScreens_AppraisalSessions : System.Web.UI.Page
         string ajax = Request.QueryString["ajax"];
         if (!string.IsNullOrEmpty(ajax))
         {
+            // ?ajax= runs BEFORE SidebarMaster's login check - gate it here.
+            if (!IsCallerAuthenticated())
+            {
+                Response.Clear();
+                Response.ContentType = "application/json";
+                Response.Write("{\"error\":\"Your session has expired. Please sign in again, then retry.\"}");
+                try { Response.End(); } catch (System.Threading.ThreadAbortException) { }
+                return;
+            }
             HandleAjax(ajax);
             return;
         }
@@ -456,6 +459,11 @@ public partial class COOPERP_NewScreens_AppraisalSessions : System.Web.UI.Page
                 if (!MarksAntiForgeryService.ValidateRequest())
                 {
                     Response.Write("{\"error\":\"Security validation failed. Please refresh and try again.\"}");
+                    return;
+                }
+                if (!HasHrAppraisalAccess())
+                {
+                    Response.Write("{\"error\":\"Access denied. HR or administrator access is required.\"}");
                     return;
                 }
             }
@@ -712,13 +720,25 @@ public partial class COOPERP_NewScreens_AppraisalSessions : System.Web.UI.Page
                 if (recordIds.Count > 0)
                 {
                     string idList = string.Join(",", recordIds);
+                    // The audit trail is kept (it is the record of what happened); one
+                    // RECORD_DELETED row per record is added below.
                     foreach (string tbl in new[] { "appraisal_section_b", "appraisal_section_c",
-                                                   "appraisal_section_d", "appraisal_section_e",
-                                                   "appraisal_record_audit" })
+                                                   "appraisal_section_d", "appraisal_section_e" })
                     {
                         using (MySqlCommand cmd = new MySqlCommand(
                             string.Format("DELETE FROM `{0}` WHERE record_id IN ({1})", tbl, idList), conn, tx))
                             cmd.ExecuteNonQuery();
+                    }
+                    using (MySqlCommand cmd = new MySqlCommand(
+                        @"INSERT INTO appraisal_record_audit (record_id, actor_empid, actor_username, action, old_status, new_status, payload_json, created_at)
+                          SELECT record_id, @emp, @usr, 'RECORD_DELETED', status, NULL,
+                                 CONCAT('{""reason"":""session deleted"",""session_id"":', session_id, ',""employee_id"":', employee_id, '}'), NOW()
+                          FROM appraisal_records WHERE record_id IN (" + idList + ")", conn, tx))
+                    {
+                        int emp = ActorEmpId();
+                        cmd.Parameters.AddWithValue("@emp", emp > 0 ? (object)emp : DBNull.Value);
+                        cmd.Parameters.AddWithValue("@usr", "eadmin:" + CurrentUsername());
+                        cmd.ExecuteNonQuery();
                     }
                     using (MySqlCommand cmd = new MySqlCommand(
                         "DELETE FROM appraisal_records WHERE session_id = @sid", conn, tx))
@@ -760,9 +780,22 @@ public partial class COOPERP_NewScreens_AppraisalSessions : System.Web.UI.Page
             conn.Open();
             using (MySqlTransaction tx = conn.BeginTransaction())
             {
+                // Audit first (kept - the trail outlives the record).
+                using (MySqlCommand cmd = new MySqlCommand(
+                    @"INSERT INTO appraisal_record_audit (record_id, actor_empid, actor_username, action, old_status, new_status, payload_json, created_at)
+                      SELECT record_id, @emp, @usr, 'RECORD_DELETED', status, NULL,
+                             CONCAT('{""session_id"":', session_id, ',""employee_id"":', employee_id,
+                                    ',""final_percentage"":', IFNULL(final_percentage,'null'), '}'), NOW()
+                      FROM appraisal_records WHERE record_id = @rid", conn, tx))
+                {
+                    int emp = ActorEmpId();
+                    cmd.Parameters.AddWithValue("@emp", emp > 0 ? (object)emp : DBNull.Value);
+                    cmd.Parameters.AddWithValue("@usr", "eadmin:" + CurrentUsername());
+                    cmd.Parameters.AddWithValue("@rid", recordId);
+                    cmd.ExecuteNonQuery();
+                }
                 foreach (string tbl in new[] { "appraisal_section_b", "appraisal_section_c",
-                                               "appraisal_section_d", "appraisal_section_e",
-                                               "appraisal_record_audit" })
+                                               "appraisal_section_d", "appraisal_section_e" })
                 {
                     using (MySqlCommand cmd = new MySqlCommand(
                         string.Format("DELETE FROM `{0}` WHERE record_id = @rid", tbl), conn, tx))
@@ -788,6 +821,7 @@ public partial class COOPERP_NewScreens_AppraisalSessions : System.Web.UI.Page
     // ═══════════════════════════════════════════════════════════════════
     protected void btnCreateSession_Click(object sender, EventArgs e)
     {
+        if (!HasHrAppraisalAccess()) { RedirectWithFlash("Access denied. HR or administrator access is required.", false); return; }
         string title   = txtTitle.Text.Trim();
         string desc    = txtDescription.Text.Trim();
         string pStart  = txtPeriodStart.Text.Trim();
@@ -844,6 +878,7 @@ public partial class COOPERP_NewScreens_AppraisalSessions : System.Web.UI.Page
 
     protected void btnEditSession_Click(object sender, EventArgs e)
     {
+        if (!HasHrAppraisalAccess()) { RedirectWithFlash("Access denied. HR or administrator access is required.", false); return; }
         int id;
         if (!int.TryParse(hfEditSessionId.Value, out id) || id <= 0)
         {
@@ -954,7 +989,7 @@ public partial class COOPERP_NewScreens_AppraisalSessions : System.Web.UI.Page
             ? "1=1"
             : "(" + string.Join(" OR ", catConditions) + ")";
         string sql = string.Format(
-            @"SELECT e.empID, e.EmpType, IFNULL(e.reviewer_id, e.supervisorID) AS rev_id
+            @"SELECT e.empID, e.EmpType
               FROM hrm_employee e
               WHERE IFNULL(e.to_be_appraised, 1) = 1
                 AND IFNULL(e.employment_status, 'ACTIVE') IN ('ACTIVE','PROBATION')
@@ -974,13 +1009,13 @@ public partial class COOPERP_NewScreens_AppraisalSessions : System.Web.UI.Page
                     string empType = SafeVal(emp["EmpType"]);
                     string staffCat = ResolveStaffCategoryFromEmpType(empType);
 
-                    object revIdVal = emp["rev_id"];
-                    object revParam = (revIdVal != null && revIdVal != DBNull.Value && SafeInt(revIdVal) > 0)
-                        ? revIdVal : DBNull.Value;
-
+                    // Reviewer and expected-standards group come from the shared DB rules
+                    // (reviewer_id -> supervisorID -> dept head -> contract dept head, never
+                    // self; NULL = HR must assign) - the old IFNULL(reviewer_id, supervisorID)
+                    // stopped at a stored 0 and never reached the department head.
                     using (MySqlCommand cmd = new MySqlCommand(
-                        @"INSERT INTO appraisal_records (session_id, employee_id, reviewer_id, staff_category, status)
-                          SELECT @sid, @eid, @rev, @scat, 'PENDING'
+                        @"INSERT INTO appraisal_records (session_id, employee_id, reviewer_id, staff_category, status, standards_group_id)
+                          SELECT @sid, @eid, appraisal_resolve_reviewer(@eid), @scat, 'PENDING', appraisal_resolve_group(@eid, @scat)
                           FROM DUAL
                           WHERE NOT EXISTS (
                               SELECT 1 FROM appraisal_records
@@ -989,7 +1024,6 @@ public partial class COOPERP_NewScreens_AppraisalSessions : System.Web.UI.Page
                     {
                         cmd.Parameters.AddWithValue("@sid", sessionId);
                         cmd.Parameters.AddWithValue("@eid", SafeInt(emp["empID"]));
-                        cmd.Parameters.AddWithValue("@rev", revParam);
                         cmd.Parameters.AddWithValue("@scat", staffCat);
                         count += cmd.ExecuteNonQuery();
                     }
@@ -1027,6 +1061,7 @@ public partial class COOPERP_NewScreens_AppraisalSessions : System.Web.UI.Page
 
     protected void btnActivateSession_Click(object sender, EventArgs e)
     {
+        if (!HasHrAppraisalAccess()) { RedirectWithFlash("Access denied. HR or administrator access is required.", false); return; }
         int id;
         if (!int.TryParse(hfActionSessionId.Value, out id) || id <= 0) return;
 
@@ -1039,13 +1074,25 @@ public partial class COOPERP_NewScreens_AppraisalSessions : System.Web.UI.Page
             return;
         }
 
-        ExecuteNonQuery("UPDATE appraisal_sessions SET status = 'ACTIVE' WHERE session_id = @id AND status = 'DRAFT'",
+        int changed = ExecuteNonQuery("UPDATE appraisal_sessions SET status = 'ACTIVE' WHERE session_id = @id AND status = 'DRAFT'",
             new MySqlParameter("@id", id));
-        RedirectWithFlash("Session activated. You can now generate appraisals.", true);
+        if (changed == 0)
+        {
+            RedirectWithFlash("Only a DRAFT session can be activated.", false);
+            return;
+        }
+
+        // Same as Edit -> ACTIVE: create the missing appraisal records straight away.
+        DataTable dtCats = ExecuteQuery("SELECT target_categories FROM appraisal_sessions WHERE session_id = @id",
+            new MySqlParameter("@id", id));
+        string cats = dtCats.Rows.Count > 0 ? SafeVal(dtCats.Rows[0]["target_categories"]) : "";
+        int generated = GenerateMissingAppraisals(id, cats);
+        RedirectWithFlash(string.Format("Session activated. {0} appraisal record(s) generated.", generated), true);
     }
 
     protected void btnCloseSession_Click(object sender, EventArgs e)
     {
+        if (!HasHrAppraisalAccess()) { RedirectWithFlash("Access denied. HR or administrator access is required.", false); return; }
         int id;
         if (!int.TryParse(hfActionSessionId.Value, out id) || id <= 0) return;
 
@@ -1056,6 +1103,7 @@ public partial class COOPERP_NewScreens_AppraisalSessions : System.Web.UI.Page
 
     protected void btnArchiveSession_Click(object sender, EventArgs e)
     {
+        if (!HasHrAppraisalAccess()) { RedirectWithFlash("Access denied. HR or administrator access is required.", false); return; }
         int id;
         if (!int.TryParse(hfActionSessionId.Value, out id) || id <= 0) return;
 
@@ -1066,6 +1114,7 @@ public partial class COOPERP_NewScreens_AppraisalSessions : System.Web.UI.Page
 
     protected void btnDeleteSession_Click(object sender, EventArgs e)
     {
+        if (!HasHrAppraisalAccess()) { RedirectWithFlash("Access denied. HR or administrator access is required.", false); return; }
         int id;
         if (!int.TryParse(hfActionSessionId.Value, out id) || id <= 0) return;
 
@@ -1094,13 +1143,25 @@ public partial class COOPERP_NewScreens_AppraisalSessions : System.Web.UI.Page
                 if (recordIds.Count > 0)
                 {
                     string idList = string.Join(",", recordIds);
+                    // The audit trail is kept (it is the record of what happened); one
+                    // RECORD_DELETED row per record is added below.
                     foreach (string tbl in new[] { "appraisal_section_b", "appraisal_section_c",
-                                                   "appraisal_section_d", "appraisal_section_e",
-                                                   "appraisal_record_audit" })
+                                                   "appraisal_section_d", "appraisal_section_e" })
                     {
                         using (MySqlCommand cmd = new MySqlCommand(
                             string.Format("DELETE FROM `{0}` WHERE record_id IN ({1})", tbl, idList), conn, tx))
                             cmd.ExecuteNonQuery();
+                    }
+                    using (MySqlCommand cmd = new MySqlCommand(
+                        @"INSERT INTO appraisal_record_audit (record_id, actor_empid, actor_username, action, old_status, new_status, payload_json, created_at)
+                          SELECT record_id, @emp, @usr, 'RECORD_DELETED', status, NULL,
+                                 CONCAT('{""reason"":""session deleted"",""session_id"":', session_id, ',""employee_id"":', employee_id, '}'), NOW()
+                          FROM appraisal_records WHERE record_id IN (" + idList + ")", conn, tx))
+                    {
+                        int emp = ActorEmpId();
+                        cmd.Parameters.AddWithValue("@emp", emp > 0 ? (object)emp : DBNull.Value);
+                        cmd.Parameters.AddWithValue("@usr", "eadmin:" + CurrentUsername());
+                        cmd.ExecuteNonQuery();
                     }
                     using (MySqlCommand cmd = new MySqlCommand(
                         "DELETE FROM appraisal_records WHERE session_id = @sid", conn, tx))
@@ -1415,6 +1476,105 @@ public partial class COOPERP_NewScreens_AppraisalSessions : System.Web.UI.Page
             }
         }
         return sb.ToString();
+    }
+
+    // ═══════════════════════════════════════════════════════════════════
+    //  AUTH / ACCESS / AUDIT
+    // ═══════════════════════════════════════════════════════════════════
+    private bool IsCallerAuthenticated()
+    {
+        try
+        {
+            if (User != null && User.Identity != null && User.Identity.IsAuthenticated
+                && !string.IsNullOrEmpty(User.Identity.Name)) return true;
+        }
+        catch { }
+        try
+        {
+            if (Session != null)
+            {
+                object u = Session["username"];
+                if (u != null && !string.IsNullOrEmpty(u.ToString().Trim())) return true;
+            }
+        }
+        catch { }
+        return false;
+    }
+
+    private string CurrentUsername()
+    {
+        try
+        {
+            if (Session != null && Session["username"] != null && !string.IsNullOrEmpty(Session["username"].ToString().Trim()))
+                return Session["username"].ToString().Trim();
+        }
+        catch { }
+        try
+        {
+            if (User != null && User.Identity != null && User.Identity.IsAuthenticated) return User.Identity.Name ?? "";
+        }
+        catch { }
+        return "";
+    }
+
+    private bool? _hrAccess;
+
+    /// <summary>
+    /// HR appraisal administration: RBAC admin wildcard, an active sys role 'admin' or
+    /// 'hr_manager', or legacy my_aspnet role Administrator / System Admin / Human Resource /
+    /// Human Resource Manager. (Same rule as AppraisalView.)
+    /// </summary>
+    private bool HasHrAppraisalAccess()
+    {
+        if (_hrAccess.HasValue) return _hrAccess.Value;
+        bool ok = false;
+        try
+        {
+            if (IsCallerAuthenticated())
+            {
+                if (RoleAccessService.IsAdmin()) ok = true;
+                string u = CurrentUsername();
+                if (!ok && !string.IsNullOrEmpty(u))
+                {
+                    DataTable dt = ExecuteQuery(
+                        @"SELECT
+                            (SELECT COUNT(*) FROM sys_user_roles ur
+                               JOIN sys_roles r ON r.id = ur.role_id
+                              WHERE ur.username = @u AND ur.is_active = 1 AND r.is_active = 1
+                                AND (ur.expires_at IS NULL OR ur.expires_at > NOW())
+                                AND r.role_code IN ('admin','hr_manager'))
+                          + (SELECT COUNT(*) FROM my_aspnet_users mu
+                               JOIN my_aspnet_usersinroles mur ON mur.userId = mu.id
+                               JOIN my_aspnet_roles mr ON mr.id = mur.roleId
+                              WHERE mu.name = @u
+                                AND mr.name IN ('Administrator','System Admin','Human Resource','Human Resource Manager')) AS n",
+                        new MySqlParameter("@u", u));
+                    ok = dt.Rows.Count > 0 && SafeInt(dt.Rows[0]["n"]) > 0;
+                }
+            }
+        }
+        catch { ok = false; }
+        _hrAccess = ok;
+        return ok;
+    }
+
+    private int? _actorEmpId;
+    private int ActorEmpId()
+    {
+        if (_actorEmpId.HasValue) return _actorEmpId.Value;
+        int v = 0;
+        try
+        {
+            string u = CurrentUsername();
+            if (!string.IsNullOrEmpty(u))
+            {
+                DataTable dt = ExecuteQuery("SELECT empID FROM hrm_employee WHERE usernames = @u LIMIT 1", new MySqlParameter("@u", u));
+                if (dt.Rows.Count > 0) v = SafeInt(dt.Rows[0]["empID"]);
+            }
+        }
+        catch { }
+        _actorEmpId = v;
+        return v;
     }
 
     // ═══════════════════════════════════════════════════════════════════

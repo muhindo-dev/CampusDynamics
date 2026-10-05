@@ -1,6 +1,7 @@
 <%@ Page Language="C#" MasterPageFile="~/COOPERP/NewScreens/SidebarMaster.master" AutoEventWireup="true" CodeFile="CompetencyTemplates.aspx.cs" Inherits="COOPERP_NewScreens_CompetencyTemplates" Title="Competency Templates - Campus Dynamics" %>
 
 <asp:Content ID="HeadContent" ContentPlaceHolderID="HeadContent" runat="server">
+<meta name="csrf-token" content="<%= MarksAntiForgeryService.GetToken() %>" />
 <style>
 /* ===== COMPETENCY TEMPLATES ===== */
 *,*::before,*::after{box-sizing:border-box;}
@@ -313,6 +314,7 @@ function deleteRow(id) {
     fd.append('template_id', id);
     var xhr = new XMLHttpRequest();
     xhr.open('POST', 'CompetencyTemplates.aspx?ajax=delete', true);
+    setCsrf(xhr);
     xhr.onreadystatechange = function() {
         if (xhr.readyState !== 4) return;
         try {
@@ -353,6 +355,7 @@ function saveForm() {
 
     var xhr = new XMLHttpRequest();
     xhr.open('POST', 'CompetencyTemplates.aspx?ajax=save', true);
+    setCsrf(xhr);
     xhr.onreadystatechange = function() {
         if (xhr.readyState !== 4) return;
         btn.disabled = false;
@@ -369,6 +372,12 @@ function saveForm() {
         }
     };
     xhr.send(fd);
+}
+
+/* ── Anti-forgery token (same pattern as AppraisalSessions / AppraisalView) ── */
+function setCsrf(xhr) {
+    var m = document.querySelector('meta[name="csrf-token"]');
+    if (m) xhr.setRequestHeader('X-CSRF-Token', m.getAttribute('content'));
 }
 
 /* ── Toast ── */

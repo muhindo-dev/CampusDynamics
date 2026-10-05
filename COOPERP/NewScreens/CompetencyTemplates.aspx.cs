@@ -49,9 +49,35 @@ public partial class COOPERP_NewScreens_CompetencyTemplates : System.Web.UI.Page
     // ═══════════════════════════════════════════════════════════════════
     private void HandleAjax(string action)
     {
+        Response.Clear();
         Response.ContentType = "application/json";
         try
         {
+            // ?ajax= runs BEFORE SidebarMaster's login check: gate it here.
+            // (save/delete were reachable anonymously before this.)
+            if (!IsCallerAuthenticated())
+            {
+                Response.Write("{\"ok\":false,\"msg\":\"Your session has expired. Please sign in again, then retry.\"}");
+                try { Response.End(); } catch (System.Threading.ThreadAbortException) { }
+                return;
+            }
+            if (action == "save" || action == "delete" || action == "reorder")
+            {
+                if (!string.Equals(Request.HttpMethod, "POST", StringComparison.OrdinalIgnoreCase)
+                    || !MarksAntiForgeryService.ValidateRequest())
+                {
+                    Response.Write("{\"ok\":false,\"msg\":\"Security validation failed. Please refresh and try again.\"}");
+                    try { Response.End(); } catch (System.Threading.ThreadAbortException) { }
+                    return;
+                }
+                if (!HasHrAppraisalAccess())
+                {
+                    Response.Write("{\"ok\":false,\"msg\":\"Access denied. HR or administrator access is required.\"}");
+                    try { Response.End(); } catch (System.Threading.ThreadAbortException) { }
+                    return;
+                }
+            }
+
             switch (action)
             {
                 case "save":       AjaxSave();       break;
@@ -63,11 +89,67 @@ public partial class COOPERP_NewScreens_CompetencyTemplates : System.Web.UI.Page
                     break;
             }
         }
+        catch (System.Threading.ThreadAbortException) { /* Response.End() - re-thrown by the runtime */ }
         catch (Exception ex)
         {
             Response.Write("{\"ok\":false,\"msg\":\"" + JsEscape(ex.Message) + "\"}");
         }
-        Response.End();
+        try { Response.End(); } catch (System.Threading.ThreadAbortException) { }
+    }
+
+    // ═══════════════════════════════════════════════════════════════════
+    //  AUTH
+    // ═══════════════════════════════════════════════════════════════════
+    private bool IsCallerAuthenticated()
+    {
+        try
+        {
+            if (User != null && User.Identity != null && User.Identity.IsAuthenticated
+                && !string.IsNullOrEmpty(User.Identity.Name)) return true;
+        }
+        catch { }
+        try
+        {
+            if (Session != null)
+            {
+                object u = Session["username"];
+                if (u != null && !string.IsNullOrEmpty(u.ToString().Trim())) return true;
+            }
+        }
+        catch { }
+        return false;
+    }
+
+    /// <summary>
+    /// HR appraisal administration: RBAC admin wildcard, an active sys role 'admin' or
+    /// 'hr_manager', or legacy my_aspnet role Administrator / System Admin / Human Resource /
+    /// Human Resource Manager. (Same rule as AppraisalView / AppraisalSessions.)
+    /// </summary>
+    private bool HasHrAppraisalAccess()
+    {
+        try
+        {
+            if (!IsCallerAuthenticated()) return false;
+            if (RoleAccessService.IsAdmin()) return true;
+            string u = Session != null && Session["username"] != null ? Session["username"].ToString().Trim()
+                     : (User != null && User.Identity != null ? User.Identity.Name : "");
+            if (string.IsNullOrEmpty(u)) return false;
+            DataTable dt = ExecuteQuery(
+                @"SELECT
+                    (SELECT COUNT(*) FROM sys_user_roles ur
+                       JOIN sys_roles r ON r.id = ur.role_id
+                      WHERE ur.username = @u AND ur.is_active = 1 AND r.is_active = 1
+                        AND (ur.expires_at IS NULL OR ur.expires_at > NOW())
+                        AND r.role_code IN ('admin','hr_manager'))
+                  + (SELECT COUNT(*) FROM my_aspnet_users mu
+                       JOIN my_aspnet_usersinroles mur ON mur.userId = mu.id
+                       JOIN my_aspnet_roles mr ON mr.id = mur.roleId
+                      WHERE mu.name = @u
+                        AND mr.name IN ('Administrator','System Admin','Human Resource','Human Resource Manager')) AS n",
+                new MySqlParameter("@u", u));
+            return dt.Rows.Count > 0 && SafeInt(dt.Rows[0]["n"]) > 0;
+        }
+        catch { return false; }
     }
 
     // ═══════════════════════════════════════════════════════════════════
