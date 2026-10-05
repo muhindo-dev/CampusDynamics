@@ -198,61 +198,132 @@ function load() {
     });
 }
 
-/* Senate print: grouped and numbered by programme, which is how a graduation list is read out
-   and signed. Built from the rows on screen, so what prints is what was reviewed. */
+/* Senate print: a faculty summary first, then the names grouped by faculty and numbered by
+   programme, which is how a graduation list is read out and signed. Built from the rows on
+   screen, so what prints is what was reviewed. */
 function doPrint() {
     if (!rows.length) { G.toast('There is nothing on this list to print.', false); return; }
     var w = window.open('', '_blank');
     if (!w) { G.toast('Pop-up blocked: allow pop-ups to open the print view.', false); return; }
 
-    var groups = {}, order = [], i;
+    var facName = {}, fl = (BOOT && BOOT.faculties) || [], i;
+    for (i = 0; i < fl.length; i++) facName[(fl[i].v || '').replace(/^\s+|\s+$/g, '')] = fl[i].t;
+    var NOFAC = 'Faculty not recorded';
+    function fac(r) { var c = (r.faculty || '').replace(/^\s+|\s+$/g, ''); return c ? (facName[c] || ('Faculty ' + c)) : NOFAC; }
+    function top(r) { return /first|distinction/i.test(r.degclass || ''); }
+
+    // faculty -> programme -> rows
+    var F = {}, fOrder = [];
     for (i = 0; i < rows.length; i++) {
-        var k = rows[i].progname || rows[i].progcode;
-        if (!groups[k]) { groups[k] = []; order.push(k); }
-        groups[k].push(rows[i]);
+        var r = rows[i], fk = fac(r), pk = r.progname || r.progcode;
+        if (!F[fk]) { F[fk] = { progs: {}, order: [], n: 0, top: 0 }; fOrder.push(fk); }
+        var f = F[fk];
+        if (!f.progs[pk]) { f.progs[pk] = []; f.order.push(pk); }
+        f.progs[pk].push(r); f.n++; if (top(r)) f.top++;
     }
-    order.sort();
+    fOrder.sort(function (a, b) { return a === NOFAC ? 1 : b === NOFAC ? -1 : a.localeCompare(b); });
 
-    var year = G.qs('fYear').value || 'all years';
-    var h = '<!doctype html><html><head><meta charset="utf-8"><title>Graduation list ' + G.esc(year) + '</title><style>' +
-        'body{font-family:"Segoe UI",Arial,sans-serif;color:#111;margin:24px;font-size:11pt;}' +
-        '.hd{border-bottom:2.5px solid #05275C;padding-bottom:8px;margin-bottom:16px;}' +
-        'h1{font-size:15pt;margin:0;color:#05275C;letter-spacing:.2px;}' +
-        '.sub{font-size:9.5pt;color:#555;margin-top:3px;}' +
-        'h2{font-size:11pt;margin:18px 0 5px;color:#05275C;border-bottom:1px solid #05275C;padding-bottom:3px;}' +
-        'table{width:100%;border-collapse:collapse;font-size:9.5pt;}' +
-        'th{text-align:left;border-bottom:1px solid #999;padding:4px 5px;font-size:8pt;text-transform:uppercase;' +
-        'letter-spacing:.3px;color:#444;}' +
-        'td{padding:4px 5px;border-bottom:1px solid #eee;}.n{text-align:right;}' +
-        '.foot{margin-top:24px;font-size:8.5pt;color:#555;border-top:1px solid #999;padding-top:7px;}' +
-        '.sig{margin-top:30px;display:flex;gap:44px;font-size:9pt;}' +
+    var total = rows.length, totalTop = 0, totalProgs = 0;
+    for (i = 0; i < fOrder.length; i++) { totalTop += F[fOrder[i]].top; totalProgs += F[fOrder[i]].order.length; }
+
+    var year = G.qs('fYear').value || 'All years';
+    var scope = [];
+    if (G.qs('fFac').value) scope.push(txt('fFac'));
+    if (G.qs('fDep').value) scope.push(txt('fDep'));
+    if (G.qs('fProg').value) scope.push(txt('fProg'));
+    var crest = new URL('../images/mru-crest.png', window.location.href).href;
+    var today = new Date().toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric' });
+    function pct(n) { return total ? (Math.round(n * 1000 / total) / 10) + '%' : '0%'; }
+    function plural(n, one, many) { return n + ' ' + (n === 1 ? one : many); }
+
+    var h = '<!doctype html><html><head><meta charset="utf-8"><title>Graduation List ' + G.esc(year) + ' - Muteesa I Royal University</title><style>' +
+        '*{box-sizing:border-box;-webkit-print-color-adjust:exact;print-color-adjust:exact;}' +
+        'body{font-family:"Segoe UI",Arial,sans-serif;color:#1a1a2e;margin:0;font-size:10pt;}' +
+        '.doc{max-width:900px;margin:0 auto;padding:22px 26px;}' +
+        '.lh{display:flex;align-items:center;gap:16px;padding-bottom:10px;border-bottom:3px solid #05275C;}' +
+        '.lh img{width:76px;height:76px;object-fit:contain;flex:0 0 auto;}' +
+        '.lh__t{flex:1;text-align:center;}' +
+        '.lh__n{font-size:19pt;font-weight:700;color:#05275C;letter-spacing:1px;}' +
+        '.lh__o{font-size:10.5pt;color:#174DA4;font-weight:600;margin-top:2px;letter-spacing:.3px;}' +
+        '.lh__a{font-size:8.5pt;color:#666;margin-top:3px;}' +
+        '.lh__sp{width:76px;flex:0 0 auto;}' +
+        '.rule{height:1px;background:#174DA4;margin-top:2px;}' +
+        '.band{margin:14px 0 4px;background:#05275C;color:#fff;text-align:center;padding:8px 12px;font-size:13pt;font-weight:700;letter-spacing:1.5px;}' +
+        '.meta{text-align:center;font-size:9pt;color:#555;margin-bottom:16px;}' +
+        '.cap{font-size:10pt;font-weight:700;color:#05275C;margin:4px 0 6px;text-transform:uppercase;letter-spacing:.5px;}' +
+        '.sum{width:100%;border-collapse:collapse;margin-bottom:6px;font-size:9.5pt;}' +
+        '.sum th{background:#174DA4;color:#fff;text-align:left;padding:6px 8px;font-size:8pt;text-transform:uppercase;letter-spacing:.4px;}' +
+        '.sum td{padding:6px 8px;border-bottom:1px solid #e0e5ed;}' +
+        '.sum tr:nth-child(even) td{background:#f5f7fa;}' +
+        '.sum .tot td{background:#e8eef8 !important;font-weight:700;color:#05275C;border-top:2px solid #05275C;}' +
+        '.n{text-align:right;white-space:nowrap;}' +
+        'h2{font-size:11pt;margin:22px 0 0;background:#e8eef8;color:#05275C;padding:6px 10px;border-left:4px solid #05275C;}' +
+        'h2 span,h3 span{font-weight:400;font-size:8.5pt;color:#555;}' +
+        'h3{font-size:10pt;margin:12px 0 4px;color:#174DA4;border-bottom:1px solid #174DA4;padding-bottom:3px;}' +
+        '.lst{width:100%;border-collapse:collapse;font-size:9.5pt;}' +
+        '.lst th{text-align:left;border-bottom:1px solid #999;padding:4px 6px;font-size:7.5pt;text-transform:uppercase;letter-spacing:.3px;color:#444;}' +
+        '.lst td{padding:4px 6px;border-bottom:1px solid #eee;}' +
+        '.foot{margin-top:26px;font-size:8.5pt;color:#555;border-top:1px solid #999;padding-top:7px;line-height:1.5;}' +
+        '.sig{margin-top:40px;display:flex;gap:44px;font-size:9pt;}' +
         '.sig div{flex:1;border-top:1px solid #333;padding-top:5px;}' +
-        '@media print{h2{page-break-after:avoid;}tr{page-break-inside:avoid;}}' +
-        '</style></head><body>';
-    h += '<div class="hd"><h1>Muteesa I Royal University</h1>' +
-         '<div class="sub">Graduation list for ' + G.esc(year) + ' &middot; ' + rows.length +
-         ' candidate' + (rows.length === 1 ? '' : 's') + ' &middot; prepared ' +
-         new Date().toLocaleDateString() + '</div></div>';
+        '.sig small{display:block;color:#777;margin-top:16px;}' +
+        '.brand{margin-top:18px;text-align:center;font-size:7.5pt;color:#888;letter-spacing:.4px;border-top:3px solid #05275C;padding-top:6px;}' +
+        '@media print{.doc{padding:0;}h2,h3{page-break-after:avoid;}tr{page-break-inside:avoid;}}' +
+        '@page{margin:12mm 12mm 14mm;}' +
+        '</style></head><body><div class="doc">';
 
-    for (var gi = 0; gi < order.length; gi++) {
-        var list = groups[order[gi]];
-        h += '<h2>' + G.esc(order[gi]) + ' <span style="font-weight:400;font-size:8.5pt;color:#666;">(' +
-             list.length + ')</span></h2><table><thead><tr><th style="width:24px;">#</th>' +
-             '<th>Student number</th><th>Name</th><th class="n">CGPA</th><th>Class of award</th>' +
-             '</tr></thead><tbody>';
-        for (i = 0; i < list.length; i++)
-            h += '<tr><td class="n">' + (i + 1) + '</td><td>' + G.esc(list[i].regno) + '</td><td>' +
-                 G.esc(list[i].name) + '</td><td class="n">' + G.n2(list[i].cgpa) + '</td><td>' +
-                 G.esc(list[i].degclass) + '</td></tr>';
-        h += '</tbody></table>';
+    // Letterhead
+    h += '<div class="lh"><img id="crest" src="' + crest + '" alt="Muteesa I Royal University crest" />' +
+         '<div class="lh__t"><div class="lh__n">MUTEESA I ROYAL UNIVERSITY</div>' +
+         '<div class="lh__o">Office of the Academic Registrar</div>' +
+         '<div class="lh__a">www.mru.ac.ug</div></div><div class="lh__sp"></div></div><div class="rule"></div>' +
+         '<div class="band">GRADUATION LIST &middot; ' + G.esc(year.toUpperCase()) + '</div>' +
+         '<div class="meta">' + (scope.length ? G.esc(scope.join(' / ')) + ' &middot; ' : '') +
+         plural(total, 'graduand', 'graduands') + ' &middot; ' + plural(fOrder.length, 'faculty', 'faculties') + ' &middot; ' +
+         plural(totalProgs, 'programme', 'programmes') + ' &middot; prepared ' + today + '</div>';
+
+    // Summary of graduands by faculty
+    h += '<div class="cap">Summary of graduands by faculty</div><table class="sum"><thead><tr>' +
+         '<th style="width:28px;">#</th><th>Faculty</th><th class="n">Programmes</th><th class="n">Graduands</th>' +
+         '<th class="n">First Class / Distinction</th><th class="n">Share of list</th></tr></thead><tbody>';
+    for (i = 0; i < fOrder.length; i++) {
+        var fi = F[fOrder[i]];
+        h += '<tr><td>' + (i + 1) + '</td><td>' + G.esc(fOrder[i]) + '</td><td class="n">' + fi.order.length + '</td><td class="n"><strong>' + fi.n +
+             '</strong></td><td class="n">' + fi.top + '</td><td class="n">' + pct(fi.n) + '</td></tr>';
+    }
+    h += '<tr class="tot"><td></td><td>Total</td><td class="n">' + totalProgs + '</td><td class="n">' + total + '</td><td class="n">' + totalTop +
+         '</td><td class="n">100%</td></tr></tbody></table>';
+
+    // Names: faculty, then programme
+    for (var a = 0; a < fOrder.length; a++) {
+        var ff = F[fOrder[a]];
+        ff.order.sort();
+        h += '<h2>' + G.esc(fOrder[a]) + ' <span>(' + plural(ff.n, 'graduand', 'graduands') + ')</span></h2>';
+        for (var b = 0; b < ff.order.length; b++) {
+            var list = ff.progs[ff.order[b]];
+            h += '<h3>' + G.esc(ff.order[b]) + ' <span>(' + list.length + ')</span></h3><table class="lst"><thead><tr>' +
+                 '<th style="width:28px;">#</th><th style="width:150px;">Student number</th><th>Name</th>' +
+                 '<th class="n" style="width:60px;">CGPA</th><th style="width:190px;">Class of award</th></tr></thead><tbody>';
+            for (i = 0; i < list.length; i++)
+                h += '<tr><td class="n">' + (i + 1) + '</td><td>' + G.esc(list[i].regno) + '</td><td>' + G.esc(list[i].name) +
+                     '</td><td class="n">' + G.n2(list[i].cgpa) + '</td><td>' + G.esc(list[i].degclass) + '</td></tr>';
+            h += '</tbody></table>';
+        }
     }
 
-    h += '<div class="foot">Prepared from the Graduation Centre. Every name on this list was approved by a ' +
+    h += '<div class="foot">Prepared from the Graduation Centre on ' + today + '. Every name on this list was approved by a ' +
          'named reviewer against the results on record at the time of approval; the evidence behind each ' +
          'decision is retained and can be produced on request.</div>' +
-         '<div class="sig"><div>Academic Registrar</div><div>Chairperson, Senate</div></div></body></html>';
+         '<div class="sig"><div>Academic Registrar<small>Signature &amp; date</small></div><div>Chairperson, Senate<small>Signature &amp; date</small></div></div>' +
+         '<div class="brand">MUTEESA I ROYAL UNIVERSITY &middot; GRADUATION LIST ' + G.esc(year.toUpperCase()) + ' &middot; CONFIDENTIAL</div>' +
+         '</div></body></html>';
     w.document.open(); w.document.write(h); w.document.close();
-    setTimeout(function () { try { w.focus(); w.print(); } catch (e) {} }, 350);
+
+    // Print once the crest has loaded (or after a short wait if it cannot)
+    var printed = false;
+    function go() { if (printed) return; printed = true; try { w.focus(); w.print(); } catch (e) {} }
+    var img = w.document.getElementById('crest');
+    if (img && !img.complete) { img.onload = go; img.onerror = go; setTimeout(go, 2500); } else setTimeout(go, 350);
 }
 
 function footer(g) {
