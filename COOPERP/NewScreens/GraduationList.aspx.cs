@@ -143,7 +143,7 @@ public partial class COOPERP_NewScreens_GraduationList : System.Web.UI.Page
         c.Add(new GraduationExport.Col<Row>("gender", "Gender", ID, F_gender));
         c.Add(new GraduationExport.Col<Row>("nat", "Nationality", ID, F_nat).Off());
 
-        c.Add(new GraduationExport.Col<Row>("cgpa", "CGPA", AW, true, F_cgpa));
+        // CGPA is deliberately not exported: the list states the class of award only.
         c.Add(new GraduationExport.Col<Row>("class", "Class of Award", AW, F_class));
         c.Add(new GraduationExport.Col<Row>("year", "Graduation Year", AW, F_year));
 

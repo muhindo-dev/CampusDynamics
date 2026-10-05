@@ -262,7 +262,8 @@ function doPrint() {
         'h3{font-size:10pt;margin:12px 0 4px;color:#174DA4;border-bottom:1px solid #174DA4;padding-bottom:3px;}' +
         '.lst{width:100%;border-collapse:collapse;font-size:9.5pt;}' +
         '.lst th{text-align:left;border-bottom:1px solid #999;padding:4px 6px;font-size:7.5pt;text-transform:uppercase;letter-spacing:.3px;color:#444;}' +
-        '.lst td{padding:4px 6px;border-bottom:1px solid #eee;}' +
+        '.lst td{padding:5px 6px;border-bottom:1px solid #e0e5ed;}' +
+        '.lst tbody tr:nth-child(even) td{background:#f0f4fa;}' +
         '.foot{margin-top:26px;font-size:8.5pt;color:#555;border-top:1px solid #999;padding-top:7px;line-height:1.5;}' +
         '.sig{margin-top:40px;display:flex;gap:44px;font-size:9pt;}' +
         '.sig div{flex:1;border-top:1px solid #333;padding-top:5px;}' +
@@ -303,10 +304,10 @@ function doPrint() {
             var list = ff.progs[ff.order[b]];
             h += '<h3>' + G.esc(ff.order[b]) + ' <span>(' + list.length + ')</span></h3><table class="lst"><thead><tr>' +
                  '<th style="width:28px;">#</th><th style="width:150px;">Student number</th><th>Name</th>' +
-                 '<th class="n" style="width:60px;">CGPA</th><th style="width:190px;">Class of award</th></tr></thead><tbody>';
+                 '<th style="width:220px;">Class of award</th></tr></thead><tbody>';
             for (i = 0; i < list.length; i++)
                 h += '<tr><td class="n">' + (i + 1) + '</td><td>' + G.esc(list[i].regno) + '</td><td>' + G.esc(list[i].name) +
-                     '</td><td class="n">' + G.n2(list[i].cgpa) + '</td><td>' + G.esc(list[i].degclass) + '</td></tr>';
+                     '</td><td>' + G.esc(list[i].degclass) + '</td></tr>';
             h += '</tbody></table>';
         }
     }

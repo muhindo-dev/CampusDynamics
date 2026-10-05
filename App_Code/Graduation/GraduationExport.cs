@@ -331,6 +331,11 @@ public static class GraduationExport
             "<Borders><Border ss:Position=\"Bottom\" ss:LineStyle=\"Continuous\" ss:Weight=\"1\" ss:Color=\"#E0E5ED\"/></Borders></Style>");
         sb.AppendLine("<Style ss:ID=\"sNum\"><Font ss:Size=\"10\"/><Alignment ss:Horizontal=\"Right\"/>" +
             "<Borders><Border ss:Position=\"Bottom\" ss:LineStyle=\"Continuous\" ss:Weight=\"1\" ss:Color=\"#E0E5ED\"/></Borders></Style>");
+        // Striped rows: every other data row on a light band
+        sb.AppendLine("<Style ss:ID=\"sCellAlt\"><Font ss:Size=\"10\"/><Interior ss:Color=\"#F0F4FA\" ss:Pattern=\"Solid\"/>" +
+            "<Borders><Border ss:Position=\"Bottom\" ss:LineStyle=\"Continuous\" ss:Weight=\"1\" ss:Color=\"#E0E5ED\"/></Borders></Style>");
+        sb.AppendLine("<Style ss:ID=\"sNumAlt\"><Font ss:Size=\"10\"/><Alignment ss:Horizontal=\"Right\"/><Interior ss:Color=\"#F0F4FA\" ss:Pattern=\"Solid\"/>" +
+            "<Borders><Border ss:Position=\"Bottom\" ss:LineStyle=\"Continuous\" ss:Weight=\"1\" ss:Color=\"#E0E5ED\"/></Borders></Style>");
         sb.AppendLine("<Style ss:ID=\"sFoot\"><Font ss:Size=\"8\" ss:Italic=\"1\" ss:Color=\"#777777\"/></Style>");
         sb.AppendLine("</Styles>");
 
@@ -387,14 +392,16 @@ public static class GraduationExport
 
                 if (sh.Rows != null)
                 {
+                    int rowNo = 0;
                     foreach (string[] r in sh.Rows)
                     {
+                        bool alt = (rowNo++ % 2) == 1;
                         sb.Append("<Row>");
                         for (int i = 0; i < sh.Columns.Length; i++)
                         {
                             string v = i < r.Length ? r[i] : "";
                             bool num = sh.NumericColumns.Contains(i) && LooksNumeric(v);
-                            Cell(sb, num ? "sNum" : "sCell", v, num);
+                            Cell(sb, num ? (alt ? "sNumAlt" : "sNum") : (alt ? "sCellAlt" : "sCell"), v, num);
                         }
                         sb.AppendLine("</Row>");
                     }
