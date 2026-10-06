@@ -405,7 +405,7 @@ public partial class COOPERP_NewScreens_SidebarMaster : System.Web.UI.MasterPage
                 break;
             // HR & Payroll Module
             case "hrdashboard":
-                title = "HR & Payroll Dashboard";
+                title = "Human Resources";
                 break;
             case "hremployees":
                 title = "Employee Directory";
@@ -418,7 +418,7 @@ public partial class COOPERP_NewScreens_SidebarMaster : System.Web.UI.MasterPage
                 title = "Contract Renewals";
                 break;
             case "hrpayroll":
-                title = "Payroll Management";
+                title = "Payroll Runs";
                 break;
             case "hrpayslips":
                 title = "Payslips";
@@ -430,13 +430,38 @@ public partial class COOPERP_NewScreens_SidebarMaster : System.Web.UI.MasterPage
                 title = "Deduction Records";
                 break;
             case "hrleavemanagement":
-                title = "Leave Management";
+                title = "Leave Balances";
                 break;
             case "hrsettings":
                 title = "HR Settings";
                 break;
             case "hrconfig":
-                title = "Payroll & Tax Config";
+                title = "Payroll and Tax Settings";
+                break;
+            case "leaveapplications":
+            case "leaveapplicationform":
+                title = "Leave Applications";
+                break;
+            case "profilechangerequests":
+                title = "Profile Requests";
+                break;
+            case "appraisaldashboard":
+                title = "Appraisal Overview";
+                break;
+            case "appraisalsessions":
+                title = "Appraisal Sessions";
+                break;
+            case "appraisalview":
+                title = "Appraisals";
+                break;
+            case "appraisalreports":
+                title = "Appraisal Reports";
+                break;
+            case "competencytemplates":
+                title = "Competencies";
+                break;
+            case "expectedstandards":
+                title = "Expected Standards";
                 break;
             // System Configuration
             case "academicyears":

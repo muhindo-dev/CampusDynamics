@@ -1,7 +1,7 @@
 <%@ Page Language="C#" MasterPageFile="~/COOPERP/NewScreens/SidebarMaster.master" AutoEventWireup="true" CodeFile="LeaveApplications.aspx.cs" Inherits="COOPERP_NewScreens_LeaveApplications" Title="Leave applications - Campus Dynamics" %>
 
 <asp:Content ID="HeadContent" ContentPlaceHolderID="HeadContent" runat="server">
-<link rel="stylesheet" href="<%= ResolveUrl("~/COOPERP/NewScreens/css/hr.css") %>?v=1" />
+<link rel="stylesheet" href="<%= ResolveUrl("~/COOPERP/NewScreens/css/hr.css") %>?v=2" />
 <style>
 .lv-emp { display: flex; align-items: center; gap: 9px; }
 .lv-ini { width: 28px; height: 28px; flex: 0 0 auto; display: flex; align-items: center; justify-content: center; background: var(--hr-surface); border: 1px solid var(--hr-border); color: var(--hr-text-2); font-size: 10px; font-weight: 700; }
@@ -26,7 +26,7 @@ a.hr-kpi.lv-kpi--on { border-color: var(--hr-navy); }
     <div class="hr-header__actions"><asp:Literal ID="litNewBtn" runat="server" /></div>
 </div>
 
-<div class="hr-tabs"><a class="hr-tab" href="HRDashboard.aspx">Overview</a><a class="hr-tab" href="HREmployees.aspx">Employees</a><a class="hr-tab" href="HRContracts.aspx">Contracts</a><a class="hr-tab" href="ContractRenewals.aspx">Renewals</a><a class="hr-tab hr-tab--active" href="LeaveApplications.aspx">Leave applications</a><a class="hr-tab" href="HRLeaveManagement.aspx">Leave balances</a></div>
+<div class="hr-tabs"><a class="hr-tab" href="HRDashboard.aspx">Overview</a><a class="hr-tab" href="HREmployees.aspx">Employees</a><a class="hr-tab" href="HRContracts.aspx">Contracts</a><a class="hr-tab" href="ContractRenewals.aspx">Renewals</a><a class="hr-tab hr-tab--active" href="LeaveApplications.aspx">Leave applications</a><a class="hr-tab" href="HRLeaveManagement.aspx">Leave balances</a><a class="hr-tab" href="ProfileChangeRequests.aspx">Profile requests</a></div>
 
 <asp:Literal ID="litStats" runat="server" />
 

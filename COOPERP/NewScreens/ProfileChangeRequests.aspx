@@ -2,7 +2,7 @@
 
 <asp:Content ID="HeadContent" ContentPlaceHolderID="HeadContent" runat="server">
 <meta name="csrf-token" content="<%= MarksAntiForgeryService.GetToken() %>" />
-<link rel="stylesheet" href="<%= ResolveUrl("~/COOPERP/NewScreens/css/hr.css") %>?v=1" />
+<link rel="stylesheet" href="<%= ResolveUrl("~/COOPERP/NewScreens/css/hr.css") %>?v=2" />
 <script src="<%= ResolveUrl("~/COOPERP/NewScreens/css/hr.js") %>?v=1"></script>
 <style>
 a.hr-kpi.pcr-kpi--on { border-color: var(--hr-navy); }

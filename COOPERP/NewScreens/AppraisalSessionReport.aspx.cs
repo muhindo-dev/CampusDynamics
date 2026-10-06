@@ -10,7 +10,9 @@ using MySql.Data.MySqlClient;
 /// <summary>
 /// Appraisal session report (print, HrDocument): session details, one summary table of status and
 /// classification counts, category breakdown, roster grouped by category, outstanding items and
-/// sign-off. Population: every appraisal_records row of the session.
+/// sign-off. Counts cover every appraisal_records row of the session; the roster lists only
+/// appraisals that have reached HR (Awaiting HR, HR reviewed). Work still with the employee or
+/// supervisor appears as counts only, never by name.
 /// </summary>
 public partial class COOPERP_NewScreens_AppraisalSessionReport : System.Web.UI.Page
 {
@@ -55,7 +57,7 @@ public partial class COOPERP_NewScreens_AppraisalSessionReport : System.Web.UI.P
             }
             DataRow s = dtS.Rows[0];
             o.Reference = SafeStr(s["session_title"]);
-            litDocument.Text = HrDocument.Page(title, BuildBody(s, LoadRecords()), o);
+            litDocument.Text = HrDocument.Page(title, BuildBody(s, LoadCounts(), LoadRecords()), o);
         }
         catch (Exception ex)
         {
@@ -64,10 +66,22 @@ public partial class COOPERP_NewScreens_AppraisalSessionReport : System.Web.UI.P
         }
     }
 
+    /// <summary>Every record of the session, without names: feeds the counts only.</summary>
+    private DataTable LoadCounts()
+    {
+        return Q(
+            @"SELECT ar.status, ar.staff_category, ar.final_percentage,
+                     (IFNULL(ar.reviewer_id,0) > 0) AS has_supervisor
+              FROM appraisal_records ar
+              WHERE ar.session_id = @sid");
+    }
+
+    /// <summary>Roster rows: only appraisals that have reached HR.</summary>
     private DataTable LoadRecords()
     {
         const string order =
-            @" ORDER BY FIELD(ar.staff_category,'ACADEMIC','ADMINISTRATIVE','SUPPORT'), e.emp_name";
+            @" AND ar.status IN ('COMPLETED','HR_REVIEWED')
+               ORDER BY FIELD(ar.staff_category,'ACADEMIC','ADMINISTRATIVE','SUPPORT'), e.emp_name";
         try
         {
             return Q(
@@ -126,17 +140,31 @@ public partial class COOPERP_NewScreens_AppraisalSessionReport : System.Web.UI.P
         }
     }
 
-    private string BuildBody(DataRow s, DataTable recs)
+    private string BuildBody(DataRow s, DataTable counts, DataTable recs)
     {
         Agg all = new Agg();
         Dictionary<string, Agg> byCat = new Dictionary<string, Agg>();
-        foreach (DataRow r in recs.Rows)
+        List<string> stepOrder = new List<string>();
+        Dictionary<string, int> steps = new Dictionary<string, int>();
+        foreach (DataRow r in counts.Rows)
         {
             string st = SafeStr(r["status"]).ToUpperInvariant();
             string cat = SafeStr(r["staff_category"]).ToUpperInvariant();
             Add(all, st, r["final_percentage"]);
             if (!byCat.ContainsKey(cat)) byCat[cat] = new Agg();
             Add(byCat[cat], st, r["final_percentage"]);
+            if (st == "HR_REVIEWED" || st == "CANCELLED") continue;
+            string step = NextStep(st, SafeStr(r["has_supervisor"]) == "1");
+            if (step == "") continue;
+            if (!steps.ContainsKey(step)) { steps[step] = 0; stepOrder.Add(step); }
+            steps[step]++;
+        }
+        Dictionary<string, int> rosterByCat = new Dictionary<string, int>();
+        foreach (DataRow r in recs.Rows)
+        {
+            string cat = SafeStr(r["staff_category"]).ToUpperInvariant();
+            if (!rosterByCat.ContainsKey(cat)) rosterByCat[cat] = 0;
+            rosterByCat[cat]++;
         }
 
         StringBuilder h = new StringBuilder();
@@ -195,7 +223,7 @@ public partial class COOPERP_NewScreens_AppraisalSessionReport : System.Web.UI.P
 
         // ── Roster grouped by category ──
         h.Append("<div class=\"pb\"></div>");
-        h.Append(HrDocument.Heading("Roster"));
+        h.Append(HrDocument.Heading("Roster: appraisals that have reached HR"));
         StringBuilder rt = new StringBuilder("<table class=\"grid\"><thead><tr><th class=\"n\">No.</th><th>Staff number</th><th>Name</th><th>Department</th><th>Supervisor</th><th>Status</th><th class=\"n\">Score %</th><th>Classification</th></tr></thead><tbody>");
         if (recs.Rows.Count == 0) rt.Append("<tr><td colspan=\"8\" class=\"none\">None recorded.</td></tr>");
         string last = null;
@@ -205,7 +233,7 @@ public partial class COOPERP_NewScreens_AppraisalSessionReport : System.Web.UI.P
             string cat = SafeStr(r["staff_category"]).ToUpperInvariant();
             if (cat != last)
             {
-                int cnt = byCat.ContainsKey(cat) ? byCat[cat].Total : 0;
+                int cnt = rosterByCat.ContainsKey(cat) ? rosterByCat[cat] : 0;
                 rt.AppendFormat("<tr><td colspan=\"8\" style=\"font-weight:700;color:#05275C;background:#f5f7fa;\">{0} staff ({1})</td></tr>", CategoryWord(cat), cnt);
                 last = cat; no = 0;
             }
@@ -225,17 +253,14 @@ public partial class COOPERP_NewScreens_AppraisalSessionReport : System.Web.UI.P
         // ── Outstanding items ──
         h.Append(HrDocument.Heading("Outstanding"));
         List<string[]> outRows = new List<string[]>();
-        int on = 0;
-        foreach (DataRow r in recs.Rows)
+        int outTotal = 0;
+        foreach (string step in stepOrder)
         {
-            string st = SafeStr(r["status"]).ToUpperInvariant();
-            if (st == "HR_REVIEWED" || st == "CANCELLED") continue;
-            on++;
-            outRows.Add(new string[] { on.ToString(), HrDocument.E(SafeStr(r["emp_name"])), CategoryWord(SafeStr(r["staff_category"])),
-                StatusWord(st), NextStep(st, SafeStr(r["supervisor"]) != "") });
+            outRows.Add(new string[] { HrDocument.E(step), steps[step].ToString("N0") });
+            outTotal += steps[step];
         }
-        h.Append(HrDocument.Table(new string[] { "No.", "Name", "Category", "Status", "Next step" },
-            outRows, new bool[] { true, false, false, false, false }, null));
+        h.Append(HrDocument.Table(new string[] { "Next step", "Appraisals" },
+            outRows, new bool[] { false, true }, outRows.Count > 0 ? new string[] { "Total", outTotal.ToString("N0") } : null));
 
         // ── Sign-off ──
         h.Append(HrDocument.Heading("Sign-off"));

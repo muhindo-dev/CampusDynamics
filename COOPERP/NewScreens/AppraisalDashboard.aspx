@@ -1,7 +1,7 @@
 <%@ Page Language="C#" MasterPageFile="~/COOPERP/NewScreens/SidebarMaster.master" AutoEventWireup="true" CodeFile="AppraisalDashboard.aspx.cs" Inherits="COOPERP_NewScreens_AppraisalDashboard" Title="Appraisal overview" %>
 
 <asp:Content ID="HeadContent" ContentPlaceHolderID="HeadContent" runat="server">
-<link rel="stylesheet" href="<%= ResolveUrl("~/COOPERP/NewScreens/css/hr.css") %>?v=1" />
+<link rel="stylesheet" href="<%= ResolveUrl("~/COOPERP/NewScreens/css/hr.css") %>?v=2" />
 </asp:Content>
 
 <asp:Content ID="BodyContent" ContentPlaceHolderID="ContentPlaceHolder1" runat="server">
@@ -34,21 +34,21 @@
 <asp:Literal ID="litUnassignedBanner" runat="server" />
 
 <div class="hr-kpis">
-    <a class="hr-kpi" href="<%= ViewLink("") %>">
+    <div class="hr-kpi">
         <div class="hr-kpi__label">Total</div>
         <div class="hr-kpi__value"><asp:Literal ID="litKpiTotal" runat="server" Text="0" /></div>
         <div class="hr-kpi__sub">Appraisal records</div>
-    </a>
-    <a class="hr-kpi" href="<%= ViewLink("PENDING") %>">
+    </div>
+    <div class="hr-kpi">
         <div class="hr-kpi__label">Not started</div>
         <div class="hr-kpi__value"><asp:Literal ID="litKpiNotStarted" runat="server" Text="0" /></div>
         <div class="hr-kpi__sub"><asp:Literal ID="litKpiEmpStage" runat="server" /></div>
-    </a>
-    <a class="hr-kpi" href="<%= ViewLink("SUPERVISOR_STAGE") %>">
+    </div>
+    <div class="hr-kpi">
         <div class="hr-kpi__label">With supervisor</div>
         <div class="hr-kpi__value"><asp:Literal ID="litKpiSupStage" runat="server" Text="0" /></div>
         <div class="hr-kpi__sub">Submitted or being rated</div>
-    </a>
+    </div>
     <a class="hr-kpi" href="<%= ViewLink("COMPLETED") %>">
         <div class="hr-kpi__label">Awaiting HR</div>
         <div class="hr-kpi__value"><asp:Literal ID="litKpiNeedsHr" runat="server" Text="0" /></div>

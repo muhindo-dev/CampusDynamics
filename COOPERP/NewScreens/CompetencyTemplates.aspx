@@ -2,7 +2,7 @@
 
 <asp:Content ID="HeadContent" ContentPlaceHolderID="HeadContent" runat="server">
 <meta name="csrf-token" content="<%= MarksAntiForgeryService.GetToken() %>" />
-<link rel="stylesheet" href="<%= ResolveUrl("~/COOPERP/NewScreens/css/hr.css") %>?v=1" />
+<link rel="stylesheet" href="<%= ResolveUrl("~/COOPERP/NewScreens/css/hr.css") %>?v=2" />
 <style>
 .ct-group td { background: var(--hr-surface) !important; font-weight: 600; color: var(--hr-navy); }
 .ct-desc { color: var(--hr-text-2); font-size: 11px; }

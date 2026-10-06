@@ -4,7 +4,7 @@
     Title="Payroll and tax settings - Campus Dynamics" %>
 
 <asp:Content ID="HeadContent" ContentPlaceHolderID="HeadContent" runat="server">
-<link rel="stylesheet" href="<%= ResolveUrl("~/COOPERP/NewScreens/css/hr.css") %>?v=1" />
+<link rel="stylesheet" href="<%= ResolveUrl("~/COOPERP/NewScreens/css/hr.css") %>?v=2" />
 <style>
 .cfg-unit { display: flex; align-items: center; gap: 6px; }
 .cfg-unit .hr-input, .cfg-unit .hr-select { flex: 0 1 140px; }

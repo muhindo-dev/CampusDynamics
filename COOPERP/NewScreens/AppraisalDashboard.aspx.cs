@@ -221,7 +221,7 @@ public partial class COOPERP_NewScreens_AppraisalDashboard : System.Web.UI.Page
                 sb.AppendFormat("<td>{0}</td>", FormatDate(r["deadline"]));
                 sb.AppendFormat("<td class='hr-num'>{0}</td>", SafeInt(r["days_overdue"]).ToString("N0"));
                 sb.AppendFormat("<td class='hr-num'>{0}</td>", SafeInt(r["cnt"]).ToString("N0"));
-                sb.AppendFormat("<td class='hr-right'><a class='hr-btn hr-btn--secondary hr-btn--sm' href='AppraisalView.aspx?sid={0}'>Open</a></td>", SafeInt(r["session_id"]));
+                sb.AppendFormat("<td class='hr-right'><a class='hr-btn hr-btn--secondary hr-btn--sm' href='AppraisalSessionReport.aspx?sid={0}' target='_blank' rel='noopener'>Report</a></td>", SafeInt(r["session_id"]));
                 sb.Append("</tr>");
             }
         }

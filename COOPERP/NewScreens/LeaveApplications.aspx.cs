@@ -89,19 +89,25 @@ public partial class COOPERP_NewScreens_LeaveApplications : System.Web.UI.Page
         return s;
     }
 
+    /// <summary>Statuses an application has once it reaches HR (HOD approved) or goes beyond.</summary>
+    internal const string HrLevelSql = "'HOD_APPROVED','HR_APPROVED','HR_DECLINED','VC_GRANTED','VC_NOT_GRANTED','VC_POSTPONED'";
+
+    private static bool ActsAsHr(Scope s) { return s.IsAdmin || s.IsHr; }
+
     private static string BuildRoleWhere(Scope s)
     {
-        if (s.IsAdmin) return "";  // Admin sees all
-        if (s.IsVc && !s.IsHr)
+        // HR and admin: applications that have reached HR, plus their own and those they approve as HOD.
+        if (ActsAsHr(s))
+            return " AND (status IN (" + HrLevelSql + ") OR created_by = @uname OR supervisor_username = @uname)";
+        if (s.IsVc)
             return " AND status IN ('HR_APPROVED','VC_GRANTED','VC_NOT_GRANTED','VC_POSTPONED')";
-        if (s.IsHr) return "";     // HR sees all
         // HOD and regular employees: their own, plus any application they were chosen to approve.
         return " AND (created_by = @uname OR supervisor_username = @uname)";
     }
 
     private static void AddRoleParams(MySqlCommand cmd, Scope s)
     {
-        if (!s.IsAdmin && !s.IsVc && (s.IsHod || !s.IsHr))
+        if (ActsAsHr(s) || !s.IsVc)
             cmd.Parameters.AddWithValue("@uname", s.Username);
     }
 
@@ -137,7 +143,7 @@ public partial class COOPERP_NewScreens_LeaveApplications : System.Web.UI.Page
         Scope s = CurrentScope();
 
         string subtitle;
-        if (s.IsAdmin || s.IsHr) subtitle = "All applications";
+        if (s.IsAdmin || s.IsHr) subtitle = "Applications that have reached HR";
         else if (s.IsVc)         subtitle = "Applications for the Vice Chancellor";
         else                     subtitle = "Your applications and those you approve";
         litSubtitle.Text = HttpUtility.HtmlEncode(subtitle);
@@ -184,7 +190,16 @@ public partial class COOPERP_NewScreens_LeaveApplications : System.Web.UI.Page
                             cAll += n;
                         }
                 }
-                litStats.Text = BuildTiles(counts, cAll);
+                // HR sees how many still wait for the HOD as a number only (no list behind it).
+                int hodWaiting = -1;
+                if (ActsAsHr(s))
+                    using (MySqlCommand cmd = new MySqlCommand(
+                        "SELECT COUNT(*) FROM hrm_leave_applications WHERE is_active=1 AND status = 'SUBMITTED'" + BuildFilterWhere(false), conn))
+                    {
+                        AddFilterParams(cmd, false);
+                        hodWaiting = Convert.ToInt32(cmd.ExecuteScalar());
+                    }
+                litStats.Text = BuildTiles(counts, cAll, hodWaiting);
 
                 // Total for the pager (all filters).
                 int total;
@@ -271,7 +286,7 @@ public partial class COOPERP_NewScreens_LeaveApplications : System.Web.UI.Page
         return sb.ToString();
     }
 
-    private string BuildTiles(Dictionary<string, int> c, int all)
+    private string BuildTiles(Dictionary<string, int> c, int all, int hodWaiting)
     {
         int awaitingHod = Get(c, "SUBMITTED"), awaitingHr = Get(c, "HOD_APPROVED"), awaitingVc = Get(c, "HR_APPROVED");
         int granted = Get(c, "VC_GRANTED");
@@ -280,7 +295,8 @@ public partial class COOPERP_NewScreens_LeaveApplications : System.Web.UI.Page
 
         StringBuilder sb = new StringBuilder("<div class=\"hr-kpis\">");
         Tile(sb, "All applications", all, "");
-        Tile(sb, "Awaiting HOD", awaitingHod, "SUBMITTED");
+        if (hodWaiting >= 0) Tile(sb, "Awaiting HOD", hodWaiting, null);
+        else Tile(sb, "Awaiting HOD", awaitingHod, "SUBMITTED");
         Tile(sb, "Awaiting HR", awaitingHr, "HOD_APPROVED");
         Tile(sb, "Awaiting Vice Chancellor", awaitingVc, "HR_APPROVED");
         Tile(sb, "Granted", granted, "VC_GRANTED");
@@ -291,6 +307,12 @@ public partial class COOPERP_NewScreens_LeaveApplications : System.Web.UI.Page
 
     private void Tile(StringBuilder sb, string label, int value, string status)
     {
+        if (status == null)
+        {
+            sb.Append("<div class=\"hr-kpi\"><div class=\"hr-kpi__label\">").Append(HttpUtility.HtmlEncode(label)).Append("</div>")
+              .Append("<div class=\"hr-kpi__value\">").Append(value.ToString("N0")).Append("</div></div>");
+            return;
+        }
         bool active = QsStatus == status;
         sb.Append("<a class=\"hr-kpi").Append(active ? " lv-kpi--on" : "").Append("\" href=\"")
           .Append(HttpUtility.HtmlAttributeEncode(FilterUrlWithStatus(status))).Append("\">")
@@ -347,7 +369,9 @@ public partial class COOPERP_NewScreens_LeaveApplications : System.Web.UI.Page
         Scope s = CurrentScope();
         HrExport.Report r = new HrExport.Report("Leave applications", "leave-applications");
         r.PreparedBy = HrAccess.Username();
-        if (!(s.IsAdmin || s.IsHr))
+        if (ActsAsHr(s))
+            r.AddScope("View", "Applications that have reached HR");
+        else
             r.AddScope("View", s.IsVc ? "Applications for the Vice Chancellor" : "Own applications and those approved by " + s.Username);
         r.AddScope("Status", StatusFilterLabel(QsStatus));
         r.AddScope("Leave type", QsType == "" ? "" : LeaveTypeLabel(QsType));

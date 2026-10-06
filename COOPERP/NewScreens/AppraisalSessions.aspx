@@ -2,7 +2,7 @@
 
 <asp:Content ID="HeadContent" ContentPlaceHolderID="HeadContent" runat="server">
 <meta name="csrf-token" content="<%= MarksAntiForgeryService.GetToken() %>" />
-<link rel="stylesheet" href="<%= ResolveUrl("~/COOPERP/NewScreens/css/hr.css") %>?v=1" />
+<link rel="stylesheet" href="<%= ResolveUrl("~/COOPERP/NewScreens/css/hr.css") %>?v=2" />
 <style>
 .ps-checks { display: flex; flex-wrap: wrap; gap: 6px 16px; padding: 4px 0; }
 .ps-checks label { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; cursor: pointer; }
@@ -41,7 +41,7 @@
     <div class="hr-kpi"><div class="hr-kpi__label">Sessions</div><div class="hr-kpi__value"><asp:Literal ID="litStatTotal" runat="server" Text="0" /></div></div>
     <a class="hr-kpi" href="AppraisalSessions.aspx?status=ACTIVE"><div class="hr-kpi__label">Active</div><div class="hr-kpi__value"><asp:Literal ID="litStatActive" runat="server" Text="0" /></div></a>
     <a class="hr-kpi" href="AppraisalSessions.aspx?status=DRAFT"><div class="hr-kpi__label">Draft</div><div class="hr-kpi__value"><asp:Literal ID="litStatDraft" runat="server" Text="0" /></div></a>
-    <a class="hr-kpi" href="AppraisalView.aspx"><div class="hr-kpi__label">Appraisals</div><div class="hr-kpi__value"><asp:Literal ID="litStatAppraisals" runat="server" Text="0" /></div><div class="hr-kpi__sub">All sessions</div></a>
+    <div class="hr-kpi"><div class="hr-kpi__label">Appraisals</div><div class="hr-kpi__value"><asp:Literal ID="litStatAppraisals" runat="server" Text="0" /></div><div class="hr-kpi__sub">All sessions</div></div>
     <div class="hr-kpi"><div class="hr-kpi__label">Completed by supervisor</div><div class="hr-kpi__value"><asp:Literal ID="litStatCompleted" runat="server" Text="0" /></div><div class="hr-kpi__sub">Awaiting HR or HR reviewed</div></div>
 </div>
 
@@ -386,7 +386,7 @@ function renderDetail(d) {
     document.getElementById('detailBody').innerHTML = h;
 
     document.getElementById('lnkAppraisals').href = 'AppraisalView.aspx?sid=' + d.session_id;
-    document.getElementById('lnkAppraisals').textContent = 'Open appraisals (' + d.total + ')';
+    document.getElementById('lnkAppraisals').textContent = 'Open appraisals at HR (' + d.completed + ')';
     var st = (d.status || '').toUpperCase();
     if (st === 'DRAFT') document.getElementById('btnActivate').style.display = '';
     if (st === 'ACTIVE') {

@@ -65,6 +65,11 @@ public partial class COOPERP_NewScreens_ContractRenewalPrint : System.Web.UI.Pag
             return HrDocument.Page("Contract renewal application", HrDocument.Paragraph("Application not found."), o);
         }
         DataRow r = dt.Rows[0];
+        if (!COOPERP_NewScreens_ContractRenewalView.IsHrLevel(S(r["status"])))
+        {
+            o.BackUrl = "ContractRenewals.aspx";
+            return HrDocument.Page("Contract renewal application", HrDocument.Paragraph(COOPERP_NewScreens_ContractRenewalView.NotReachedHr), o);
+        }
         string refNo = S(r["ref_no"]) != "" ? S(r["ref_no"]) : "#" + id;
         o.Reference = "Ref: " + refNo;
 
@@ -75,7 +80,8 @@ public partial class COOPERP_NewScreens_ContractRenewalPrint : System.Web.UI.Pag
             new MySqlParameter("@id", id));
         DataTable appr = Q(@"SELECT ar.final_percentage, ar.classification, ar.status, IFNULL(s.session_title,'') AS session_title
                              FROM appraisal_records ar LEFT JOIN appraisal_sessions s ON s.session_id = ar.session_id
-                             WHERE ar.employee_id = @e ORDER BY COALESCE(ar.employee_submitted_at, ar.created_at) DESC, ar.record_id DESC LIMIT 3",
+                             WHERE ar.employee_id = @e AND ar.status IN ('COMPLETED','HR_REVIEWED')
+                             ORDER BY COALESCE(ar.employee_submitted_at, ar.created_at) DESC, ar.record_id DESC LIMIT 3",
             new MySqlParameter("@e", SafeInt(r["employee_id"])));
 
         string reviewerName = S(r["sup_name"]) != "" ? S(r["sup_name"]) : S(r["reviewer_live_name"]);

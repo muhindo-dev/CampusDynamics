@@ -56,6 +56,9 @@ public partial class COOPERP_NewScreens_AppraisalPrint : System.Web.UI.Page
         if (dtRec.Rows.Count == 0) return HrDocument.Paragraph("This appraisal record does not exist.");
 
         DataRow r = dtRec.Rows[0];
+        string recStatus = SafeStr(r["status"]).ToUpper();
+        if (recStatus != "COMPLETED" && recStatus != "HR_REVIEWED" && recStatus != "CANCELLED")
+            return HrDocument.Paragraph("This appraisal has not reached HR yet.");
         string cat = SafeStr(r["staff_category"]).ToUpper();
         if (cat == "ACADEMIC") title = "Academic staff performance appraisal form";
         else if (cat == "ADMINISTRATIVE") title = "Administrative staff performance appraisal form";

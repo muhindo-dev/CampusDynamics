@@ -52,7 +52,9 @@ public partial class COOPERP_NewScreens_ContractRenewals : System.Web.UI.Page
     }
     private bool QsNoApp { get { return (Request.QueryString["noapp"] ?? "") == "1"; } }
 
-    private static readonly string[] Statuses = { "DRAFT", "AWAITING_SUPERVISOR", "AWAITING_HR", "RETURNED", "FORWARDED", "APPROVED", "NOT_APPROVED", "DEFERRED", "CONTRACT_ISSUED", "WITHDRAWN" };
+    /// <summary>Statuses at HR level. Drafts, applications with the supervisor, returned and withdrawn ones are never listed here.</summary>
+    private static readonly string[] Statuses = { "AWAITING_HR", "FORWARDED", "APPROVED", "NOT_APPROVED", "DEFERRED", "CONTRACT_ISSUED" };
+    public const string HrStatusSql = "'AWAITING_HR','FORWARDED','APPROVED','NOT_APPROVED','DEFERRED','CONTRACT_ISSUED'";
 
     // ═══════════════════════════════════════════════════════════════════
     //  PAGE LIFECYCLE
@@ -265,7 +267,7 @@ public partial class COOPERP_NewScreens_ContractRenewals : System.Web.UI.Page
                  r.council_sitting, r.is_late, r.round_id,
                  (SELECT CONCAT(ROUND(ar.final_percentage,1), '%', IF(IFNULL(ar.classification,'') = '', '', CONCAT(' (', ar.classification, ')')))
                     FROM appraisal_records ar
-                   WHERE ar.employee_id = r.employee_id AND ar.final_percentage IS NOT NULL
+                   WHERE ar.employee_id = r.employee_id AND ar.final_percentage IS NOT NULL AND ar.status IN ('COMPLETED','HR_REVIEWED')
                    ORDER BY COALESCE(ar.employee_submitted_at, ar.created_at) DESC, ar.record_id DESC LIMIT 1) AS appraisal_score
           FROM hr_contract_renewals r ";
 
@@ -351,11 +353,11 @@ public partial class COOPERP_NewScreens_ContractRenewals : System.Web.UI.Page
             int v;
             if (int.TryParse(p.Trim(), out v) && v > 0) ids.Add(v.ToString());
         }
-        if (ids.Count > 0) return "WHERE r.renewal_id IN (" + string.Join(",", ids.ToArray()) + ") ";
+        if (ids.Count > 0) return "WHERE r.renewal_id IN (" + string.Join(",", ids.ToArray()) + ") AND r.status IN (" + HrStatusSql + ") ";
         string w = "WHERE 1=1 ";
         if (round > 0) { w += "AND r.round_id = @round "; ps.Add(new MySqlParameter("@round", round)); }
         string st = (status ?? "").Trim().ToUpper();
-        if (st == "ALL") w += "AND r.status NOT IN ('DRAFT','WITHDRAWN') ";
+        if (st == "ALL") w += "AND r.status IN (" + HrStatusSql + ") ";
         else if (Array.IndexOf(Statuses, st) >= 0) { w += "AND r.status = @st "; ps.Add(new MySqlParameter("@st", st)); }
         else w += "AND r.status = 'FORWARDED' ";
         return w;
@@ -420,6 +422,7 @@ public partial class COOPERP_NewScreens_ContractRenewals : System.Web.UI.Page
                  e.emp_name, e.EMP_CODE, e.EmpType, IFNULL(e.emp_email,'') AS emp_email,
                  DATEDIFF(c.contractEnd, CURDATE()) AS days_left,
                  a.renewal_id, a.ref_no, a.status AS app_status,
+                 (a.status IN (" + HrStatusSql + @")) AS app_at_hr,
                  (SELECT MAX(m.sent_at) FROM hr_renewal_reminders m WHERE m.employee_id = c.empID AND m.contract_id = c.ID AND m.send_status = 'SENT') AS last_reminder,
                  (SELECT COUNT(*) FROM hr_renewal_reminders m WHERE m.employee_id = c.empID AND m.contract_id = c.ID AND m.send_status = 'SENT') AS n_reminders
           FROM (SELECT e2.empID, hr_current_contract_id(e2.empID) AS cid FROM hrm_employee e2) x
@@ -441,6 +444,7 @@ public partial class COOPERP_NewScreens_ContractRenewals : System.Web.UI.Page
         if (rid > 0) { w = " WHERE round_id = @r"; ps.Add(new MySqlParameter("@r", rid)); }
         DataTable k = Q(@"SELECT SUM(status = 'AWAITING_HR') AS hr, SUM(status = 'FORWARDED') AS fwd,
                                  SUM(status = 'CONTRACT_ISSUED') AS issued,
+                                 SUM(status IN ('DRAFT','RETURNED')) AS drafts, SUM(status = 'AWAITING_SUPERVISOR') AS sup,
                                  SUM(status = 'AWAITING_HR' AND is_late = 1 AND submitted_at IS NOT NULL) AS hr_late
                           FROM hr_contract_renewals" + w, ps.ToArray());
         DataRow r = k.Rows[0];
@@ -452,11 +456,21 @@ public partial class COOPERP_NewScreens_ContractRenewals : System.Web.UI.Page
         Kpi(sb, SafeInt(r["hr"]), "With HR", "ContractRenewals.aspx?status=AWAITING_HR", hrLate > 0 ? hrLate + " submitted late" : "Awaiting verification", false);
         Kpi(sb, SafeInt(r["fwd"]), "At Council", "ContractRenewals.aspx?status=FORWARDED", "Awaiting decision", false);
         Kpi(sb, SafeInt(r["issued"]), "Issued", "ContractRenewals.aspx?status=CONTRACT_ISSUED", "New contracts", false);
+        // Not yet with HR: counted only, never listed.
+        int drafts = SafeInt(r["drafts"]), withSup = SafeInt(r["sup"]);
+        Kpi(sb, drafts + withSup, "Not yet with HR", null,
+            drafts.ToString("N0") + (drafts == 1 ? " draft, " : " drafts, ") + withSup.ToString("N0") + " with supervisor", false);
         litKpis.Text = sb.ToString();
     }
 
     private static void Kpi(StringBuilder sb, int val, string label, string href, string sub, bool alert)
     {
+        if (href == null)
+        {
+            sb.AppendFormat("<div class='hr-kpi{0}'><div class='hr-kpi__label'>{1}</div><div class='hr-kpi__value'>{2}</div><div class='hr-kpi__sub'>{3}</div></div>",
+                alert ? " hr-kpi--alert" : "", Enc(label), val.ToString("N0"), Enc(sub));
+            return;
+        }
         sb.AppendFormat("<a class='hr-kpi{0}' href='{1}'><div class='hr-kpi__label'>{2}</div><div class='hr-kpi__value'>{3}</div><div class='hr-kpi__sub'>{4}</div></a>",
             alert ? " hr-kpi--alert" : "", href, Enc(label), val.ToString("N0"), Enc(sub));
     }
@@ -504,7 +518,7 @@ public partial class COOPERP_NewScreens_ContractRenewals : System.Web.UI.Page
         litFilters.Text = f.ToString();
 
         List<MySqlParameter> ps = new List<MySqlParameter>();
-        StringBuilder w = new StringBuilder(" WHERE 1=1");
+        StringBuilder w = new StringBuilder(" WHERE r.status IN (" + HrStatusSql + ")");
         if (QsRound > 0) { w.Append(" AND r.round_id = @round"); ps.Add(new MySqlParameter("@round", QsRound)); }
         if (Array.IndexOf(Statuses, QsStatus) >= 0) { w.Append(" AND r.status = @st"); ps.Add(new MySqlParameter("@st", QsStatus)); }
         if (QsCat != "") { w.Append(" AND r.staff_category = @cat"); ps.Add(new MySqlParameter("@cat", QsCat)); }
@@ -618,9 +632,11 @@ public partial class COOPERP_NewScreens_ContractRenewals : System.Web.UI.Page
                 Enc(COOPERP_NewScreens_ContractRenewalView.Words(SafeStr(r["contract_type"]))),
                 D(r["contractStart"]).HasValue ? "From " + FmtD(r["contractStart"]) : "");
             t.AppendFormat("<td class='cr-nowrap'>{0}<div>{1}</div></td>", FmtD(r["contractEnd"]), COOPERP_NewScreens_ContractRenewalView.DaysLeftHtml(SafeInt(r["days_left"])));
-            t.AppendFormat("<td class='cr-nowrap'>{0}</td>", rid > 0
-                ? "<a href='ContractRenewalView.aspx?id=" + rid + "'><span class='hr-code'>" + Enc(SafeStr(r["ref_no"])) + "</span></a> " + COOPERP_NewScreens_ContractRenewalView.StatusBadge(ast)
-                : "<span class='hr-badge hr-badge--bad'>No application</span>");
+            t.AppendFormat("<td class='cr-nowrap'>{0}</td>", rid <= 0
+                ? "<span class='hr-badge hr-badge--bad'>No application</span>"
+                : SafeInt(r["app_at_hr"]) == 1
+                    ? "<a href='ContractRenewalView.aspx?id=" + rid + "'><span class='hr-code'>" + Enc(SafeStr(r["ref_no"])) + "</span></a> " + COOPERP_NewScreens_ContractRenewalView.StatusBadge(ast)
+                    : "<span class='hr-badge hr-badge--neutral'>Not submitted</span>");
             t.AppendFormat("<td>{0}</td>", hasEmail ? Enc(email) : "<span class='hr-badge hr-badge--neutral'>No email</span>");
             t.AppendFormat("<td class='cr-nowrap' id='rem_{0}'>{1}</td>", emp,
                 SafeInt(r["n_reminders"]) > 0 ? FmtDT(r["last_reminder"]) + (SafeInt(r["n_reminders"]) > 1 ? "<span class='hr-sub'>" + SafeInt(r["n_reminders"]) + " reminders sent</span>" : "") : "");

@@ -4,7 +4,7 @@
     Title="Deductions - Campus Dynamics" %>
 
 <asp:Content ID="HeadContent" ContentPlaceHolderID="HeadContent" runat="server">
-<link rel="stylesheet" href="<%= ResolveUrl("~/COOPERP/NewScreens/css/hr.css") %>?v=1" />
+<link rel="stylesheet" href="<%= ResolveUrl("~/COOPERP/NewScreens/css/hr.css") %>?v=2" />
 <style>
 .emp-pick { position: relative; }
 .emp-pick__list { display: none; position: absolute; left: 0; right: 0; top: 100%; z-index: 20; max-height: 220px; overflow-y: auto; background: #fff; border: 1px solid #cdd3de; border-top: 0; }

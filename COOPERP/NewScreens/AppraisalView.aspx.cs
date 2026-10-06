@@ -38,6 +38,25 @@ public partial class COOPERP_NewScreens_AppraisalView : System.Web.UI.Page
         }
     }
 
+    // ─── HR level: only appraisals the supervisor has finished reach HR ─
+    private const string HR_LEVEL_SQL = "'COMPLETED','HR_REVIEWED'";
+    private const string NOT_REACHED_HR = "This appraisal has not reached HR yet.";
+    private static bool IsHrLevel(string st) { return st == "COMPLETED" || st == "HR_REVIEWED"; }
+    /// <summary>A record HR may open: at HR level, or cancelled (listed only under the Cancelled filter).</summary>
+    private static bool IsOpenable(string st) { return IsHrLevel(st) || st == "CANCELLED"; }
+
+    /// <summary>Keeps only the ids that are at HR level (bulk actions never touch earlier stages).</summary>
+    private List<int> HrLevelOnly(List<int> rids)
+    {
+        List<int> keep = new List<int>();
+        if (rids.Count == 0) return keep;
+        DataTable dt = ExecuteQuery(
+            "SELECT record_id FROM appraisal_records WHERE status IN (" + HR_LEVEL_SQL + ") AND record_id IN (" +
+            string.Join(",", rids.ConvertAll(delegate(int x) { return x.ToString(); }).ToArray()) + ")");
+        foreach (DataRow r in dt.Rows) keep.Add(SafeInt(r["record_id"]));
+        return keep;
+    }
+
     // ═══════════════════════════════════════════════════════════════════
     //  PAGE LIFECYCLE
     // ═══════════════════════════════════════════════════════════════════
@@ -151,6 +170,7 @@ public partial class COOPERP_NewScreens_AppraisalView : System.Web.UI.Page
         if (dt.Rows.Count == 0) { EvidenceNotFound(); return; }
 
         int recordId     = SafeInt(dt.Rows[0]["record_id"]);
+        if (!IsOpenable(RecordStatus(recordId) ?? "")) { EvidenceNotFound(); return; }
         string stored    = SafeStr(dt.Rows[0]["stored_name"]).Trim();
         string original  = SafeStr(dt.Rows[0]["original_name"]).Trim();
         string ctype     = SafeStr(dt.Rows[0]["content_type"]).Trim().ToLowerInvariant();
@@ -237,6 +257,7 @@ public partial class COOPERP_NewScreens_AppraisalView : System.Web.UI.Page
               WHERE ar.record_id = @rid", new MySqlParameter("@rid", rid));
         if (dtRec.Rows.Count == 0) { Response.Write("{\"ok\":false,\"error\":\"Record not found.\"}"); return; }
         DataRow rec = dtRec.Rows[0];
+        if (!IsOpenable(SafeStr(rec["status"]).ToUpper())) { Fail(NOT_REACHED_HR); return; }
         Response.Write("{\"ok\":true," +
             "\"record_id\":" + SafeInt(rec["record_id"]) + "," +
             "\"status\":" + Jstr(StatusWord(SafeStr(rec["status"]))) + "," +
@@ -315,7 +336,7 @@ public partial class COOPERP_NewScreens_AppraisalView : System.Web.UI.Page
     private bool DoCancel(int rid, string comment)
     {
         string st = RecordStatus(rid);
-        if (st == null || st == "CANCELLED") return false;
+        if (st == null || !IsHrLevel(st)) return false;
         ExecuteNonQuery("UPDATE appraisal_records SET status = 'CANCELLED' WHERE record_id = @rid", new MySqlParameter("@rid", rid));
         WriteAudit(rid, "ADMIN_CANCEL", st, "CANCELLED", "{\"comment\":" + Jstr(comment) + "}");
         return true;
@@ -422,6 +443,7 @@ public partial class COOPERP_NewScreens_AppraisalView : System.Web.UI.Page
             if (string.IsNullOrEmpty(comment)) { Fail("Enter a reason."); return; }
             string st = RecordStatus(rid);
             if (st == null) { Fail("The appraisal was not found."); return; }
+            if (!IsOpenable(st)) { Fail(NOT_REACHED_HR); return; }
             if (!DoReturn(rid, comment)) { Fail("Only a submitted appraisal can be returned. Its status is " + StatusWord(st) + "."); return; }
             Ok("Returned to the employee.", 1);
         }
@@ -436,7 +458,9 @@ public partial class COOPERP_NewScreens_AppraisalView : System.Web.UI.Page
             int rid = Int(data, "rid");
             string st = RecordStatus(rid);
             if (st == null) { Fail("The appraisal was not found."); return; }
-            if (!DoCancel(rid, Str(data, "comment"))) { Fail("The appraisal is already cancelled."); return; }
+            if (st == "CANCELLED") { Fail("The appraisal is already cancelled."); return; }
+            if (!IsHrLevel(st)) { Fail(NOT_REACHED_HR); return; }
+            if (!DoCancel(rid, Str(data, "comment"))) { Fail("The appraisal could not be cancelled."); return; }
             Ok("Appraisal cancelled.", 1);
         }
         catch (Exception ex) { WriteError(ex); }
@@ -486,7 +510,7 @@ public partial class COOPERP_NewScreens_AppraisalView : System.Web.UI.Page
         try
         {
             Dictionary<string, object> data = ReadJsonBody();
-            List<int> rids = RidsFrom(data);
+            List<int> rids = HrLevelOnly(RidsFrom(data));
             string comment = Str(data, "comment");
             if (string.IsNullOrEmpty(comment)) { Fail("Enter a reason."); return; }
             int count = 0;
@@ -501,7 +525,7 @@ public partial class COOPERP_NewScreens_AppraisalView : System.Web.UI.Page
         try
         {
             Dictionary<string, object> data = ReadJsonBody();
-            List<int> rids = RidsFrom(data);
+            List<int> rids = HrLevelOnly(RidsFrom(data));
             string comment = Str(data, "comment");
             int count = 0;
             foreach (int rid in rids) if (DoReopen(rid, comment)) count++;
@@ -515,7 +539,7 @@ public partial class COOPERP_NewScreens_AppraisalView : System.Web.UI.Page
         try
         {
             Dictionary<string, object> data = ReadJsonBody();
-            List<int> rids = RidsFrom(data);
+            List<int> rids = HrLevelOnly(RidsFrom(data));
             string comment = Str(data, "comment");
             int count = 0;
             foreach (int rid in rids) if (DoCancel(rid, comment)) count++;
@@ -529,7 +553,7 @@ public partial class COOPERP_NewScreens_AppraisalView : System.Web.UI.Page
         try
         {
             Dictionary<string, object> data = ReadJsonBody();
-            List<int> rids = RidsFrom(data);
+            List<int> rids = HrLevelOnly(RidsFrom(data));
             int rating = Int(data, "rating");
             string recommendation = Str(data, "recommendation").ToUpper();
             string comments = Str(data, "comments");
@@ -684,9 +708,10 @@ public partial class COOPERP_NewScreens_AppraisalView : System.Web.UI.Page
             int unassigned = SafeInt(dtU.Rows[0]["n"]);
 
             StringBuilder sb = new StringBuilder("<div class='hr-kpis'>");
-            Kpi(sb, "Not started", SafeInt(r["pending"]), KpiLink("status=PENDING"), false);
-            Kpi(sb, "In progress", SafeInt(r["inprog"]), KpiLink("status=EMPLOYEE_IN_PROGRESS"), false);
-            Kpi(sb, "With supervisor", SafeInt(r["sup"]), KpiLink("status=SUPERVISOR_STAGE"), false);
+            // Records before HR are counted only; they never open a list.
+            Kpi(sb, "Not started", SafeInt(r["pending"]), null, false);
+            Kpi(sb, "In progress", SafeInt(r["inprog"]), null, false);
+            Kpi(sb, "With supervisor", SafeInt(r["sup"]), null, false);
             Kpi(sb, "Awaiting HR", SafeInt(r["awaiting"]), KpiLink("status=COMPLETED"), false);
             Kpi(sb, "HR reviewed", SafeInt(r["hrdone"]), KpiLink("status=HR_REVIEWED"), false);
             Kpi(sb, "No supervisor", unassigned, KpiLink("rev=none"), unassigned > 0);
@@ -702,12 +727,28 @@ public partial class COOPERP_NewScreens_AppraisalView : System.Web.UI.Page
 
     private static void Kpi(StringBuilder sb, string label, int value, string href, bool alert)
     {
+        if (href == null)
+        {
+            sb.AppendFormat("<div class='hr-kpi{0}'><div class='hr-kpi__label'>{1}</div><div class='hr-kpi__value'>{2}</div></div>",
+                alert ? " hr-kpi--alert" : "", label, value.ToString("N0"));
+            return;
+        }
         sb.AppendFormat("<a class='hr-kpi{0}' href='{1}'><div class='hr-kpi__label'>{2}</div><div class='hr-kpi__value'>{3}</div></a>",
             alert ? " hr-kpi--alert" : "", href, label, value.ToString("N0"));
     }
 
+    private const string GRID_HEAD =
+        "<tr><th class='pa-chk'><input type='checkbox' id='chkAll' onclick='onSelectAll(this)' title='Select all on this page' /></th>" +
+        "<th>Employee</th><th>Department</th><th>Category</th><th>Session</th><th>Supervisor</th><th>Status</th>" +
+        "<th class='hr-num'>Score %</th><th>Classification</th><th></th></tr>";
+
+    private const string ASSIGN_HEAD =
+        "<tr><th class='pa-chk'><input type='checkbox' id='chkAll' onclick='onSelectAll(this)' title='Select all on this page' /></th>" +
+        "<th>Employee</th><th>Staff number</th><th>Department</th><th></th></tr>";
+
     private void BindGrid()
     {
+        bool assignMode = QsReviewer == "none";
         StringBuilder where = new StringBuilder("WHERE 1=1");
         List<MySqlParameter> parms = new List<MySqlParameter>();
         string deptExpr = GetDepartmentSelectExpression("e");
@@ -717,13 +758,21 @@ public partial class COOPERP_NewScreens_AppraisalView : System.Web.UI.Page
             where.Append(" AND (e.emp_name LIKE @q OR e.EMP_CODE LIKE @q)");
             parms.Add(new MySqlParameter("@q", "%" + QsSearch + "%"));
         }
-        if (QsStatus == "SUPERVISOR_STAGE")
-            where.Append(" AND ar.status IN ('EMPLOYEE_SUBMITTED','SUPERVISOR_IN_PROGRESS')");
-        else if (!string.IsNullOrEmpty(QsStatus))
+        if (assignMode)
+        {
+            // "No supervisor" tool: open appraisals without a supervisor, listed by person only.
+            where.Append(" AND (ar.reviewer_id IS NULL OR ar.reviewer_id = 0)" +
+                         " AND ar.status NOT IN (" + HR_LEVEL_SQL + ",'CANCELLED')");
+            if (QsSession <= 0)
+                where.Append(" AND ar.session_id IN (SELECT session_id FROM appraisal_sessions WHERE status = 'ACTIVE')");
+        }
+        else if (QsStatus == "COMPLETED" || QsStatus == "HR_REVIEWED" || QsStatus == "CANCELLED")
         {
             where.Append(" AND ar.status = @st");
             parms.Add(new MySqlParameter("@st", QsStatus));
         }
+        else
+            where.Append(" AND ar.status IN (" + HR_LEVEL_SQL + ")");
         if (!string.IsNullOrEmpty(QsCategory))
         {
             where.Append(" AND ar.staff_category = @cat");
@@ -734,10 +783,10 @@ public partial class COOPERP_NewScreens_AppraisalView : System.Web.UI.Page
             where.Append(" AND ar.session_id = @sid");
             parms.Add(new MySqlParameter("@sid", QsSession));
         }
-        if (QsReviewer == "none")
-            where.Append(" AND (ar.reviewer_id IS NULL OR ar.reviewer_id = 0)");
-
         bool canAdmin = CanAdmin;
+        litGridHead.Text = assignMode ? ASSIGN_HEAD : GRID_HEAD;
+        litCardTitle.Text = assignMode ? "No supervisor assigned" : "Appraisal records";
+        litListHint.Text = assignMode ? "<p class='hr-hint' style='margin:0 0 10px;'>Assign a supervisor so these appraisals can proceed.</p>" : "";
 
         DataTable dtCount = ExecuteQuery("SELECT COUNT(*) FROM appraisal_records ar LEFT JOIN hrm_employee e ON e.empID = ar.employee_id " + where, parms.ToArray());
         int totalRecords = Convert.ToInt32(dtCount.Rows[0][0]);
@@ -768,7 +817,24 @@ public partial class COOPERP_NewScreens_AppraisalView : System.Web.UI.Page
         StringBuilder html = new StringBuilder();
         if (dtData.Rows.Count == 0)
         {
-            html.Append("<tr><td colspan='10' class='hr-empty'>No appraisals match the filters.</td></tr>");
+            html.AppendFormat("<tr><td colspan='{0}' class='hr-empty'>{1}</td></tr>", assignMode ? 5 : 10,
+                assignMode ? "Every open appraisal has a supervisor." : "No appraisals match the filters.");
+        }
+        else if (assignMode)
+        {
+            foreach (DataRow r in dtData.Rows)
+            {
+                int recId = Convert.ToInt32(r["record_id"]);
+                string empName = SafeStr(r["emp_name"]);
+                string dept = SafeStr(r["department"]);
+                html.AppendFormat("<tr data-rid='{0}' data-empname='{1}' data-dept='{2}'>", recId, Attr(empName), Attr(dept));
+                html.AppendFormat("<td class='pa-chk'><input type='checkbox' class='pa-row-chk' value='{0}' onclick='onRowCheck(this)'></td>", recId);
+                html.AppendFormat("<td>{0}</td><td>{1}</td><td>{2}</td>", Enc(empName), Enc(SafeStr(r["EMP_CODE"])), Enc(dept));
+                html.Append("<td class='hr-right'>");
+                if (canAdmin)
+                    html.AppendFormat("<button type='button' class='hr-btn hr-btn--secondary hr-btn--sm' data-rid='{0}' data-reviewer='Not assigned' onclick='changeSupervisorFromDetailBtn(this)'>Assign supervisor</button>", recId);
+                html.Append("</td></tr>");
+            }
         }
         else
         {
@@ -805,7 +871,8 @@ public partial class COOPERP_NewScreens_AppraisalView : System.Web.UI.Page
                 html.Append("</td></tr>");
             }
         }
-        litGridBody.Text = html.ToString() + (canAdmin ? "" : "<script type='text/javascript'>window.PA_READ_ONLY=true;</script>");
+        litGridBody.Text = html.ToString() + (canAdmin ? "" : "<script type='text/javascript'>window.PA_READ_ONLY=true;</script>")
+            + (assignMode ? "<script type='text/javascript'>window.PA_ASSIGN_MODE=true;</script>" : "");
 
         litTotalCount.Text = totalRecords.ToString("N0");
         litPagerInfo.Text = totalRecords == 0 ? "No records"
@@ -861,6 +928,13 @@ public partial class COOPERP_NewScreens_AppraisalView : System.Web.UI.Page
 
         DataRow rec = dtRec.Rows[0];
         string status = SafeStr(rec["status"]).ToUpper();
+        if (!IsOpenable(status))
+        {
+            litHeaderTitle.Text = "Appraisal not available";
+            litHeaderSub.Text = "";
+            litDetailContent.Text = "<div class='hr-card'><div class='hr-empty'>" + NOT_REACHED_HR + " <a href='AppraisalView.aspx'>Back to appraisals</a></div></div>";
+            return;
+        }
         string cat = SafeStr(rec["staff_category"]).ToUpper();
         bool canAdmin = CanAdmin;
 

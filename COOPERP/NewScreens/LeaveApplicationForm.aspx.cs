@@ -91,6 +91,32 @@ public partial class COOPERP_NewScreens_LeaveApplicationForm : System.Web.UI.Pag
                string.Equals(createdBy, username, StringComparison.OrdinalIgnoreCase);
     }
 
+    private const string NotReachedHr = "This application has not reached HR yet.";
+
+    /// <summary>Statuses an application has once it reaches HR (HOD approved) or goes beyond.</summary>
+    private static bool IsHrLevel(string status)
+    {
+        switch (status ?? "")
+        {
+            case "HOD_APPROVED": case "HR_APPROVED": case "HR_DECLINED":
+            case "VC_GRANTED": case "VC_NOT_GRANTED": case "VC_POSTPONED": return true;
+            default: return false;
+        }
+    }
+
+    /// <summary>
+    /// HR (hr_manager, admin) sees an application only once it has reached HR, unless it is
+    /// their own or they are its assigned Head of Department.
+    /// </summary>
+    private static bool NotYetAtHr(string status, string createdBy, string supUser, string username, bool isAdmin, bool isHr)
+    {
+        if (!isAdmin && !isHr) return false;
+        if (string.Equals((createdBy ?? "").Trim(), (username ?? "").Trim(), StringComparison.OrdinalIgnoreCase)) return false;
+        if ((supUser ?? "").Trim().Length > 0 &&
+            string.Equals(supUser.Trim(), (username ?? "").Trim(), StringComparison.OrdinalIgnoreCase)) return false;
+        return !IsHrLevel(status);
+    }
+
     // ══════════════════════════════════════════════════════════════════════════
     //  NEW APPLICATION
     // ══════════════════════════════════════════════════════════════════════════
@@ -145,6 +171,13 @@ public partial class COOPERP_NewScreens_LeaveApplicationForm : System.Web.UI.Pag
         {
             litPageTitle.Text = "Leave application";
             litSection1.Text  = "<div class=\"hr-notice hr-notice--bad\">You do not have permission to view this application.</div>";
+            litActionBar.Text = "";
+            return;
+        }
+        if (NotYetAtHr(status, createdBy, supUser, username, isAdmin, isHr))
+        {
+            litPageTitle.Text = "Leave application";
+            litSection1.Text  = "<div class=\"hr-notice\">" + NotReachedHr + "</div>";
             litActionBar.Text = "";
             return;
         }
@@ -746,12 +779,15 @@ public partial class COOPERP_NewScreens_LeaveApplicationForm : System.Web.UI.Pag
     {
         Dictionary<string, object> app = LoadApp(appId);
         string html;
-        if (app == null || !CanView(app, username, isAdmin, isHr, isVc, isHod))
+        bool blocked = app != null && CanView(app, username, isAdmin, isHr, isVc, isHod) &&
+            NotYetAtHr(S(app, "status"), S(app, "created_by"), S(app, "supervisor_username"), username, isAdmin, isHr);
+        if (app == null || !CanView(app, username, isAdmin, isHr, isVc, isHod) || blocked)
         {
             HrDocument.Options o0 = new HrDocument.Options();
             o0.BackUrl = ResolveUrl("~/COOPERP/NewScreens/LeaveApplications.aspx");
             html = HrDocument.Page("Leave application",
-                HrDocument.Paragraph(app == null ? "This application was not found." : "You do not have permission to view this application."), o0);
+                HrDocument.Paragraph(app == null ? "This application was not found."
+                    : blocked ? NotReachedHr : "You do not have permission to view this application."), o0);
         }
         else
             html = HrDocument.Page("Leave application form", PrintBody(app, appId), PrintOptions(app, appId));
@@ -1245,9 +1281,17 @@ public partial class COOPERP_NewScreens_LeaveApplicationForm : System.Web.UI.Pag
         using (MySqlConnection conn = new MySqlConnection(ConnStr()))
         {
             conn.Open();
-            string status = GetStatus(conn, appId);
+            string status = null, createdBy = "", supUser = "";
+            using (MySqlCommand q = new MySqlCommand(
+                "SELECT status, IFNULL(created_by,'') AS cb, IFNULL(supervisor_username,'') AS su FROM hrm_leave_applications WHERE id=@id AND is_active=1", conn))
+            {
+                q.Parameters.AddWithValue("@id", appId);
+                using (MySqlDataReader dr = q.ExecuteReader())
+                    if (dr.Read()) { status = dr["status"].ToString(); createdBy = dr["cb"].ToString(); supUser = dr["su"].ToString(); }
+            }
             if (status == null) { Err("This application was not found."); return; }
             if (status == "CANCELLED") { Err("This application is already cancelled."); return; }
+            if (NotYetAtHr(status, createdBy, supUser, username, isAdmin, isHr)) { Err(NotReachedHr); return; }
 
             using (MySqlCommand cmd = new MySqlCommand(
                 "UPDATE hrm_leave_applications SET status='CANCELLED',updated_at=NOW() WHERE id=@id", conn))

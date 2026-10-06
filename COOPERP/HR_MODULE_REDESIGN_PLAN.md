@@ -32,7 +32,7 @@ Three independent audits read every HR screen, its code-behind, exports and prin
 
 1. Navy page header (`hr-header`): icon, title, one-line subtitle (at most 8 words), up to three actions on the right.
 2. Area tabs (`hr-tabs`) directly under the header, identical on every page of the area:
-   - **People:** Overview | Employees | Contracts | Renewals | Leave applications | Leave balances
+   - **People:** Overview | Employees | Contracts | Renewals | Leave applications | Leave balances | Profile requests
    - **Payroll:** Payroll runs | Payslips | Allowances | Deductions
    - **Settings:** Organisation and pay scales | Payroll and tax settings
    - **Appraisal:** Overview | Sessions | Appraisals | Reports | Competencies | Expected standards
@@ -148,12 +148,20 @@ Three independent audits read every HR screen, its code-behind, exports and prin
 | 4 | Payroll area and settings, bugs 1 to 8 | Done (4909f26) |
 | 5 | Appraisal area, bugs 12 to 15 | Done (a0acf6e) |
 | 6 | Cross-check: dashes, glyphs, gradients, shadows, radius, colours, browser dialogs, spelling; all 23 screens compile | Done (6 Oct 2026) |
+| 7 | Profile change requests screen; pre-HR records hidden from HR lists | Done (6 Oct 2026) |
 
 ### Additional defects found and fixed during the work
 - Payroll: approve and lock wrote text into an integer column and always failed.
 - Contracts: creating or editing a contract with fixed amount 0 failed under strict mode; "Contract" and "Temporary" types were offered but rejected by the database.
 - Employees: the directory showed only the first 50 staff (no paging); editing a Support or Consultant employee changed them to Administrative.
 - Appraisal: lists now include four session-4 records whose staff record no longer exists ("Staff record not found").
+
+### Visibility rule: only what has reached HR
+HR lists, detail pages, prints and exports show a record only once it has reached HR. Earlier stages
+appear as counts in the stat tiles only.
+- Appraisals: Completed and HR reviewed (Cancelled through its own filter).
+- Renewals: Awaiting HR and later (Forwarded, Approved, Not approved, Deferred, Contract issued).
+- Leave: HOD approved and later, plus the user's own applications and those they approve as HOD.
 
 ### Still open (section 5)
 Tax basis, leave balance integration, unused settings, letterhead address and phone.

@@ -12,8 +12,9 @@ using MySql.Data.MySqlClient;
 /// Appraisal reports: the single analysis page. Completion by category, department and session,
 /// one classification table, and the appraisal records export (HrExport .xlsx with Records,
 /// Summary by department and Classification sheets; .csv of Records).
-/// Population: every appraisal_records row matching the filters. The record list itself lives
-/// on the Appraisals page (no silent cap here).
+/// Counts cover every appraisal_records row matching the filters. Named rows (the Records sheet)
+/// are only appraisals that have reached HR: Awaiting HR and HR reviewed, or Cancelled when that
+/// status is chosen. The record list itself lives on the Appraisals page.
 /// </summary>
 public partial class COOPERP_NewScreens_AppraisalReports : System.Web.UI.Page
 {
@@ -213,7 +214,7 @@ public partial class COOPERP_NewScreens_AppraisalReports : System.Web.UI.Page
         List<string> q = new List<string>();
         if (QsSession > 0) q.Add("sid=" + QsSession);
         if (QsCategory != "") q.Add("cat=" + QsCategory);
-        if (QsStatus != "") q.Add("status=" + QsStatus);
+        if (QsStatus == "COMPLETED" || QsStatus == "HR_REVIEWED" || QsStatus == "CANCELLED") q.Add("status=" + QsStatus);
         litRecordsLink.Text = "<a class='hr-btn hr-btn--secondary hr-btn--sm' href='AppraisalView.aspx" +
             (q.Count > 0 ? "?" + string.Join("&amp;", q.ToArray()) : "") + "'>View the appraisals</a>";
     }
@@ -268,6 +269,7 @@ public partial class COOPERP_NewScreens_AppraisalReports : System.Web.UI.Page
                      ar.hr_status, ar.hr_overall_rating, ar.hr_recommendation,
                      ar.employee_submitted_at, ar.supervisor_submitted_at, ar.hr_submitted_at, ar.employee_ack" +
             From + " LEFT JOIN hrm_employee rev ON rev.empID = ar.reviewer_id" + Where(parms) +
+            (QsStatus == "CANCELLED" ? "" : " AND ar.status IN ('COMPLETED','HR_REVIEWED')") +
             " ORDER BY s.created_at DESC, FIELD(ar.staff_category,'ACADEMIC','ADMINISTRATIVE','SUPPORT'), emp_name",
             parms.ToArray());
 
@@ -279,15 +281,12 @@ public partial class COOPERP_NewScreens_AppraisalReports : System.Web.UI.Page
            .Add("Submitted", HrExport.Kind.Date).Add("Supervisor completed", HrExport.Kind.Date)
            .Add("HR reviewed", HrExport.Kind.Date).Add("Acknowledgement");
 
-        Dictionary<string, int[]> deptAgg = new Dictionary<string, int[]>();      // total, submitted, completed, hr, scored
-        Dictionary<string, decimal> deptSum = new Dictionary<string, decimal>();
         Dictionary<string, int> bandCount = new Dictionary<string, int>();
         int scoredAll = 0;
         foreach (DataRow r in dt.Rows)
         {
             string st = SafeStr(r["status"]).ToUpperInvariant();
             bool done = st == "COMPLETED" || st == "HR_REVIEWED";
-            bool submitted = done || st == "EMPLOYEE_SUBMITTED" || st == "SUPERVISOR_IN_PROGRESS";
             bool hrDone = st == "HR_REVIEWED";
             object pct = r["final_percentage"];
             bool scored = done && pct != DBNull.Value;
@@ -305,11 +304,7 @@ public partial class COOPERP_NewScreens_AppraisalReports : System.Web.UI.Page
                 r["employee_submitted_at"], r["supervisor_submitted_at"], hrDone ? r["hr_submitted_at"] : null,
                 ack == "AGREE" ? "Agrees" : ack == "DISAGREE" ? "Disagrees" : "");
 
-            string dk = SafeStr(r["department"]);
-            if (!deptAgg.ContainsKey(dk)) { deptAgg[dk] = new int[5]; deptSum[dk] = 0m; }
-            int[] g = deptAgg[dk];
-            g[0]++; if (submitted) g[1]++; if (done) g[2]++; if (hrDone) g[3]++;
-            if (scored) { g[4]++; deptSum[dk] += Convert.ToDecimal(pct); scoredAll++; if (!bandCount.ContainsKey(band)) bandCount[band] = 0; bandCount[band]++; }
+            if (scored) { scoredAll++; if (!bandCount.ContainsKey(band)) bandCount[band] = 0; bandCount[band]++; }
         }
 
         // Summary by department
@@ -318,14 +313,13 @@ public partial class COOPERP_NewScreens_AppraisalReports : System.Web.UI.Page
         sum.Add("Department").Add("Records", HrExport.Kind.Number, true).Add("Submitted", HrExport.Kind.Number, true)
            .Add("Completed", HrExport.Kind.Number, true).Add("HR reviewed", HrExport.Kind.Number, true)
            .Add("Completion %", HrExport.Kind.Percent).Add("Average score %", HrExport.Kind.Percent);
-        List<string> depts = new List<string>(deptAgg.Keys);
-        depts.Sort(StringComparer.OrdinalIgnoreCase);
-        foreach (string dk in depts)
+        // Counts by department cover every matching appraisal (no names).
+        foreach (DataRow g in Grouped(DeptExpr(), "k").Rows)
         {
-            int[] g = deptAgg[dk];
-            sum.Row(dk, g[0], g[1], g[2], g[3],
-                g[0] > 0 ? (object)Math.Round((decimal)g[2] * 100m / g[0], 1) : null,
-                g[4] > 0 ? (object)Math.Round(deptSum[dk] / g[4], 1) : null);
+            int total = SafeInt(g["total"]), completed = SafeInt(g["completed"]);
+            sum.Row(SafeStr(g["k"]), total, SafeInt(g["submitted"]), completed, SafeInt(g["hr_reviewed"]),
+                total > 0 ? (object)Math.Round((decimal)completed * 100m / total, 1) : null,
+                g["avg_score"] != DBNull.Value ? (object)Math.Round(Convert.ToDecimal(g["avg_score"]), 1) : null);
         }
 
         // Classification

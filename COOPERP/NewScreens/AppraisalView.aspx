@@ -2,7 +2,7 @@
 
 <asp:Content ID="HeadContent" ContentPlaceHolderID="HeadContent" runat="server">
 <meta name="csrf-token" content="<%= MarksAntiForgeryService.GetToken() %>" />
-<link rel="stylesheet" href="<%= ResolveUrl("~/COOPERP/NewScreens/css/hr.css") %>?v=1" />
+<link rel="stylesheet" href="<%= ResolveUrl("~/COOPERP/NewScreens/css/hr.css") %>?v=2" />
 <style>
 .pa-chk { width: 32px; text-align: center; }
 .pa-table-text td { vertical-align: top; }
@@ -52,16 +52,10 @@
         <label for="selSession">Session</label>
         <select id="selSession" class="hr-select" onchange="applyFilter()"><asp:Literal ID="litSessionOptions" runat="server" /></select>
     </div>
-    <div class="hr-filter">
+    <div class="hr-filter" id="fltStatus">
         <label for="selStatus">Status</label>
         <select id="selStatus" class="hr-select" onchange="applyFilter()">
-            <option value="">All statuses</option>
-            <option value="PENDING">Not started</option>
-            <option value="EMPLOYEE_IN_PROGRESS">In progress</option>
-            <option value="RETURNED">Returned</option>
-            <option value="EMPLOYEE_SUBMITTED">Submitted</option>
-            <option value="SUPERVISOR_IN_PROGRESS">With supervisor</option>
-            <option value="SUPERVISOR_STAGE">Submitted or with supervisor</option>
+            <option value="">Awaiting HR and HR reviewed</option>
             <option value="COMPLETED">Awaiting HR</option>
             <option value="HR_REVIEWED">HR reviewed</option>
             <option value="CANCELLED">Cancelled</option>
@@ -88,11 +82,12 @@
     </div>
 </div>
 
+<asp:Literal ID="litListHint" runat="server" />
 <div class="hr-card">
     <div class="hr-bulk" id="batchBar">
         <strong id="batchCount">0 selected</strong>
         <button type="button" class="hr-btn hr-btn--inverse hr-btn--sm" id="btnBatchHr" onclick="batchHrReview()" disabled>HR review</button>
-        <button type="button" class="hr-btn hr-btn--inverse hr-btn--sm" id="btnBatchReturn" onclick="batchReturn()" disabled>Return to employee</button>
+
         <button type="button" class="hr-btn hr-btn--inverse hr-btn--sm" id="btnBatchReopen" onclick="batchReopen()" disabled>Reopen for supervisor</button>
         <button type="button" class="hr-btn hr-btn--inverse hr-btn--sm" id="btnBatchAssign" onclick="batchAssignReviewer()" disabled>Assign supervisor</button>
         <button type="button" class="hr-btn hr-btn--inverse hr-btn--sm" id="btnBatchCancel" onclick="batchCancel()" disabled>Cancel appraisals</button>
@@ -100,7 +95,7 @@
         <button type="button" class="hr-btn hr-btn--inverse hr-btn--sm" onclick="clearSelection()">Clear selection</button>
     </div>
     <div class="hr-card__head">
-        <div class="hr-card__title">Appraisal records</div>
+        <div class="hr-card__title"><asp:Literal ID="litCardTitle" runat="server" Text="Appraisal records" /></div>
         <div class="hr-row">
             <span class="hr-card__meta"><asp:Literal ID="litTotalCount" runat="server" Text="0" /> records</span>
             <select id="selPageSize" class="hr-select" style="width:auto;height:26px;padding:0 6px;font-size:11px;" onchange="applyFilter()">
@@ -113,20 +108,7 @@
     </div>
     <div class="hr-table-wrap">
         <table class="hr-table">
-            <thead>
-                <tr>
-                    <th class="pa-chk"><input type="checkbox" id="chkAll" onclick="onSelectAll(this)" title="Select all on this page" /></th>
-                    <th>Employee</th>
-                    <th>Department</th>
-                    <th>Category</th>
-                    <th>Session</th>
-                    <th>Supervisor</th>
-                    <th>Status</th>
-                    <th class="hr-num">Score %</th>
-                    <th>Classification</th>
-                    <th></th>
-                </tr>
-            </thead>
+            <thead><asp:Literal ID="litGridHead" runat="server" /></thead>
             <tbody id="gridBody"><asp:Literal ID="litGridBody" runat="server" /></tbody>
         </table>
     </div>
@@ -272,6 +254,10 @@ function goPage(p) {
         var hide = document.querySelectorAll('.pa-chk');
         for (var i = 0; i < hide.length; i++) hide[i].style.display = 'none';
     }
+    if (window.PA_ASSIGN_MODE) {
+        var ids = ['fltStatus', 'btnBatchHr', 'btnBatchReopen', 'btnBatchCancel'];
+        for (var j = 0; j < ids.length; j++) { el = document.getElementById(ids[j]); if (el) el.style.display = 'none'; }
+    }
 })();
 
 // ── Common ───────────────────────────────────────────────────────────
@@ -361,17 +347,14 @@ function updateBatchBar() {
     if (!bar) return;
     bar.classList.toggle('is-on', n > 0);
     document.getElementById('batchCount').textContent = n + ' selected';
-    var canHr = false, canReturn = false, canCancel = false;
+    var canHr = false;
     for (var r in _sel) {
         var s = _sel[r].status;
         if (s === 'COMPLETED' || s === 'HR_REVIEWED') canHr = true;
-        if (s === 'EMPLOYEE_SUBMITTED' || s === 'SUPERVISOR_IN_PROGRESS') canReturn = true;
-        if (s !== 'CANCELLED') canCancel = true;
     }
     document.getElementById('btnBatchHr').disabled = !canHr;
     document.getElementById('btnBatchReopen').disabled = !canHr;
-    document.getElementById('btnBatchReturn').disabled = !canReturn;
-    document.getElementById('btnBatchCancel').disabled = !canCancel;
+    document.getElementById('btnBatchCancel').disabled = !canHr;
     document.getElementById('btnBatchAssign').disabled = n === 0;
 }
 function eligible(statuses) {
@@ -431,12 +414,7 @@ function adminReopen(rid) {
     openAction({ title: 'Reopen for supervisor', text: 'The appraisal returns to the supervisor. The HR review, the supervisor sign-off and the employee acknowledgement are cleared.',
         comment: 'optional', commentLabel: 'Reason (optional)', okLabel: 'Reopen', action: 'admin_reopen', payload: { rid: rid } });
 }
-function batchReturn() {
-    var rids = eligible(['EMPLOYEE_SUBMITTED', 'SUPERVISOR_IN_PROGRESS']);
-    if (!rids.length) { toast('None of the selected appraisals can be returned.', false); return; }
-    openAction({ title: 'Return to employee', text: rids.length + ' appraisal(s) go back to the employee for changes.', list: nameList(rids),
-        comment: 'required', commentLabel: 'Reason', okLabel: 'Return to employee', action: 'batch_return', payload: { rids: rids } });
-}
+
 function batchReopen() {
     var rids = eligible(['COMPLETED', 'HR_REVIEWED']);
     if (!rids.length) { toast('None of the selected appraisals can be reopened.', false); return; }
@@ -444,7 +422,7 @@ function batchReopen() {
         list: nameList(rids), comment: 'optional', commentLabel: 'Reason (optional)', okLabel: 'Reopen', action: 'batch_reopen', payload: { rids: rids } });
 }
 function batchCancel() {
-    var rids = eligible(['PENDING', 'EMPLOYEE_IN_PROGRESS', 'RETURNED', 'EMPLOYEE_SUBMITTED', 'SUPERVISOR_IN_PROGRESS', 'COMPLETED', 'HR_REVIEWED']);
+    var rids = eligible(['COMPLETED', 'HR_REVIEWED']);
     if (!rids.length) { toast('None of the selected appraisals can be cancelled.', false); return; }
     openAction({ title: 'Cancel appraisals', text: rids.length + ' appraisal(s) will be closed and can no longer be edited.', list: nameList(rids),
         comment: 'optional', commentLabel: 'Reason (optional)', okLabel: 'Cancel appraisals', danger: true, action: 'batch_cancel', payload: { rids: rids } });

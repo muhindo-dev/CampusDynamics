@@ -151,6 +151,8 @@ public partial class COOPERP_NewScreens_ContractRenewalView : System.Web.UI.Page
         if (dt.Rows.Count == 0) { DocNotFound(); return; }
 
         int rid = SafeInt(dt.Rows[0]["renewal_id"]);
+        DataTable stt = Q("SELECT status FROM hr_contract_renewals WHERE renewal_id = @id", new MySqlParameter("@id", rid));
+        if (stt.Rows.Count == 0 || !IsHrLevel(SafeStr(stt.Rows[0]["status"]))) { DocNotFound(); return; }
         string stored = SafeStr(dt.Rows[0]["stored_name"]).Trim();
         string original = SafeStr(dt.Rows[0]["original_name"]).Trim();
         string ctype = SafeStr(dt.Rows[0]["content_type"]).Trim().ToLowerInvariant();
@@ -853,6 +855,12 @@ public partial class COOPERP_NewScreens_ContractRenewalView : System.Web.UI.Page
             litError.Text = "<div class='hr-notice hr-notice--bad'>Application not found. <a href='ContractRenewals.aspx'>Back to contract renewals</a></div>";
             return;
         }
+        if (!IsHrLevel(SafeStr(r["status"])))
+        {
+            pnlMain.Visible = false;
+            litError.Text = "<div class='hr-notice'>" + NotReachedHr + " <a href='ContractRenewals.aspx'>Back to contract renewals</a></div>";
+            return;
+        }
         string st = SafeStr(r["status"]);
         string refNo = SafeStr(r["ref_no"]) != "" ? SafeStr(r["ref_no"]) : "#" + id;
         hfId.Value = id.ToString();
@@ -906,7 +914,7 @@ public partial class COOPERP_NewScreens_ContractRenewalView : System.Web.UI.Page
         DataTable ap = Q(@"SELECT ar.record_id, ar.status, ar.final_percentage, ar.classification, ar.employee_submitted_at, ar.created_at,
                                   IFNULL(s.session_title,'') AS session_title
                            FROM appraisal_records ar LEFT JOIN appraisal_sessions s ON s.session_id = ar.session_id
-                           WHERE ar.employee_id = @e
+                           WHERE ar.employee_id = @e AND ar.status IN ('COMPLETED','HR_REVIEWED')
                            ORDER BY COALESCE(ar.employee_submitted_at, ar.created_at) DESC, ar.record_id DESC",
             new MySqlParameter("@e", SafeInt(r["employee_id"])));
         a.Append("<div class='cr-sec'><div class='hr-label cr-sec__t'>Performance appraisals</div>");
@@ -1267,6 +1275,18 @@ public partial class COOPERP_NewScreens_ContractRenewalView : System.Web.UI.Page
     // ═══════════════════════════════════════════════════════════════════
     //  LABELS / FORMATTING
     // ═══════════════════════════════════════════════════════════════════
+    /// <summary>Statuses at HR level: the only applications HR may list, open or print.</summary>
+    public static bool IsHrLevel(string s)
+    {
+        switch ((s ?? "").Trim().ToUpper())
+        {
+            case "AWAITING_HR": case "FORWARDED": case "APPROVED": case "NOT_APPROVED": case "DEFERRED": case "CONTRACT_ISSUED": return true;
+            default: return false;
+        }
+    }
+
+    public const string NotReachedHr = "This application has not reached HR yet.";
+
     public static string StatusLabel(string s)
     {
         switch (s)
