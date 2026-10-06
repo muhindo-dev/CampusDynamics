@@ -2,18 +2,20 @@ using System;
 using System.Collections.Generic;
 using System.Configuration;
 using System.Data;
+using System.Globalization;
 using System.Text;
 using System.Web;
 using MySql.Data.MySqlClient;
 
 /// <summary>
-/// Contract renewal print pages (standalone, no SidebarMaster - so it checks the login itself):
-///   ?id=N                 the application pack: cover summary, the Governance Council's
-///                         "Evaluation Form for Achievements of Staff Responsibilities and Key
-///                         Performance Areas" laid out like the paper form, supervisor
-///                         recommendation, HR verification, Council decision, attached documents.
-///   ?schedule=1[&amp;round=][&amp;status=|&amp;ids=]   the Council schedule (default: all FORWARDED).
-/// HR / administrator access only.
+/// Contract renewal print documents, built on HrDocument (standalone page, no SidebarMaster, so it
+/// gates itself with HrAccess):
+///   ?id=N        the application pack: applicant and request, the Governance Council's evaluation
+///                form (achievements of staff responsibilities and key performance areas),
+///                supervisor recommendation, HR verification, Council decision, attached documents.
+///   ?schedule=1[&amp;round=][&amp;status=|&amp;ids=]   the Council schedule, landscape (default: all at Council).
+///                Its columns are ContractRenewals.ScheduleHeaders, the same as the Excel and CSV export.
+/// E-signatures are typed lines ("Signed electronically by X on 6 Oct 2026, 14:05").
 /// </summary>
 public partial class COOPERP_NewScreens_ContractRenewalPrint : System.Web.UI.Page
 {
@@ -24,114 +26,47 @@ public partial class COOPERP_NewScreens_ContractRenewalPrint : System.Web.UI.Pag
 
     protected void Page_Load(object sender, EventArgs e)
     {
-        if (!IsCallerAuthenticated())
-        {
-            Response.Redirect("~/Default.aspx?ReturnUrl=" + HttpUtility.UrlEncode(Request.RawUrl), true);
-            return;
-        }
-        if (!HasHrAccess())
-        {
-            litTitle.Text = "Access denied";
-            litBody.Text = "<div class='pp-sheet'><p>Access denied. Contract renewal applications are available to HR and administrators only.</p></div>";
-            return;
-        }
+        if (!HrAccess.RequireHr(false)) return;
+        HrDocument.Options o = new HrDocument.Options();
         try
         {
-            if (Request.QueryString["schedule"] == "1") RenderSchedule();
+            if (Request.QueryString["schedule"] == "1") litDoc.Text = RenderSchedule(o);
             else
             {
                 int id;
                 if (!int.TryParse(Request.QueryString["id"] ?? "", out id) || id <= 0)
-                { Response.Redirect("~/COOPERP/NewScreens/ContractRenewals.aspx", true); return; }
-                RenderPack(id);
+                { Response.Redirect("~/COOPERP/NewScreens/ContractRenewals.aspx", false); Context.ApplicationInstance.CompleteRequest(); return; }
+                litDoc.Text = RenderPack(id, o);
             }
         }
         catch (System.Threading.ThreadAbortException) { throw; }
-        catch (Exception ex)
+        catch (Exception)
         {
-            litBody.Text = "<div class='pp-sheet'><p>Error: " + Enc(ex.Message) + "</p></div>";
+            o.BackUrl = "ContractRenewals.aspx";
+            litDoc.Text = HrDocument.Page("Contract renewal", HrDocument.Paragraph("The document could not be prepared. Reload the page, or contact MIS if this continues."), o);
         }
-    }
-
-    // ═══════════════════════════════════════════════════════════════════
-    //  AUTH (same rule as the appraisal screens)
-    // ═══════════════════════════════════════════════════════════════════
-    private bool IsCallerAuthenticated()
-    {
-        try
-        {
-            if (User != null && User.Identity != null && User.Identity.IsAuthenticated
-                && !string.IsNullOrEmpty(User.Identity.Name)) return true;
-        }
-        catch { }
-        try
-        {
-            if (Session != null)
-            {
-                object u = Session["username"];
-                if (u != null && !string.IsNullOrEmpty(u.ToString().Trim())) return true;
-            }
-        }
-        catch { }
-        return false;
-    }
-
-    private string CurrentUsername()
-    {
-        try
-        {
-            if (Session != null && Session["username"] != null && !string.IsNullOrEmpty(Session["username"].ToString().Trim()))
-                return Session["username"].ToString().Trim();
-        }
-        catch { }
-        try
-        {
-            if (User != null && User.Identity != null && User.Identity.IsAuthenticated) return User.Identity.Name ?? "";
-        }
-        catch { }
-        return "";
-    }
-
-    private bool HasHrAccess()
-    {
-        try
-        {
-            if (RoleAccessService.IsAdmin()) return true;
-            string u = CurrentUsername();
-            if (string.IsNullOrEmpty(u)) return false;
-            DataTable dt = Q(
-                @"SELECT
-                    (SELECT COUNT(*) FROM sys_user_roles ur
-                       JOIN sys_roles r ON r.id = ur.role_id
-                      WHERE ur.username = @u AND ur.is_active = 1 AND r.is_active = 1
-                        AND (ur.expires_at IS NULL OR ur.expires_at > NOW())
-                        AND r.role_code IN ('admin','hr_manager'))
-                  + (SELECT COUNT(*) FROM my_aspnet_users mu
-                       JOIN my_aspnet_usersinroles mur ON mur.userId = mu.id
-                       JOIN my_aspnet_roles mr ON mr.id = mur.roleId
-                      WHERE mu.name = @u
-                        AND mr.name IN ('Administrator','System Admin','Human Resource','Human Resource Manager')) AS n",
-                new MySqlParameter("@u", u));
-            return dt.Rows.Count > 0 && SafeInt(dt.Rows[0]["n"]) > 0;
-        }
-        catch { return false; }
     }
 
     // ═══════════════════════════════════════════════════════════════════
     //  APPLICATION PACK
     // ═══════════════════════════════════════════════════════════════════
-    private void RenderPack(int id)
+    private string RenderPack(int id, HrDocument.Options o)
     {
+        o.BackUrl = "ContractRenewalView.aspx?id=" + id;
         DataTable dt = Q(
             @"SELECT r.*, IFNULL(rev.emp_name,'') AS reviewer_live_name, rd.title AS round_title
               FROM hr_contract_renewals r
               LEFT JOIN hrm_employee rev ON rev.empID = r.reviewer_id
               LEFT JOIN hr_renewal_rounds rd ON rd.round_id = r.round_id
               WHERE r.renewal_id = @id", new MySqlParameter("@id", id));
-        if (dt.Rows.Count == 0) { litTitle.Text = "Not found"; litBody.Text = "<div class='pp-sheet'><p>Application not found.</p></div>"; return; }
+        if (dt.Rows.Count == 0)
+        {
+            o.BackUrl = "ContractRenewals.aspx";
+            return HrDocument.Page("Contract renewal application", HrDocument.Paragraph("Application not found."), o);
+        }
         DataRow r = dt.Rows[0];
         string refNo = S(r["ref_no"]) != "" ? S(r["ref_no"]) : "#" + id;
-        litTitle.Text = Enc(refNo + " " + S(r["emp_name"]));
+        o.Reference = "Ref: " + refNo;
 
         DataTable ach = Q(@"SELECT item_id, kpa, expected_standard, achievement, evidence, reviewer_comment
                             FROM hr_renewal_achievements WHERE renewal_id = @id ORDER BY sort_order, item_id", new MySqlParameter("@id", id));
@@ -146,53 +81,48 @@ public partial class COOPERP_NewScreens_ContractRenewalPrint : System.Web.UI.Pag
         string reviewerName = S(r["sup_name"]) != "" ? S(r["sup_name"]) : S(r["reviewer_live_name"]);
         StringBuilder b = new StringBuilder();
 
-        // ── page 1: cover ──
-        b.Append("<div class='pp-sheet'>");
-        b.Append(Letterhead("CONTRACT RENEWAL APPLICATION"));
-        b.AppendFormat("<div class='pp-refline'><span>Ref: <strong>{0}</strong></span><span>Status: <strong>{1}</strong></span><span>Printed {2}</span></div>",
-            Enc(refNo), Enc(COOPERP_NewScreens_ContractRenewalView.StatusLabel(S(r["status"]))), DateTime.Now.ToString("d MMM yyyy HH:mm"));
+        // ── page 1: applicant and request ──
+        b.Append(HrDocument.Heading("Applicant and current contract"));
+        b.Append(HrDocument.Meta(
+            "Name", S(r["emp_name"]), "Staff no", S(r["emp_code"]),
+            "Category", COOPERP_NewScreens_ContractRenewalView.CategoryLabel(S(r["staff_category"])), "Contract type", Words(S(r["cur_type"])),
+            "Position", S(r["cur_job"]), "Department", S(r["cur_department"]),
+            "Contract start", Dt(r["cur_start"]), "Contract end", Dt(r["cur_end"]),
+            "Supervisor", reviewerName, "Contact", Join(", ", S(r["contact_phone"]), S(r["contact_email"]))));
 
-        b.Append("<h3 class='pp-h'>Applicant and current contract</h3><table class='pp-kv'>");
-        Kv(b, "Name", S(r["emp_name"]), "Employee No", S(r["emp_code"]));
-        Kv(b, "Category", COOPERP_NewScreens_ContractRenewalView.CategoryLabel(S(r["staff_category"])), "Contract type", S(r["cur_type"]));
-        Kv(b, "Position", S(r["cur_job"]), "Department", S(r["cur_department"]));
-        Kv(b, "Contract start", Dt(r["cur_start"]), "Contract end", Dt(r["cur_end"]));
-        Kv(b, "Supervisor", reviewerName, "Contact", (S(r["contact_phone"]) + (S(r["contact_email"]) != "" ? "  " + S(r["contact_email"]) : "")).Trim());
-        b.Append("</table>");
-
-        b.Append("<h3 class='pp-h'>Request</h3><table class='pp-kv'>");
-        Kv(b, "Requested term", SafeInt(r["requested_term_months"]) > 0 ? SafeInt(r["requested_term_months"]) + " months" : "", "Contract type", S(r["requested_type"]));
-        Kv(b, "Requested period", Dt(r["requested_start"]) + " to " + Dt(r["requested_end"]), "Position", S(r["requested_position"]));
-        Kv(b, "Submitted", DtT(r["submitted_at"]), "Days to expiry at submission",
-            r["days_to_expiry_at_submit"] == DBNull.Value ? "" : SafeInt(r["days_to_expiry_at_submit"]) + (SafeInt(r["is_late"]) == 1 ? " (LATE - under 3 months)" : ""));
-        Kv(b, "Round", S(r["round_title"]), "Council sitting", S(r["council_sitting"]));
-        b.Append("</table>");
-        b.Append("<div class='pp-para'><div class='pp-para__l'>Why the contract should be renewed</div><div class='pp-para__t'>" + Nl(S(r["justification"])) + "</div></div>");
-        b.Append("<div class='pp-para'><div class='pp-para__l'>Plans for the next contract</div><div class='pp-para__t'>" + Nl(S(r["future_plans"])) + "</div></div>");
+        b.Append(HrDocument.Heading("Renewal request"));
+        string daysAtSubmit = r["days_to_expiry_at_submit"] == DBNull.Value ? "" :
+            SafeInt(r["days_to_expiry_at_submit"]) + (SafeInt(r["is_late"]) == 1 ? " (late)" : "");
+        b.Append(HrDocument.Meta(
+            "Requested term", SafeInt(r["requested_term_months"]) > 0 ? SafeInt(r["requested_term_months"]) + " months" : "", "Contract type", Words(S(r["requested_type"])),
+            "Requested period", Range(r["requested_start"], r["requested_end"]), "Position", S(r["requested_position"]),
+            "Submitted", DtT(r["submitted_at"]), "Days to contract end", daysAtSubmit,
+            "Round", S(r["round_title"]), "Council sitting", S(r["council_sitting"]),
+            "Status", COOPERP_NewScreens_ContractRenewalView.StatusLabel(S(r["status"]))));
+        b.Append(Box("Why the contract should be renewed", S(r["justification"])));
+        b.Append(Box("Plans for the next contract", S(r["future_plans"])));
 
         if (appr.Rows.Count > 0)
         {
-            b.Append("<h3 class='pp-h'>Performance appraisal (latest)</h3><table class='pp-grid'><thead><tr><th>Session</th><th>Status</th><th>Score</th><th>Classification</th></tr></thead><tbody>");
+            b.Append(HrDocument.Heading("Performance appraisal"));
+            List<string[]> rows = new List<string[]>();
             foreach (DataRow a in appr.Rows)
-                b.AppendFormat("<tr><td>{0}</td><td>{1}</td><td>{2}</td><td>{3}</td></tr>", Enc(S(a["session_title"])), Enc(S(a["status"]).Replace("_", " ")),
-                    a["final_percentage"] == DBNull.Value ? "" : Convert.ToDecimal(a["final_percentage"]).ToString("0.0") + "%", Enc(S(a["classification"])));
-            b.Append("</tbody></table>");
+                rows.Add(new string[] {
+                    HrDocument.E(S(a["session_title"])),
+                    a["final_percentage"] == DBNull.Value ? "" : Convert.ToDecimal(a["final_percentage"]).ToString("0.0", CultureInfo.InvariantCulture),
+                    HrDocument.E(S(a["classification"])), HrDocument.E(AppraisalStatus(S(a["status"]))) });
+            b.Append(HrDocument.Table(new string[] { "Session", "Score (%)", "Classification", "Status" }, rows, new bool[] { false, true, false, false }, null));
         }
-        b.Append("</div>");
 
         // ── page 2: the Council evaluation form ──
-        b.Append("<div class='pp-sheet pp-break'>");
-        b.Append(Letterhead("EVALUATION FORM FOR ACHIEVEMENTS OF STAFF RESPONSIBILITIES AND KEY PERFORMANCE AREAS"));
-        b.Append("<table class='pp-form-head'>");
-        b.AppendFormat("<tr><td><span>NAME</span>{0}</td><td><span>EMPLOYEE NO</span>{1}</td><td><span>DATE OF REVIEW</span>{2}</td></tr>",
-            Enc(S(r["emp_name"])), Enc(S(r["emp_code"])), Dt(r["sup_signed_at"]));
-        b.AppendFormat("<tr><td><span>POSITION HELD</span>{0}</td><td><span>DEPARTMENT</span>{1}</td><td><span>REPORTS TO</span>{2}</td></tr>",
-            Enc(S(r["cur_job"])), Enc(S(r["cur_department"])), Enc(S(r["reviewer_live_name"]) != "" ? S(r["reviewer_live_name"]) : reviewerName));
-        b.AppendFormat("<tr><td><span>REVIEWER'S NAME</span>{0}</td><td><span>REVIEWER'S TITLE</span>{1}</td><td><span>DATE SUBMITTED</span>{2}</td></tr>",
-            Enc(reviewerName), Enc(S(r["sup_title"])), Dt(r["submitted_at"]));
-        b.Append("</table>");
-
-        b.Append("<table class='pp-grid pp-form'><thead><tr><th class='pp-no'>NO</th><th>EMPLOYEE RESPONSIBILITIES-ROLES / KEY PERFORMANCE AREAS</th><th>EXPECTED STANDARDS</th><th>ACHIEVEMENTS</th><th>EVIDENCE OF THE ACHIEVEMENTS</th></tr></thead><tbody>");
+        b.Append("<div class=\"pb\"></div>");
+        b.Append(HrDocument.Heading("Evaluation form: achievements of staff responsibilities and key performance areas"));
+        b.Append(HrDocument.Meta(
+            "Name", S(r["emp_name"]), "Staff no", S(r["emp_code"]),
+            "Position held", S(r["cur_job"]), "Department", S(r["cur_department"]),
+            "Reports to", S(r["reviewer_live_name"]) != "" ? S(r["reviewer_live_name"]) : reviewerName, "Supervisor's title", S(r["sup_title"]),
+            "Date submitted", Dt(r["submitted_at"]), "Date of review", Dt(r["sup_signed_at"])));
+        List<string[]> form = new List<string[]>();
         int i = 0;
         foreach (DataRow a in ach.Rows)
         {
@@ -200,171 +130,185 @@ public partial class COOPERP_NewScreens_ContractRenewalPrint : System.Web.UI.Pag
             StringBuilder files = new StringBuilder();
             foreach (DataRow d in docs.Rows)
                 if (S(d["doc_type"]) == "EVIDENCE" && SafeInt(d["item_id"]) == SafeInt(a["item_id"]))
-                    files.Append("<div class='pp-file'>[Attached] " + Enc(S(d["original_name"])) + "</div>");
-            b.AppendFormat("<tr><td class='pp-no'>{0}</td><td>{1}</td><td>{2}</td><td>{3}</td><td>{4}{5}</td></tr>",
-                i, Nl(S(a["kpa"])), Nl(S(a["expected_standard"])), Nl(S(a["achievement"])), Nl(S(a["evidence"])), files);
-            if (S(a["reviewer_comment"]).Trim() != "")
-                b.AppendFormat("<tr class='pp-revrow'><td></td><td colspan='4'><em>Reviewer's comment:</em> {0}</td></tr>", Nl(S(a["reviewer_comment"])));
+                    files.Append("<br/>Attached: " + HrDocument.E(S(d["original_name"])));
+            form.Add(new string[] {
+                i.ToString(), HrDocument.Multiline(S(a["kpa"])), HrDocument.Multiline(S(a["expected_standard"])), HrDocument.Multiline(S(a["achievement"])),
+                HrDocument.Multiline(S(a["evidence"])) + files, HrDocument.Multiline(S(a["reviewer_comment"])) });
         }
-        if (ach.Rows.Count == 0) b.Append("<tr><td colspan='5' class='pp-empty'>No achievement rows entered.</td></tr>");
-        b.Append("</tbody></table>");
+        b.Append(HrDocument.Table(new string[] { "No", "Responsibilities or key performance areas", "Expected standards", "Achievements", "Evidence of the achievements", "Supervisor comment" },
+            form, new bool[] { true }, null));
+        string rec = RecLabel(S(r["sup_recommendation"]));
+        if (rec != "" && SafeInt(r["sup_term_months"]) > 0) rec += ", suggested term " + SafeInt(r["sup_term_months"]) + " months";
+        b.Append(Box("Supervisor's comments and approval", Join(". ", rec, S(r["sup_comments"]).Trim())));
+        b.Append(HrDocument.Signatures(
+            "Employee", S(r["emp_name"]), Signed("Signed", S(r["employee_sign_name"]), r["employee_signed_at"]),
+            "Supervisor", reviewerName, D(r["sup_signed_at"]).HasValue ? Signed("Signed", reviewerName, r["sup_signed_at"]) : ""));
 
-        b.Append("<div class='pp-box'><div class='pp-box__l'>COMMENTS AND APPROVAL</div><div class='pp-box__t'>");
-        if (S(r["sup_recommendation"]) != "")
-            b.Append("<strong>" + Enc(RecLabel(S(r["sup_recommendation"]))) + "</strong>" + (SafeInt(r["sup_term_months"]) > 0 ? " &middot; suggested term " + SafeInt(r["sup_term_months"]) + " months" : "") + "<br/>");
-        b.Append(Nl(S(r["sup_comments"])) + "</div></div>");
-
-        b.Append("<table class='pp-sign'><tr>");
-        b.AppendFormat("<td><div class='pp-sign__l'>EMPLOYEE SIGNATURE</div><div class='pp-sign__v'>{0}</div><div class='pp-sign__d'>DATE: {1}</div></td>",
-            S(r["employee_sign_name"]) != "" ? "<span class='pp-esign'>" + Enc(S(r["employee_sign_name"])) + "</span><span class='pp-esign__n'>signed electronically</span>" : "&nbsp;",
-            S(r["employee_signed_at"]) != "" ? DtT(r["employee_signed_at"]) : "____________");
-        b.AppendFormat("<td><div class='pp-sign__l'>REVIEWER'S SIGNATURE</div><div class='pp-sign__v'>{0}</div><div class='pp-sign__d'>DATE: {1}</div></td>",
-            S(r["sup_signed_at"]) != "" && reviewerName != "" ? "<span class='pp-esign'>" + Enc(reviewerName) + "</span><span class='pp-esign__n'>signed electronically</span>" : "&nbsp;",
-            S(r["sup_signed_at"]) != "" ? DtT(r["sup_signed_at"]) : "____________");
-        b.Append("</tr></table>");
-        b.Append("</div>");
-
-        // ── page 3: recommendation, HR verification, Council, documents ──
-        b.Append("<div class='pp-sheet pp-break'>");
-        b.Append(Letterhead("RECOMMENDATION, VERIFICATION AND DECISION"));
-
-        b.Append("<h3 class='pp-h'>Supervisor recommendation</h3>");
-        if (S(r["sup_recommendation"]) == "") b.Append("<p class='pp-empty'>No supervisor recommendation recorded.</p>");
+        // ── page 3: recommendation, verification, decision, documents ──
+        b.Append("<div class=\"pb\"></div>");
+        b.Append(HrDocument.Heading("Supervisor recommendation"));
+        if (S(r["sup_recommendation"]) == "") b.Append(HrDocument.Paragraph("Not recorded."));
         else
-        {
-            b.Append("<table class='pp-kv'>");
-            Kv(b, "Recommendation", RecLabel(S(r["sup_recommendation"])), "Suggested term", SafeInt(r["sup_term_months"]) > 0 ? SafeInt(r["sup_term_months"]) + " months" : "");
-            Kv(b, "Reviewer", reviewerName + (S(r["sup_title"]) != "" ? ", " + S(r["sup_title"]) : ""), "Signed", DtT(r["sup_signed_at"]));
-            b.Append("</table>");
-        }
+            b.Append(HrDocument.Meta(
+                "Recommendation", RecLabel(S(r["sup_recommendation"])), "Suggested term", SafeInt(r["sup_term_months"]) > 0 ? SafeInt(r["sup_term_months"]) + " months" : "",
+                "Supervisor", Join(", ", reviewerName, S(r["sup_title"])), "Signed", DtT(r["sup_signed_at"])));
 
-        b.Append("<h3 class='pp-h'>HR verification</h3>");
+        b.Append(HrDocument.Heading("HR verification"));
         string cj = S(r["hr_checklist_json"]);
-        b.Append("<table class='pp-grid'><tbody>");
+        List<string[]> checks = new List<string[]>();
         for (int k = 0; k < COOPERP_NewScreens_ContractRenewalView.CheckKeys.Length; k++)
         {
             string key = COOPERP_NewScreens_ContractRenewalView.CheckKeys[k];
             int p = cj.IndexOf("\"" + key + "\":", StringComparison.Ordinal);
-            string mark = cj == "" ? "" : (p >= 0 && p + key.Length + 3 < cj.Length && cj[p + key.Length + 3] == '1' ? Tick(true) + " Yes" : Tick(false) + " No");
-            b.AppendFormat("<tr><td>{0}</td><td class='pp-mark'>{1}</td></tr>", Enc(COOPERP_NewScreens_ContractRenewalView.CheckLabels[k]), mark == "" ? "Not yet verified" : mark);
+            string mark = cj == "" ? "Not verified" : (p >= 0 && p + key.Length + 3 < cj.Length && cj[p + key.Length + 3] == '1' ? "Yes" : "No");
+            checks.Add(new string[] { HrDocument.E(COOPERP_NewScreens_ContractRenewalView.CheckLabels[k]), mark });
         }
-        b.Append("</tbody></table>");
-        b.Append("<div class='pp-para'><div class='pp-para__l'>HR comments</div><div class='pp-para__t'>" + Nl(S(r["hr_comments"])) + "</div></div>");
-        if (S(r["hr_verified_at"]) != "")
-            b.AppendFormat("<p class='pp-small'>Verified by {0} on {1}; forwarded to the Governance Council ({2}) on {3}.</p>",
-                Enc(S(r["hr_actor"])), DtT(r["hr_verified_at"]), Enc(S(r["council_sitting"])), DtT(r["forwarded_at"]));
+        b.Append(HrDocument.Table(new string[] { "Item", "Verified" }, checks, null, null));
+        b.Append(Box("HR remarks", S(r["hr_comments"])));
 
-        b.Append("<h3 class='pp-h'>Governance Council decision</h3>");
-        if (S(r["decision"]) == "") b.Append("<p class='pp-empty'>No decision recorded.</p>");
+        b.Append(HrDocument.Heading("Governance Council decision"));
+        if (S(r["decision"]) == "") b.Append(HrDocument.Paragraph("Not recorded."));
         else
         {
-            b.Append("<table class='pp-kv'>");
-            Kv(b, "Decision", COOPERP_NewScreens_ContractRenewalView.StatusLabel(S(r["decision"])), "Council sitting", S(r["council_sitting"]));
+            List<string> meta = new List<string> {
+                "Decision", COOPERP_NewScreens_ContractRenewalView.StatusLabel(S(r["decision"])), "Council sitting", S(r["council_sitting"]) };
             if (S(r["decision"]) == "APPROVED")
-                Kv(b, "Approved term", SafeInt(r["decision_term_months"]) + " months", "New contract period", Dt(r["decision_start"]) + " to " + Dt(r["decision_end"]));
-            Kv(b, "Recorded by", S(r["decision_recorded_by"]), "On", DtT(r["decision_at"]));
+                meta.AddRange(new string[] { "Approved term", SafeInt(r["decision_term_months"]) + " months", "New contract period", Range(r["decision_start"], r["decision_end"]) });
+            meta.AddRange(new string[] { "Recorded by", Actor(S(r["decision_recorded_by"])), "Recorded on", DtT(r["decision_at"]) });
             if (SafeInt(r["new_contract_id"]) > 0)
-                Kv(b, "New contract", "#" + SafeInt(r["new_contract_id"]), "Issued", DtT(r["contract_issued_at"]) + " by " + S(r["contract_issued_by"]));
-            b.Append("</table>");
-            if (S(r["decision_notes"]) != "")
-                b.Append("<div class='pp-para'><div class='pp-para__l'>Council notes</div><div class='pp-para__t'>" + Nl(S(r["decision_notes"])) + "</div></div>");
+                meta.AddRange(new string[] { "Contract issued", DtT(r["contract_issued_at"]), "Issued by", Actor(S(r["contract_issued_by"])) });
+            b.Append(HrDocument.Meta(meta.ToArray()));
+            if (S(r["decision_notes"]) != "") b.Append(Box("Council notes", S(r["decision_notes"])));
         }
+        b.Append(HrDocument.Signatures(
+            "Verified by (Human Resource)", Actor(S(r["hr_actor"])), D(r["hr_verified_at"]).HasValue ? Signed("Verified", Actor(S(r["hr_actor"])), r["hr_verified_at"]) : "",
+            "Approved by (Secretary to Council)", "", ""));
 
-        b.Append("<h3 class='pp-h'>Attached documents</h3><table class='pp-grid'><thead><tr><th class='pp-no'>No</th><th>Type</th><th>File</th><th>Uploaded</th></tr></thead><tbody>");
+        b.Append(HrDocument.Heading("Attached documents"));
+        List<string[]> drows = new List<string[]>();
         int n = 0;
         foreach (DataRow d in docs.Rows)
         {
             n++;
-            b.AppendFormat("<tr><td class='pp-no'>{0}</td><td>{1}</td><td>{2}</td><td>{3}</td></tr>", n,
-                Enc(COOPERP_NewScreens_ContractRenewalView.DocTypeLabel(S(d["doc_type"]))), Enc(S(d["original_name"])), DtT(d["uploaded_at"]));
+            drows.Add(new string[] { n.ToString(), HrDocument.E(COOPERP_NewScreens_ContractRenewalView.DocTypeLabel(S(d["doc_type"]))),
+                                     HrDocument.E(S(d["original_name"])), HrDocument.E(DtT(d["uploaded_at"])) });
         }
-        if (docs.Rows.Count == 0) b.Append("<tr><td colspan='4' class='pp-empty'>No documents uploaded.</td></tr>");
-        b.Append("</tbody></table>");
-        b.Append("</div>");
+        b.Append(HrDocument.Table(new string[] { "No", "Type", "File", "Uploaded" }, drows, new bool[] { true }, null));
 
-        litBody.Text = b.ToString();
+        return HrDocument.Page("Contract renewal application", b.ToString(), o);
     }
 
     // ═══════════════════════════════════════════════════════════════════
-    //  COUNCIL SCHEDULE
+    //  COUNCIL SCHEDULE (same columns as the Excel / CSV export)
     // ═══════════════════════════════════════════════════════════════════
-    private void RenderSchedule()
+    private string RenderSchedule(HrDocument.Options o)
     {
+        o.BackUrl = "ContractRenewals.aspx";
+        o.Landscape = true;
         int round;
         int.TryParse(Request.QueryString["round"] ?? "0", out round);
+        string ids = Request.QueryString["ids"], status = Request.QueryString["status"];
         List<MySqlParameter> ps = new List<MySqlParameter>();
-        string where = COOPERP_NewScreens_ContractRenewals.ScheduleWhere(Request.QueryString["ids"], round, Request.QueryString["status"], ps);
-        DataTable dt = Q(COOPERP_NewScreens_ContractRenewals.ScheduleSql + where + " ORDER BY r.cur_department, r.emp_name", ps.ToArray());
+        string where = COOPERP_NewScreens_ContractRenewals.ScheduleWhere(ids, round, status, ps);
+        DataTable dt = Q(COOPERP_NewScreens_ContractRenewals.ScheduleSql + where + COOPERP_NewScreens_ContractRenewals.ScheduleOrder, ps.ToArray());
 
-        string sitting = "";
-        if (round > 0)
-        {
-            DataTable rd = Q("SELECT council_sitting FROM hr_renewal_rounds WHERE round_id = @r", new MySqlParameter("@r", round));
-            if (rd.Rows.Count > 0) sitting = S(rd.Rows[0]["council_sitting"]);
-        }
-        if (sitting == "" && dt.Rows.Count > 0) sitting = S(dt.Rows[0]["council_sitting"]);
-        litTitle.Text = "Council schedule - contract renewals";
-        litBodyClass.Text = "pp-landscape";
+        List<KeyValuePair<string, string>> scope = COOPERP_NewScreens_ContractRenewals.ScheduleScope(dt, ids, round, status, delegate (string sql) { return Q(sql); });
+        List<string> refParts = new List<string>();
+        foreach (KeyValuePair<string, string> kv in scope) refParts.Add(kv.Key + ": " + kv.Value);
+        bool counted = false;
+        foreach (KeyValuePair<string, string> kv in scope) if (kv.Key == "Applications") counted = true;
+        if (!counted) refParts.Add(dt.Rows.Count + (dt.Rows.Count == 1 ? " application" : " applications"));
+        o.Reference = string.Join("   |   ", refParts.ToArray());
 
-        StringBuilder b = new StringBuilder("<div class='pp-sheet pp-sheet--wide'>");
-        b.Append(Letterhead("CONTRACT RENEWAL APPLICATIONS FOR THE GOVERNANCE COUNCIL" + (sitting != "" ? " - " + sitting.ToUpper() + " SITTING" : "")));
-        b.AppendFormat("<div class='pp-refline'><span>{0} application(s)</span><span>Printed {1}</span></div>", dt.Rows.Count, DateTime.Now.ToString("d MMM yyyy HH:mm"));
-        b.Append("<table class='pp-grid pp-sched'><thead><tr><th class='pp-no'>No</th><th>Name</th><th>Position</th><th>Department</th><th>Current contract end</th><th>Requested term</th><th>Supervisor recommendation</th><th>Appraisal score</th><th>HR remarks</th></tr></thead><tbody>");
-        int i = 0;
-        foreach (DataRow r in dt.Rows)
+        string[] h = COOPERP_NewScreens_ContractRenewals.ScheduleHeaders;
+        List<string[]> rows = new List<string[]>();
+        foreach (object[] v in COOPERP_NewScreens_ContractRenewals.ScheduleRows(dt))
         {
-            i++;
-            b.AppendFormat("<tr><td class='pp-no'>{0}</td><td><strong>{1}</strong><div class='pp-small'>{2} &middot; {3}{4}</div></td><td>{5}</td><td>{6}</td><td class='pp-nowrap'>{7}</td><td>{8}</td><td>{9}</td><td>{10}</td><td>{11}</td></tr>",
-                i, Enc(S(r["emp_name"])), Enc(S(r["emp_code"])), Enc(S(r["ref_no"])), SafeInt(r["is_late"]) == 1 ? " &middot; LATE" : "",
-                Enc(S(r["cur_job"])), Enc(S(r["cur_department"])), Dt(r["cur_end"]),
-                SafeInt(r["requested_term_months"]) > 0 ? SafeInt(r["requested_term_months"]) + " months" : "",
-                Enc(RecLabel(S(r["sup_recommendation"]))) + (SafeInt(r["sup_term_months"]) > 0 ? "<div class='pp-small'>" + SafeInt(r["sup_term_months"]) + " months</div>" : ""),
-                Enc(S(r["appraisal_score"])), Nl(S(r["hr_comments"])));
+            string[] cells = new string[h.Length];
+            for (int i = 0; i < h.Length; i++)
+            {
+                object x = i < v.Length ? v[i] : null;
+                if (x == null) cells[i] = "";
+                else if (x is DateTime) cells[i] = HrDocument.Date(x);
+                else if (h[i] == "HR remarks") cells[i] = HrDocument.Multiline(x.ToString());
+                else cells[i] = HrDocument.E(x.ToString());
+            }
+            rows.Add(cells);
         }
-        if (dt.Rows.Count == 0) b.Append("<tr><td colspan='9' class='pp-empty'>No applications match (by default the schedule lists applications forwarded to Council).</td></tr>");
-        b.Append("</tbody></table>");
-        b.Append("<table class='pp-sign' style='margin-top:30px;'><tr><td><div class='pp-sign__l'>PREPARED BY (HUMAN RESOURCE)</div><div class='pp-sign__v'>&nbsp;</div><div class='pp-sign__d'>DATE: ____________</div></td>" +
-                 "<td><div class='pp-sign__l'>RECEIVED BY (SECRETARY TO COUNCIL)</div><div class='pp-sign__v'>&nbsp;</div><div class='pp-sign__d'>DATE: ____________</div></td></tr></table>");
-        b.Append("</div>");
-        litBody.Text = b.ToString();
+        bool[] numeric = new bool[h.Length];
+        numeric[0] = true;
+        numeric[Array.IndexOf(h, "Requested term (months)")] = true;
+
+        StringBuilder b = new StringBuilder();
+        b.Append(HrDocument.Table(h, rows, numeric, null));
+        b.Append(HrDocument.Signatures(
+            "Prepared by (HR Manager)", "", "",
+            "Checked by", "", "",
+            "Approved by (Secretary to Council)", "", ""));
+        return HrDocument.Page("Contract renewal applications for the Governance Council", b.ToString(), o);
     }
 
     // ═══════════════════════════════════════════════════════════════════
     //  HELPERS
     // ═══════════════════════════════════════════════════════════════════
-    private string Letterhead(string title)
+    /// <summary>Labelled free-text box (HrDocument .box). Empty text prints "Not recorded".</summary>
+    private static string Box(string label, string text)
     {
-        return "<div class='pp-lh'><div class='pp-lh__uni'>MUTEESA I ROYAL UNIVERSITY</div><div class='pp-lh__off'>Office of Human Resource</div></div>" +
-               "<div class='pp-title'>" + Enc(title) + "</div>";
+        return "<p><strong>" + HrDocument.E(label) + "</strong></p><div class=\"box\">" +
+               (string.IsNullOrEmpty((text ?? "").Trim()) ? "Not recorded." : HrDocument.Multiline(text)) + "</div>";
     }
 
-    private static void Kv(StringBuilder b, string l1, string v1, string l2, string v2)
+    /// <summary>Typed e-signature line: "Signed electronically by X on 6 Oct 2026, 14:05".</summary>
+    private static string Signed(string verb, string name, object at)
     {
-        b.AppendFormat("<tr><th>{0}</th><td>{1}</td><th>{2}</th><td>{3}</td></tr>", Enc(l1), v1 == "" ? "&nbsp;" : Enc(v1), Enc(l2), v2 == "" ? "&nbsp;" : Enc(v2));
-    }
-
-    private static string Tick(bool yes)
-    {
-        return yes
-            ? "<svg xmlns='http://www.w3.org/2000/svg' width='11' height='11' viewBox='0 0 24 24' fill='none' stroke='#155724' stroke-width='3'><polyline points='20 6 9 17 4 12'/></svg>"
-            : "<svg xmlns='http://www.w3.org/2000/svg' width='11' height='11' viewBox='0 0 24 24' fill='none' stroke='#dc3545' stroke-width='3'><line x1='18' y1='6' x2='6' y2='18'/><line x1='6' y1='6' x2='18' y2='18'/></svg>";
+        DateTime? d = D(at);
+        if (string.IsNullOrEmpty((name ?? "").Trim()) || !d.HasValue) return "";
+        return verb + " electronically by " + name.Trim() + " on " + d.Value.ToString("d MMM yyyy, HH:mm", CultureInfo.InvariantCulture);
     }
 
     private static string RecLabel(string r)
     {
-        switch (r)
+        return r == "RECOMMEND" ? "Recommended for renewal" : COOPERP_NewScreens_ContractRenewals.RecLabel(r);
+    }
+
+    private static string AppraisalStatus(string s)
+    {
+        switch (s)
         {
-            case "RECOMMEND": return "Recommended for renewal";
-            case "RECOMMEND_WITH_CONDITIONS": return "Recommended with conditions";
-            case "NOT_RECOMMENDED": return "Not recommended";
-            default: return r ?? "";
+            case "PENDING": return "Not started";
+            case "EMPLOYEE_IN_PROGRESS": return "In progress";
+            case "EMPLOYEE_SUBMITTED": case "SUPERVISOR_IN_PROGRESS": return "With supervisor";
+            case "COMPLETED": return "Awaiting HR";
+            case "HR_REVIEWED": return "Reviewed by HR";
+            default: return COOPERP_NewScreens_ContractRenewalView.Words(s);
         }
     }
 
-    private static string Dt(object v) { DateTime? d = COOPERP_NewScreens_ContractRenewalView.D(v); return d.HasValue ? d.Value.ToString("d MMM yyyy") : ""; }
-    private static string DtT(object v) { DateTime? d = COOPERP_NewScreens_ContractRenewalView.D(v); return d.HasValue ? d.Value.ToString("d MMM yyyy HH:mm") : ""; }
-    private static string Nl(string s) { return string.IsNullOrEmpty((s ?? "").Trim()) ? "&nbsp;" : HttpUtility.HtmlEncode(s).Replace("\r\n", "\n").Replace("\n", "<br/>"); }
-    private static string Enc(string s) { return HttpUtility.HtmlEncode(s ?? ""); }
+    private static string Actor(string tag)
+    {
+        string s = (tag ?? "").Trim();
+        int p = s.IndexOf(':');
+        return p > 0 && p < 12 ? s.Substring(p + 1) : s;
+    }
+
+    private static string Join(string sep, params string[] parts)
+    {
+        List<string> keep = new List<string>();
+        foreach (string p in parts) if (!string.IsNullOrEmpty((p ?? "").Trim())) keep.Add(p.Trim());
+        return string.Join(sep, keep.ToArray());
+    }
+
+    private static string Range(object from, object to)
+    {
+        string a = Dt(from), b = Dt(to);
+        if (a == "" && b == "") return "";
+        return (a == "" ? "Not recorded" : a) + " to " + (b == "" ? "Not recorded" : b);
+    }
+
+    private static string Words(string s) { return COOPERP_NewScreens_ContractRenewalView.Words(s); }
+    private static DateTime? D(object v) { return COOPERP_NewScreens_ContractRenewalView.D(v); }
+    private static string Dt(object v) { DateTime? d = D(v); return d.HasValue ? d.Value.ToString("d MMM yyyy", CultureInfo.InvariantCulture) : ""; }
+    private static string DtT(object v) { DateTime? d = D(v); return d.HasValue ? d.Value.ToString("d MMM yyyy, HH:mm", CultureInfo.InvariantCulture) : ""; }
     private static string S(object v) { return COOPERP_NewScreens_ContractRenewalView.SafeStr(v); }
     private static int SafeInt(object v) { return COOPERP_NewScreens_ContractRenewalView.SafeInt(v); }
 

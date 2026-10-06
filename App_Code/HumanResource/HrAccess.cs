@@ -89,7 +89,8 @@ public static class HrAccess
         r.Clear();
         if (json)
         {
-            r.StatusCode = signedIn ? 403 : 401;
+            // 403 for both: a 401 makes forms authentication append its login redirect to the JSON
+            r.StatusCode = 403;
             r.ContentType = "application/json";
             r.Write(signedIn
                 ? "{\"success\":false,\"ok\":false,\"message\":\"You do not have access to the HR module.\",\"error\":\"You do not have access to the HR module.\"}"

@@ -1,168 +1,83 @@
-<%@ Page Language="C#" MasterPageFile="~/COOPERP/NewScreens/SidebarMaster.master" AutoEventWireup="true" CodeFile="ContractRenewals.aspx.cs" Inherits="COOPERP_NewScreens_ContractRenewals" Title="Contract Renewals - Campus Dynamics" %>
+<%@ Page Language="C#" MasterPageFile="~/COOPERP/NewScreens/SidebarMaster.master" AutoEventWireup="true" CodeFile="ContractRenewals.aspx.cs" Inherits="COOPERP_NewScreens_ContractRenewals" Title="Contract renewals - Campus Dynamics" %>
 <%@ Reference Page="~/COOPERP/NewScreens/ContractRenewalView.aspx" %>
 
 <asp:Content ID="HeadContent" ContentPlaceHolderID="HeadContent" runat="server">
 <meta name="csrf-token" content="<%= MarksAntiForgeryService.GetToken() %>" />
+<link rel="stylesheet" href="<%= ResolveUrl("~/COOPERP/NewScreens/css/hr.css") %>?v=1" />
 <style>
-/* ===== CONTRACT RENEWALS - HR CONSOLE ===== */
-.cr-page{--navy:#05275C;--navy-h:#041d45;--accent:#174DA4;--surface:#f5f7fa;--border:#e0e5ed;--border-in:#cdd3de;--text:#1a1a2e;--text2:#555;--muted:#888;--danger:#dc3545;--warn:#d97706;--ok:#16a34a;
-    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif;font-size:12px;color:var(--text);padding-bottom:60px;}
-.cr-page *,.cr-page *::before,.cr-page *::after{box-sizing:border-box;}
-.cr-head{display:flex;align-items:center;gap:12px;margin-bottom:12px;flex-wrap:wrap;}
-.cr-head__icon{width:40px;height:40px;background:var(--navy);color:#fff;display:flex;align-items:center;justify-content:center;flex-shrink:0;border-radius:4px;}
-.cr-head__title{font-size:20px;font-weight:700;line-height:1.2;}
-.cr-head__sub{font-size:12px;color:var(--muted);margin-top:2px;}
-.cr-head__actions{margin-left:auto;display:flex;gap:8px;flex-wrap:wrap;}
-.cr-round{background:#fff;border:1px solid var(--border);border-left:3px solid var(--accent);padding:9px 14px;margin-bottom:12px;border-radius:4px;}
-.cr-round__t{font-weight:700;color:var(--navy);}
-.cr-round__m{font-size:11px;color:var(--text2);margin-top:2px;line-height:1.7;}
-.cr-kpis{display:grid;grid-template-columns:repeat(7,minmax(0,1fr));gap:1px;background:var(--border);border:1px solid var(--border);margin-bottom:14px;}
-@media(max-width:1200px){.cr-kpis{grid-template-columns:repeat(4,minmax(0,1fr));}}
-@media(max-width:700px){.cr-kpis{grid-template-columns:repeat(2,minmax(0,1fr));}}
-.cr-kpi{background:#fff;padding:10px 12px;border-left:3px solid var(--navy);text-decoration:none;color:inherit;display:block;min-width:0;}
-a.cr-kpi:hover{background:#f7f9fc;}
-.cr-kpi--red{border-left-color:var(--danger);}.cr-kpi--red .cr-kpi__val{color:var(--danger);}
-.cr-kpi--grey{border-left-color:#9ca3af;}
-.cr-kpi--blue{border-left-color:#5b8bd6;}
-.cr-kpi--accent{border-left-color:var(--accent);}
-.cr-kpi--amber{border-left-color:var(--warn);}
-.cr-kpi--green{border-left-color:var(--ok);}
-.cr-kpi__val{font-size:20px;font-weight:700;line-height:1.15;}
-.cr-kpi__lbl{font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.4px;margin-top:2px;}
-.cr-kpi__sub{font-size:10px;color:var(--text2);margin-top:2px;}
-.cr-tabs{display:flex;gap:2px;background:#f0f2f5;border-bottom:2px solid var(--border);padding:0 10px;margin-bottom:12px;flex-wrap:wrap;}
-.cr-tab{padding:9px 16px;font-size:12px;font-weight:500;color:#555;text-decoration:none;border-bottom:2px solid transparent;margin-bottom:-2px;}
-.cr-tab:hover{color:var(--navy);}
-.cr-tab--active{color:var(--navy);border-bottom-color:var(--navy);font-weight:600;}
-.cr-filters{display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-bottom:12px;}
-.cr-input{font-size:12px;padding:6px 8px;border:1px solid var(--border-in);border-radius:0;background:#fff;color:var(--text);font-family:inherit;max-width:100%;}
-.cr-input:focus{outline:none;border-color:var(--accent);box-shadow:0 0 0 2px rgba(23,77,164,.15);}
-.cr-input--search{min-width:200px;flex:1 1 200px;}
-.cr-inline{display:inline-flex;align-items:center;gap:5px;font-size:12px;color:var(--text2);}
-.cr-card{background:#fff;border:1px solid var(--border);border-radius:4px;margin-bottom:14px;min-width:0;}
-.cr-card__hdr{padding:10px 14px;border-bottom:1px solid var(--border);font-size:11px;font-weight:700;color:var(--text2);text-transform:uppercase;letter-spacing:.4px;background:var(--surface);display:flex;gap:8px;align-items:center;flex-wrap:wrap;}
-.cr-card__hdr-right{margin-left:auto;font-weight:400;text-transform:none;letter-spacing:0;color:var(--muted);display:flex;gap:6px;align-items:center;flex-wrap:wrap;}
-.cr-table-wrap{overflow-x:auto;}
-.cr-table{width:100%;border-collapse:collapse;font-size:12px;}
-.cr-table th{text-align:left;padding:7px 10px;background:var(--surface);border-bottom:1px solid var(--border);color:var(--text2);font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.4px;white-space:nowrap;}
-.cr-table td{padding:7px 10px;border-bottom:1px solid #f0f2f5;vertical-align:top;}
-.cr-table tr:hover td{background:#fafbfd;}
-.cr-cb{width:28px;}
-.cr-num{text-align:right;font-variant-numeric:tabular-nums;}
-.cr-nowrap{white-space:nowrap;}
-.cr-strong{font-weight:600;}
-.cr-muted{color:var(--muted);font-size:11px;}
-.cr-empty{padding:18px;text-align:center;color:var(--muted);font-style:italic;}
-.cr-link{color:var(--accent);text-decoration:none;}
-.cr-link:hover{text-decoration:underline;}
-.cr-code{display:inline-block;font-family:Consolas,monospace;font-size:10px;padding:1px 5px;background:rgba(23,77,164,.07);border:1px solid rgba(23,77,164,.15);color:var(--accent);border-radius:0;font-weight:600;white-space:nowrap;}
-.cr-badge{display:inline-block;font-size:10px;font-weight:600;padding:2px 7px;border-radius:0;text-transform:uppercase;letter-spacing:.3px;white-space:nowrap;}
-.cr-badge--green{background:#e6f4ea;color:#155724;border:1px solid #c3e6cb;}
-.cr-badge--amber{background:#fff8e1;color:#b45309;border:1px solid #fcd34d;}
-.cr-badge--red{background:#fef5f5;color:#dc3545;border:1px solid #f5c6cb;}
-.cr-badge--primary{background:rgba(5,39,92,.08);color:#05275C;border:1px solid rgba(5,39,92,.2);}
-.cr-badge--blue{background:rgba(23,77,164,.08);color:#174DA4;border:1px solid rgba(23,77,164,.2);}
-.cr-badge--accent{background:#174DA4;color:#fff;border:1px solid #174DA4;}
-.cr-badge--grey{background:#f1f3f6;color:#6b7280;border:1px solid #d1d5db;}
-.cr-days{display:inline-block;font-size:10px;font-weight:700;padding:1px 6px;border-radius:0;white-space:nowrap;}
-.cr-days--red{background:#fef5f5;color:#dc3545;border:1px solid #f5c6cb;}
-.cr-days--amber{background:#fff8e1;color:#b45309;border:1px solid #fcd34d;}
-.cr-days--ok{background:#f1f3f6;color:#555;border:1px solid #e0e5ed;}
-.cr-btn{display:inline-flex;align-items:center;gap:5px;padding:6px 12px;font-size:12px;font-weight:600;border:1px solid var(--border-in);background:#fff;color:var(--text2);cursor:pointer;border-radius:0;white-space:nowrap;font-family:inherit;text-decoration:none;}
-.cr-btn:hover{border-color:var(--accent);color:var(--accent);}
-.cr-btn--primary{background:var(--navy);border-color:var(--navy);color:#fff;}
-.cr-btn--primary:hover{background:var(--navy-h);border-color:var(--navy-h);color:#fff;}
-.cr-btn--danger-outline{color:var(--danger);border-color:#f1b0b7;}
-.cr-btn--danger-outline:hover{background:#fff5f5;color:var(--danger);border-color:var(--danger);}
-.cr-btn--sm{padding:3px 8px;font-size:11px;margin-right:3px;}
-.cr-btn:disabled{opacity:.5;cursor:not-allowed;}
-.cr-icon-btn{display:inline-flex;align-items:center;justify-content:center;width:26px;height:26px;border:1px solid var(--border-in);background:#fff;color:#666;border-radius:0;margin-left:2px;}
-.cr-icon-btn:hover{border-color:var(--accent);color:var(--accent);background:#eef3fb;}
-.cr-alert{padding:10px 14px;margin-bottom:12px;font-size:12px;border:1px solid;line-height:1.5;}
-.cr-alert--error{background:#f8d7da;color:#721c24;border-color:#f5c6cb;}
-.cr-alert--warn{background:#fff8e1;color:#7a4a05;border-color:#fcd34d;}
-.cr-alert--info{background:#eef3fb;color:#05275C;border-color:#c5d3e8;}
-.cr-batch{position:fixed;bottom:0;left:0;right:0;background:var(--navy);color:#fff;padding:10px 20px;display:none;align-items:center;gap:12px;z-index:500;border-top:3px solid var(--navy-h);flex-wrap:wrap;}
-.cr-batch.is-on{display:flex;}
-.cr-batch__count{font-size:15px;font-weight:700;}
-.cr-batch__actions{margin-left:auto;display:flex;gap:8px;flex-wrap:wrap;}
-.cr-batch-btn{padding:7px 14px;font-size:11px;font-weight:600;border:none;cursor:pointer;border-radius:0;background:#fff;color:var(--navy);font-family:inherit;}
-.cr-batch-btn--ghost{background:transparent;color:#fff;border:1px solid rgba(255,255,255,.45);}
-.cr-modal-ov{display:none;position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:9999;align-items:center;justify-content:center;padding:16px;}
-.cr-modal-ov.is-open{display:flex;}
-.cr-modal{background:#fff;border-radius:2px;width:560px;max-width:100%;max-height:92vh;overflow-y:auto;box-shadow:0 10px 32px rgba(0,0,0,.2);}
-.cr-modal__hdr{padding:12px 16px;display:flex;align-items:center;background:var(--navy);color:#fff;}
-.cr-modal__hdr h3{margin:0;font-size:14px;font-weight:700;flex:1;}
-.cr-modal__close{background:none;border:none;color:#fff;font-size:20px;cursor:pointer;line-height:1;padding:0 4px;}
-.cr-modal__body{padding:16px;}
-.cr-modal__foot{padding:12px 16px;border-top:1px solid var(--border);display:flex;justify-content:flex-end;gap:8px;flex-wrap:wrap;}
-.cr-field{margin-bottom:12px;}
-.cr-field label{display:block;font-size:10px;font-weight:700;color:var(--text2);text-transform:uppercase;letter-spacing:.4px;margin-bottom:4px;}
-.cr-field input,.cr-field select,.cr-field textarea{font-size:12px;padding:6px 8px;border:1px solid var(--border-in);border-radius:0;background:#fff;color:var(--text);font-family:inherit;width:100%;}
-.cr-field input:focus,.cr-field select:focus,.cr-field textarea:focus{outline:none;border-color:var(--accent);box-shadow:0 0 0 2px rgba(23,77,164,.15);}
-.cr-field textarea{min-height:70px;resize:vertical;}
-.cr-field-row{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:12px;}
-@media(max-width:520px){.cr-field-row{grid-template-columns:minmax(0,1fr);}}
-.cr-hint{font-size:11px;color:var(--muted);margin-top:3px;line-height:1.5;}
-.cr-check{display:flex;align-items:flex-start;gap:8px;padding:7px 9px;border:1px solid var(--border);margin-bottom:8px;cursor:pointer;line-height:1.45;}
-.cr-check--confirm{background:#fff8e1;border-color:#fcd34d;}
-.cr-result{max-height:200px;overflow-y:auto;font-size:11px;border:1px solid var(--border);padding:8px 10px;background:var(--surface);margin-top:8px;display:none;}
-.cr-result.is-on{display:block;}
-.cr-result div{padding:2px 0;}
-.cr-progress{height:6px;background:#eef1f6;margin:10px 0;}
-.cr-progress__bar{height:6px;background:var(--accent);width:0;transition:width .2s;}
-.cr-toast{position:fixed;bottom:70px;right:20px;padding:10px 16px;font-size:12px;font-weight:600;color:#fff;z-index:10000;opacity:0;transition:opacity .25s;pointer-events:none;max-width:420px;}
-.cr-toast.is-on{opacity:1;}
-.cr-toast--ok{background:#16a34a;}
-.cr-toast--err{background:var(--danger);}
-.cr-s-ok{color:#155724;}.cr-s-err{color:#dc3545;}.cr-s-warn{color:#b45309;}
+/* Contract renewals console: page-specific layout only (components come from hr.css) */
+a.hr-subtab { text-decoration: none; display: inline-block; }
+.cr-cb { width: 30px; }
+.cr-nowrap { white-space: nowrap; }
+.cr-checkline { display: flex; align-items: flex-start; gap: 8px; margin: 10px 0 0; font-size: 12px; cursor: pointer; line-height: 1.45; }
+.cr-checkline input { margin: 2px 0 0; accent-color: var(--hr-navy); }
+.cr-result { display: none; max-height: 200px; overflow-y: auto; margin-top: 12px; padding: 8px 10px; border: 1px solid var(--hr-border); background: var(--hr-surface); font-size: 11px; }
+.cr-result.is-on { display: block; }
+.cr-result div { padding: 2px 0; }
+.cr-s-ok { color: var(--hr-ok); } .cr-s-warn { color: var(--hr-warn); } .cr-s-err { color: var(--hr-bad); }
+.hr-modal .hr-field { margin-bottom: 12px; }
+.hr-modal .hr-form .hr-field { margin-bottom: 0; }
+.hr-modal .hr-form { margin-bottom: 12px; }
+.cr-inline { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; height: 32px; cursor: pointer; }
+.cr-inline input { accent-color: var(--hr-navy); margin: 0; }
 </style>
 </asp:Content>
 
 <asp:Content ID="BodyContent" ContentPlaceHolderID="ContentPlaceHolder1" runat="server">
-<div class="cr-page">
+<div class="hr-page cr-page">
+
+<div class="hr-header">
+    <div class="hr-header__left">
+        <div class="hr-header__icon"><svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg></div>
+        <div>
+            <div class="hr-header__title">Contract renewals</div>
+            <div class="hr-header__sub">Applications, expiring contracts and Council rounds</div>
+        </div>
+    </div>
+    <div class="hr-header__actions">
+        <button type="button" class="hr-btn hr-btn--inverse" onclick="openSchedule('print')">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 6 2 18 2 18 9"/><path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"/><rect x="6" y="14" width="12" height="8"/></svg>
+            Council schedule
+        </button>
+        <button type="button" class="hr-btn hr-btn--inverse" onclick="openSchedule('xlsx')">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+            Excel
+        </button>
+        <button type="button" class="hr-btn hr-btn--inverse" onclick="openSchedule('csv')">CSV</button>
+    </div>
+</div>
+<div class="hr-tabs"><a class="hr-tab" href="HRDashboard.aspx">Overview</a><a class="hr-tab" href="HREmployees.aspx">Employees</a><a class="hr-tab" href="HRContracts.aspx">Contracts</a><a class="hr-tab hr-tab--active" href="ContractRenewals.aspx">Renewals</a><a class="hr-tab" href="LeaveApplications.aspx">Leave applications</a><a class="hr-tab" href="HRLeaveManagement.aspx">Leave balances</a></div>
+
 <asp:Literal ID="litError" runat="server" />
 
 <asp:Panel ID="pnlMain" runat="server">
 <asp:HiddenField ID="hfDefaultSitting" runat="server" Value="" />
 
-<div class="cr-head">
-    <div class="cr-head__icon">
-        <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>
-    </div>
-    <div>
-        <div class="cr-head__title">Contract Renewals</div>
-        <div class="cr-head__sub">Applications for contract renewal: supervisor recommendation, HR verification, Governance Council decision and the new contract</div>
-    </div>
-    <div class="cr-head__actions">
-        <a href="HRContracts.aspx" class="cr-btn">Contracts</a>
-        <button type="button" class="cr-btn" onclick="openSchedule('print')">
-            <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 6 2 18 2 18 9"/><path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"/><rect x="6" y="14" width="12" height="8"/></svg>
-            Council schedule
-        </button>
-        <button type="button" class="cr-btn" onclick="openSchedule('csv')">
-            <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
-            CSV
-        </button>
-    </div>
-</div>
-
 <asp:Literal ID="litRoundBanner" runat="server" />
-<div class="cr-kpis"><asp:Literal ID="litKpis" runat="server" /></div>
-<div class="cr-tabs"><asp:Literal ID="litTabs" runat="server" /></div>
+<div class="hr-kpis"><asp:Literal ID="litKpis" runat="server" /></div>
+<div class="hr-subtabs"><asp:Literal ID="litTabs" runat="server" /></div>
 
-<!-- ═══ APPLICATIONS ═══ -->
+<!-- Applications -->
 <asp:Panel ID="pnlApps" runat="server">
-    <div class="cr-filters"><asp:Literal ID="litFilters" runat="server" /></div>
-    <div class="cr-card">
-        <div class="cr-card__hdr">Applications
-            <span class="cr-card__hdr-right"><asp:Literal ID="litAppsCount" runat="server" /> &middot; tick rows with HR or at Council for bulk actions</span>
+    <div class="hr-filters"><asp:Literal ID="litFilters" runat="server" /></div>
+    <div class="hr-card">
+        <div class="hr-card__head">
+            <span class="hr-card__title">Applications</span>
+            <span class="hr-card__meta"><asp:Literal ID="litAppsCount" runat="server" /></span>
         </div>
-        <div class="cr-table-wrap">
-            <table class="cr-table">
+        <div class="hr-bulk" id="batchBar">
+            <strong id="batchCount">0</strong><span>selected</span>
+            <span class="hr-spacer"></span>
+            <button type="button" class="hr-btn hr-btn--inverse hr-btn--sm" onclick="openBulkForward()">Forward to Council</button>
+            <button type="button" class="hr-btn hr-btn--inverse hr-btn--sm" onclick="openBulkDecision()">Record Council decision</button>
+            <button type="button" class="hr-btn hr-btn--inverse hr-btn--sm" onclick="openSchedule('print', true)">Schedule for selected</button>
+            <button type="button" class="hr-btn hr-btn--inverse hr-btn--sm" onclick="clearSel()">Clear</button>
+        </div>
+        <div class="hr-table-wrap">
+            <table class="hr-table">
                 <thead><tr>
-                    <th class="cr-cb"><input type="checkbox" id="cbAll" onchange="toggleAll(this)" title="Select all selectable rows" /></th>
-                    <th>Ref</th><th>Employee</th><th>Position / Department</th><th>Contract end</th><th>Status</th>
+                    <th class="cr-cb"><input type="checkbox" id="cbAll" onchange="toggleAll(this)" title="Select all" /></th>
+                    <th>Ref</th><th>Employee</th><th>Position</th><th>Contract ends</th><th>Status</th>
                     <th>Supervisor</th><th>Submitted</th><th>Late</th><th></th>
                 </tr></thead>
                 <tbody><asp:Literal ID="litApps" runat="server" /></tbody>
@@ -171,18 +86,25 @@ a.cr-kpi:hover{background:#f7f9fc;}
     </div>
 </asp:Panel>
 
-<!-- ═══ EXPIRING CONTRACTS ═══ -->
+<!-- Expiring contracts -->
 <asp:Panel ID="pnlExpiring" runat="server">
-    <div class="cr-filters"><asp:Literal ID="litExpFilters" runat="server" /></div>
-    <div class="cr-card">
-        <div class="cr-card__hdr">Expiring contracts
-            <span class="cr-card__hdr-right"><asp:Literal ID="litExpCount" runat="server" /></span>
+    <div class="hr-filters"><asp:Literal ID="litExpFilters" runat="server" /></div>
+    <div class="hr-card">
+        <div class="hr-card__head">
+            <span class="hr-card__title">Expiring contracts</span>
+            <span class="hr-card__meta"><asp:Literal ID="litExpCount" runat="server" /></span>
         </div>
-        <div class="cr-table-wrap">
-            <table class="cr-table">
+        <div class="hr-bulk" id="expBar">
+            <strong id="expCount">0</strong><span>selected</span>
+            <span class="hr-spacer"></span>
+            <button type="button" class="hr-btn hr-btn--inverse hr-btn--sm" onclick="openReminders()">Send reminder email</button>
+            <button type="button" class="hr-btn hr-btn--inverse hr-btn--sm" onclick="clearExpSel()">Clear</button>
+        </div>
+        <div class="hr-table-wrap">
+            <table class="hr-table">
                 <thead><tr>
                     <th class="cr-cb"><input type="checkbox" id="cbExpAll" onchange="toggleExpAll(this)" title="Select all with an email address" /></th>
-                    <th>Employee</th><th>Position / Department</th><th>Current contract</th><th>Ends</th><th>Application</th><th>Email</th><th>Last reminder</th>
+                    <th>Employee</th><th>Position</th><th>Current contract</th><th>Ends</th><th>Application</th><th>Email</th><th>Last reminder</th>
                 </tr></thead>
                 <tbody><asp:Literal ID="litExpiring" runat="server" /></tbody>
             </table>
@@ -190,145 +112,123 @@ a.cr-kpi:hover{background:#f7f9fc;}
     </div>
 </asp:Panel>
 
-<!-- ═══ ROUNDS ═══ -->
+<!-- Rounds -->
 <asp:Panel ID="pnlRounds" runat="server">
-    <div class="cr-filters">
-        <button type="button" class="cr-btn cr-btn--primary" onclick="addRound()">
-            <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
-            New round
-        </button>
-        <span class="cr-hint">A round ties applications to a Governance Council sitting and a submission deadline. Staff apply under the open round.</span>
-    </div>
-    <div class="cr-card">
-        <div class="cr-card__hdr">Renewal rounds</div>
-        <div class="cr-table-wrap">
-            <table class="cr-table">
-                <thead><tr><th>Round</th><th>Council sitting</th><th>Deadline</th><th>Contracts ending by</th><th>Status</th><th class="cr-num">Applications</th><th class="cr-num">Forwarded</th><th></th></tr></thead>
+    <div class="hr-card">
+        <div class="hr-card__head">
+            <span class="hr-card__title">Renewal rounds</span>
+            <button type="button" class="hr-btn hr-btn--primary hr-btn--sm" onclick="addRound()">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+                New round
+            </button>
+        </div>
+        <div class="hr-table-wrap">
+            <table class="hr-table">
+                <thead><tr><th>Round</th><th>Council sitting</th><th>Deadline</th><th>Contracts ending by</th><th>Status</th><th class="hr-num">Applications</th><th class="hr-num">At Council</th><th></th></tr></thead>
                 <tbody><asp:Literal ID="litRounds" runat="server" /></tbody>
             </table>
         </div>
     </div>
 </asp:Panel>
 
-<!-- Batch bar: applications -->
-<div class="cr-batch" id="batchBar">
-    <span class="cr-batch__count" id="batchCount">0</span><span>selected</span>
-    <div class="cr-batch__actions">
-        <button type="button" class="cr-batch-btn" onclick="openBulkForward()">Forward to Council</button>
-        <button type="button" class="cr-batch-btn" onclick="openBulkDecision()">Record Council decision</button>
-        <button type="button" class="cr-batch-btn" onclick="openSchedule('print', true)">Schedule (selected)</button>
-        <button type="button" class="cr-batch-btn cr-batch-btn--ghost" onclick="clearSel()">Clear</button>
-    </div>
-</div>
-<!-- Batch bar: expiring -->
-<div class="cr-batch" id="expBar">
-    <span class="cr-batch__count" id="expCount">0</span><span>employee(s) selected</span>
-    <div class="cr-batch__actions">
-        <button type="button" class="cr-batch-btn" onclick="openReminders()">Send reminder email</button>
-        <button type="button" class="cr-batch-btn cr-batch-btn--ghost" onclick="clearExpSel()">Clear</button>
-    </div>
-</div>
-
 <!-- Bulk forward -->
-<div class="cr-modal-ov" id="fwdModal">
-    <div class="cr-modal">
-        <div class="cr-modal__hdr"><h3>Forward to Governance Council</h3><button type="button" class="cr-modal__close" onclick="closeModal('fwdModal')">&times;</button></div>
-        <div class="cr-modal__body">
-            <div class="cr-alert cr-alert--info">Only applications with HR (<strong>With HR</strong>) are forwarded; others are skipped and listed. The checklist is filled from what the system finds (letters, form, appraisal, supervisor recommendation).</div>
-            <div class="cr-field"><label for="fwdSitting">Council sitting</label><input type="text" id="fwdSitting" maxlength="100" placeholder="Leave blank to use each application's round" /></div>
-            <div class="cr-field"><label for="fwdComments">HR remarks (added to every forwarded application)</label><textarea id="fwdComments"></textarea></div>
-            <label class="cr-check"><input type="checkbox" id="fwdOnlyComplete" checked /> <span>Forward only applications whose automatic checks all pass (others are skipped so they can be checked one by one)</span></label>
-            <label class="cr-check cr-check--confirm"><input type="checkbox" id="fwdContractOk" /> <span>I have verified the current contract details of the selected applications.</span></label>
+<div class="hr-modal" id="fwdModal">
+    <div class="hr-modal__box">
+        <div class="hr-modal__head"><span>Forward to the Governance Council</span><button type="button" class="hr-modal__close" title="Close" onclick="closeModal('fwdModal')"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button></div>
+        <div class="hr-modal__body">
+            <div class="hr-hint" style="margin-bottom:12px;">Only applications with HR are forwarded. Others are skipped.</div>
+            <div class="hr-field"><label class="hr-label" for="fwdSitting">Council sitting</label><input type="text" id="fwdSitting" class="hr-input" maxlength="100" /></div>
+            <div class="hr-field"><label class="hr-label" for="fwdComments">HR remarks</label><textarea id="fwdComments" class="hr-textarea"></textarea><span class="hr-hint">Added to every forwarded application.</span></div>
+            <label class="cr-checkline"><input type="checkbox" id="fwdOnlyComplete" checked /> <span>Forward only applications that pass all automatic checks</span></label>
+            <label class="cr-checkline"><input type="checkbox" id="fwdContractOk" /> <span>I have verified the current contract details of the selected applications</span></label>
             <div class="cr-result" id="fwdResult"></div>
         </div>
-        <div class="cr-modal__foot">
-            <button type="button" class="cr-btn" onclick="closeModal('fwdModal')">Close</button>
-            <button type="button" class="cr-btn cr-btn--primary" id="btnFwd" onclick="bulkForward()">Forward</button>
+        <div class="hr-modal__foot">
+            <button type="button" class="hr-btn hr-btn--secondary" onclick="closeModal('fwdModal')">Close</button>
+            <button type="button" class="hr-btn hr-btn--primary" id="btnFwd" onclick="bulkForward()">Forward</button>
         </div>
     </div>
 </div>
 
 <!-- Bulk decision -->
-<div class="cr-modal-ov" id="decModal">
-    <div class="cr-modal">
-        <div class="cr-modal__hdr"><h3>Record Council decision</h3><button type="button" class="cr-modal__close" onclick="closeModal('decModal')">&times;</button></div>
-        <div class="cr-modal__body">
-            <div class="cr-alert cr-alert--info">Applies to the selected applications that are <strong>Forwarded to Council</strong>. Each employee is emailed the outcome.</div>
-            <div class="cr-field">
-                <label for="bdDecision">Decision *</label>
-                <select id="bdDecision" onchange="bdChanged()">
-                    <option value="APPROVED">Approved - renew</option>
+<div class="hr-modal" id="decModal">
+    <div class="hr-modal__box">
+        <div class="hr-modal__head"><span>Record Council decision</span><button type="button" class="hr-modal__close" title="Close" onclick="closeModal('decModal')"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button></div>
+        <div class="hr-modal__body">
+            <div class="hr-hint" style="margin-bottom:12px;">Applies to the selected applications at Council. Each employee is emailed the outcome.</div>
+            <div class="hr-field">
+                <label class="hr-label" for="bdDecision">Decision <span class="hr-req">*</span></label>
+                <select id="bdDecision" class="hr-select" onchange="bdChanged()">
+                    <option value="APPROVED">Approved</option>
                     <option value="NOT_APPROVED">Not approved</option>
                     <option value="DEFERRED">Deferred</option>
                 </select>
             </div>
             <div id="bdApproved">
-                <div class="cr-field-row">
-                    <div class="cr-field">
-                        <label for="bdTermMode">Term</label>
-                        <select id="bdTermMode" onchange="bdChanged()">
+                <div class="hr-form">
+                    <div class="hr-field">
+                        <label class="hr-label" for="bdTermMode">Term</label>
+                        <select id="bdTermMode" class="hr-select" onchange="bdChanged()">
                             <option value="requested">Each applicant's requested term</option>
                             <option value="fixed">The same term for all</option>
                         </select>
                     </div>
-                    <div class="cr-field" id="bdTermBox"><label for="bdTerm">Months</label><input type="number" id="bdTerm" min="1" max="120" value="24" /></div>
+                    <div class="hr-field" id="bdTermBox"><label class="hr-label" for="bdTerm">Months</label><input type="number" id="bdTerm" class="hr-input" min="1" max="120" value="24" /></div>
+                    <div class="hr-full hr-hint">New contracts start the day after the current contract ends.</div>
                 </div>
-                <div class="cr-hint" style="margin-top:-6px;margin-bottom:10px;">Each new contract starts the day after the current one ends. Edit individual dates on the application if needed.</div>
             </div>
-            <div class="cr-field"><label for="bdNotes">Council notes <span id="bdNotesReq">(required unless approved)</span></label><textarea id="bdNotes"></textarea></div>
+            <div class="hr-field"><label class="hr-label" for="bdNotes">Council notes</label><textarea id="bdNotes" class="hr-textarea"></textarea><span class="hr-hint" id="bdNotesReq">Required unless approved.</span></div>
             <div class="cr-result" id="decResult"></div>
         </div>
-        <div class="cr-modal__foot">
-            <button type="button" class="cr-btn" onclick="closeModal('decModal')">Close</button>
-            <button type="button" class="cr-btn cr-btn--primary" id="btnBd" onclick="bulkDecision()">Record decision</button>
+        <div class="hr-modal__foot">
+            <button type="button" class="hr-btn hr-btn--secondary" onclick="closeModal('decModal')">Close</button>
+            <button type="button" class="hr-btn hr-btn--primary" id="btnBd" onclick="bulkDecision()">Record decision</button>
         </div>
     </div>
 </div>
 
 <!-- Reminders -->
-<div class="cr-modal-ov" id="remModal">
-    <div class="cr-modal">
-        <div class="cr-modal__hdr"><h3>Send reminder email</h3><button type="button" class="cr-modal__close" onclick="closeModal('remModal')">&times;</button></div>
-        <div class="cr-modal__body">
-            <div class="cr-alert cr-alert--info">Each selected employee is emailed that their contract is ending and asked to apply in the staff portal (My Contracts) before the round deadline, with the list of required documents. Every send is logged.</div>
-            <div id="remSummary" class="cr-hint"></div>
-            <div class="cr-progress"><div class="cr-progress__bar" id="remBar"></div></div>
+<div class="hr-modal" id="remModal">
+    <div class="hr-modal__box">
+        <div class="hr-modal__head"><span>Send reminder email</span><button type="button" class="hr-modal__close" title="Close" onclick="closeReminders()"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button></div>
+        <div class="hr-modal__body">
+            <div class="hr-hint" style="margin-bottom:10px;">Each employee is asked to apply in the staff portal before the round deadline.</div>
+            <div id="remSummary" style="margin-bottom:10px;"></div>
+            <span class="hr-bar"><span id="remBar" style="width:0;"></span></span>
             <div class="cr-result" id="remResult"></div>
         </div>
-        <div class="cr-modal__foot">
-            <button type="button" class="cr-btn" id="btnRemClose" onclick="closeReminders()">Close</button>
-            <button type="button" class="cr-btn cr-btn--primary" id="btnRem" onclick="sendReminders()">Send</button>
+        <div class="hr-modal__foot">
+            <button type="button" class="hr-btn hr-btn--secondary" id="btnRemClose" onclick="closeReminders()">Close</button>
+            <button type="button" class="hr-btn hr-btn--primary" id="btnRem" onclick="sendReminders()">Send</button>
         </div>
     </div>
 </div>
 
 <!-- Round -->
-<div class="cr-modal-ov" id="roundModal">
-    <div class="cr-modal">
-        <div class="cr-modal__hdr"><h3 id="roundTitle">New round</h3><button type="button" class="cr-modal__close" onclick="closeModal('roundModal')">&times;</button></div>
-        <div class="cr-modal__body">
+<div class="hr-modal" id="roundModal">
+    <div class="hr-modal__box">
+        <div class="hr-modal__head"><span id="roundTitle">New round</span><button type="button" class="hr-modal__close" title="Close" onclick="closeModal('roundModal')"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button></div>
+        <div class="hr-modal__body">
             <input type="hidden" id="rdId" value="0" />
-            <div class="cr-field"><label for="rdTitle">Title *</label><input type="text" id="rdTitle" maxlength="200" placeholder="e.g. Contract Renewal - November 2026 Governance Council" /></div>
-            <div class="cr-field-row">
-                <div class="cr-field"><label for="rdSitting">Council sitting</label><input type="text" id="rdSitting" maxlength="100" placeholder="e.g. November 2026" /></div>
-                <div class="cr-field"><label for="rdCDate">Council date</label><input type="date" id="rdCDate" /></div>
+            <div class="hr-form">
+                <div class="hr-field hr-full"><label class="hr-label" for="rdTitle">Title <span class="hr-req">*</span></label><input type="text" id="rdTitle" class="hr-input" maxlength="200" placeholder="e.g. Contract renewal, November 2026 Council" /></div>
+                <div class="hr-field"><label class="hr-label" for="rdSitting">Council sitting</label><input type="text" id="rdSitting" class="hr-input" maxlength="100" placeholder="e.g. November 2026" /></div>
+                <div class="hr-field"><label class="hr-label" for="rdCDate">Council date</label><input type="date" id="rdCDate" class="hr-input" /></div>
+                <div class="hr-field"><label class="hr-label" for="rdDeadline">Submission deadline <span class="hr-req">*</span></label><input type="date" id="rdDeadline" class="hr-input" /></div>
+                <div class="hr-field"><label class="hr-label" for="rdEligible">Contracts ending on or before <span class="hr-req">*</span></label><input type="date" id="rdEligible" class="hr-input" /></div>
+                <div class="hr-field"><label class="hr-label" for="rdStatus">Status</label><select id="rdStatus" class="hr-select"><option value="OPEN">Open</option><option value="CLOSED">Closed</option></select></div>
+                <div class="hr-field hr-full"><label class="hr-label" for="rdNotes">Notes</label><textarea id="rdNotes" class="hr-textarea"></textarea></div>
             </div>
-            <div class="cr-field-row">
-                <div class="cr-field"><label for="rdDeadline">Submission deadline *</label><input type="date" id="rdDeadline" /></div>
-                <div class="cr-field"><label for="rdEligible">Contracts ending on or before *</label><input type="date" id="rdEligible" /></div>
-            </div>
-            <div class="cr-field"><label for="rdStatus">Status</label><select id="rdStatus"><option value="OPEN">Open</option><option value="CLOSED">Closed</option></select></div>
-            <div class="cr-field"><label for="rdNotes">Notes</label><textarea id="rdNotes"></textarea></div>
         </div>
-        <div class="cr-modal__foot">
-            <button type="button" class="cr-btn" onclick="closeModal('roundModal')">Cancel</button>
-            <button type="button" class="cr-btn cr-btn--primary" id="btnRound" onclick="saveRound()">Save round</button>
+        <div class="hr-modal__foot">
+            <button type="button" class="hr-btn hr-btn--secondary" onclick="closeModal('roundModal')">Cancel</button>
+            <button type="button" class="hr-btn hr-btn--primary" id="btnRound" onclick="saveRound()">Save round</button>
         </div>
     </div>
 </div>
 </asp:Panel>
 
-<div class="cr-toast" id="crToast"></div>
+<div class="hr-toast" id="crToast"></div>
 </div>
 
 <script type="text/javascript">
@@ -342,10 +242,12 @@ document.addEventListener('keydown', function (e) {
     }
 });
 
+var DECISION_LABELS = { APPROVED: 'Approved', NOT_APPROVED: 'Not approved', DEFERRED: 'Deferred' };
+
 function toast(msg, ok) {
     var t = document.getElementById('crToast');
     t.textContent = msg || '';
-    t.className = 'cr-toast cr-toast--' + (ok ? 'ok' : 'err') + ' is-on';
+    t.className = 'hr-toast' + (ok ? '' : ' hr-toast--err') + ' is-on';
     clearTimeout(t._h);
     t._h = setTimeout(function () { t.classList.remove('is-on'); }, ok ? 4000 : 7000);
 }
@@ -365,7 +267,8 @@ function post(url, fields, cb) {
     xhr.onreadystatechange = function () {
         if (xhr.readyState !== 4) return;
         var res;
-        try { res = JSON.parse(xhr.responseText); } catch (e) { res = { ok: false, msg: 'Server error (HTTP ' + xhr.status + ')' }; }
+        try { res = JSON.parse(xhr.responseText); } catch (e) { res = { ok: false, msg: 'The server did not respond. Reload the page and try again.' }; }
+        if (res && res.msg == null && res.message) res.msg = res.message;
         cb(res);
     };
     xhr.send(fd);
@@ -376,7 +279,7 @@ function go(params) {
     window.location.href = 'ContractRenewals.aspx' + (parts.length ? '?' + parts.join('&') : '');
 }
 
-/* ── applications filters ── */
+/* applications filters */
 function applyFilters() {
     go({ round: val('fRound'), status: val('fStatus'), cat: val('fCat'), dept: val('fDept'), late: val('fLate'), q: val('fQ') });
 }
@@ -385,7 +288,7 @@ function applyExpFilters() {
     go({ tab: 'expiring', win: val('xWin'), round: val('xRound'), dept: val('xDept'), noapp: na && na.checked ? '1' : '', q: val('xQ') });
 }
 
-/* ── selection (applications) ── */
+/* selection (applications) */
 function selected() {
     var cbs = document.querySelectorAll('.cr-row-cb:checked'), ids = [];
     for (var i = 0; i < cbs.length; i++) ids.push(cbs[i].value);
@@ -414,19 +317,20 @@ function showResult(boxId, res) {
     box.classList.add('is-on');
 }
 
-/* ── bulk forward ── */
+/* bulk forward */
 function openBulkForward() {
-    if (countStatus('AWAITING_HR') === 0) { toast('None of the selected applications is with HR', false); return; }
+    if (countStatus('AWAITING_HR') === 0) { toast('None of the selected applications is with HR.', false); return; }
+    var def = val('<%= hfDefaultSitting.ClientID %>');
     document.getElementById('fwdSitting').value = '';
-    document.getElementById('fwdSitting').placeholder = 'Leave blank to use each round' + (val('<%= hfDefaultSitting.ClientID %>') ? ' (e.g. ' + val('<%= hfDefaultSitting.ClientID %>') + ')' : '');
+    document.getElementById('fwdSitting').placeholder = def ? 'Blank uses each round, e.g. ' + def : 'Blank uses each round';
     document.getElementById('fwdResult').classList.remove('is-on');
     document.getElementById('btnFwd').disabled = false;
     openModal('fwdModal');
 }
 function bulkForward() {
-    if (!document.getElementById('fwdContractOk').checked) { toast('Confirm that you have verified the contract details', false); return; }
+    if (!document.getElementById('fwdContractOk').checked) { toast('Confirm that you have verified the contract details.', false); return; }
     var ids = selected();
-    if (!confirm('Forward ' + countStatus('AWAITING_HR') + ' application(s) with HR to the Governance Council?')) return;
+    if (!confirm('Forward ' + countStatus('AWAITING_HR') + ' application(s) to the Governance Council?')) return;
     var btn = document.getElementById('btnFwd'); btn.disabled = true;
     post('ContractRenewalView.aspx?ajax=bulk_forward', {
         ids: ids.join(','), council_sitting: val('fwdSitting'), hr_comments: val('fwdComments'),
@@ -439,7 +343,7 @@ function bulkForward() {
     });
 }
 
-/* ── bulk decision ── */
+/* bulk decision */
 function bdChanged() {
     var ap = val('bdDecision') === 'APPROVED';
     document.getElementById('bdApproved').style.display = ap ? '' : 'none';
@@ -447,7 +351,7 @@ function bdChanged() {
     document.getElementById('bdTermBox').style.visibility = val('bdTermMode') === 'fixed' ? 'visible' : 'hidden';
 }
 function openBulkDecision() {
-    if (countStatus('FORWARDED') === 0) { toast('None of the selected applications is forwarded to Council', false); return; }
+    if (countStatus('FORWARDED') === 0) { toast('None of the selected applications is at Council.', false); return; }
     document.getElementById('decResult').classList.remove('is-on');
     document.getElementById('btnBd').disabled = false;
     bdChanged();
@@ -455,9 +359,9 @@ function openBulkDecision() {
 }
 function bulkDecision() {
     var d = val('bdDecision'), notes = val('bdNotes');
-    if (d !== 'APPROVED' && !notes) { toast('Add the Council notes for this decision', false); return; }
-    if (d === 'APPROVED' && val('bdTermMode') === 'fixed' && !(parseInt(val('bdTerm'), 10) > 0)) { toast('Enter the term in months', false); return; }
-    if (!confirm('Record "' + d.replace('_', ' ') + '" for ' + countStatus('FORWARDED') + ' forwarded application(s) and email the employees?')) return;
+    if (d !== 'APPROVED' && !notes) { toast('Add the Council notes for this decision.', false); return; }
+    if (d === 'APPROVED' && val('bdTermMode') === 'fixed' && !(parseInt(val('bdTerm'), 10) > 0)) { toast('Enter the term in months.', false); return; }
+    if (!confirm('Record "' + DECISION_LABELS[d] + '" for ' + countStatus('FORWARDED') + ' application(s) at Council and email the employees?')) return;
     var btn = document.getElementById('btnBd'); btn.disabled = true;
     post('ContractRenewalView.aspx?ajax=bulk_decision', {
         ids: selected().join(','), decision: d, notes: notes, term_mode: val('bdTermMode'), term_months: val('bdTerm')
@@ -469,16 +373,16 @@ function bulkDecision() {
     });
 }
 
-/* ── Council schedule ── */
+/* Council schedule: print, Excel or CSV (same columns) */
 function openSchedule(kind, onlySelected) {
     var ids = onlySelected ? selected() : [];
     var round = qs('round');
     var q = ids.length ? 'ids=' + ids.join(',') : ('status=FORWARDED' + (round ? '&round=' + round : ''));
-    if (kind === 'csv') window.location.href = 'ContractRenewals.aspx?ajax=schedule_csv&' + q;
+    if (kind === 'csv' || kind === 'xlsx') window.location.href = 'ContractRenewals.aspx?ajax=schedule_' + kind + '&' + q;
     else window.open('ContractRenewalPrint.aspx?schedule=1&' + q, '_blank');
 }
 
-/* ── expiring: reminders ── */
+/* expiring: reminders */
 function expSelected() {
     var cbs = document.querySelectorAll('.cr-exp-cb:checked'), out = [];
     for (var i = 0; i < cbs.length; i++) out.push({ id: cbs[i].value, name: cbs[i].getAttribute('data-name') });
@@ -522,7 +426,7 @@ function sendReminders() {
     function next() {
         if (!REM_RUNNING || i >= sel.length) {
             REM_RUNNING = false;
-            box.insertAdjacentHTML('afterbegin', '<div><strong>Done: ' + sent + ' of ' + sel.length + ' sent.</strong></div>');
+            box.insertAdjacentHTML('afterbegin', '<div><strong>' + sent + ' of ' + sel.length + ' sent.</strong></div>');
             return;
         }
         var s = sel[i];
@@ -531,7 +435,7 @@ function sendReminders() {
             if (res.ok) {
                 sent++;
                 var cell = document.getElementById('rem_' + s.id);
-                if (cell) cell.textContent = 'just now';
+                if (cell) cell.textContent = 'Just now';
             }
             box.insertAdjacentHTML('beforeend', '<div class="' + (res.ok ? 'cr-s-ok' : (res.status === 'NO_EMAIL' ? 'cr-s-warn' : 'cr-s-err')) + '">' + esc(s.name) + ': ' + esc(res.msg) + '</div>');
             bar.style.width = Math.round(i * 100 / sel.length) + '%';
@@ -541,7 +445,7 @@ function sendReminders() {
     next();
 }
 
-/* ── rounds ── */
+/* rounds */
 function addRound() {
     document.getElementById('roundTitle').textContent = 'New round';
     document.getElementById('rdId').value = '0';
@@ -563,8 +467,8 @@ function editRound(btn) {
     openModal('roundModal');
 }
 function saveRound() {
-    if (!val('rdTitle')) { toast('Title is required', false); return; }
-    if (!val('rdDeadline') || !val('rdEligible')) { toast('Deadline and "contracts ending on or before" are required', false); return; }
+    if (!val('rdTitle')) { toast('Enter a title for the round.', false); return; }
+    if (!val('rdDeadline') || !val('rdEligible')) { toast('Enter the submission deadline and the contract end date limit.', false); return; }
     var btn = document.getElementById('btnRound'); btn.disabled = true;
     post('ContractRenewals.aspx?ajax=save_round', {
         round_id: val('rdId'), title: val('rdTitle'), council_sitting: val('rdSitting'), council_date: val('rdCDate'),
@@ -575,7 +479,7 @@ function saveRound() {
     });
 }
 function closeRound(id) {
-    if (!confirm('Close this round? Staff will no longer be able to apply under it. Existing applications are not affected.')) return;
+    if (!confirm('Close this round? Staff will no longer be able to apply under it.')) return;
     post('ContractRenewals.aspx?ajax=close_round', { round_id: id }, function (res) {
         toast(res.msg, res.ok);
         if (res.ok) setTimeout(function () { window.location.href = 'ContractRenewals.aspx?tab=rounds'; }, 700);

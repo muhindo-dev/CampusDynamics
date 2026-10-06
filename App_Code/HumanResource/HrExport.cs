@@ -167,6 +167,12 @@ public static class HrExport
     private static string CsvCell(string s)
     {
         s = s ?? "";
+        // Free text starting with = + - @ would run as a formula in Excel
+        if (s.Length > 0 && "=+-@".IndexOf(s[0]) >= 0)
+        {
+            double probe;
+            if (!double.TryParse(s, NumberStyles.Any, CultureInfo.InvariantCulture, out probe)) s = "'" + s;
+        }
         if (s.IndexOfAny(new[] { ',', '"', '\r', '\n' }) >= 0) return "\"" + s.Replace("\"", "\"\"") + "\"";
         return s;
     }

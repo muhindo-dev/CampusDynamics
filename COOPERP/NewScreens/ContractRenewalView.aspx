@@ -1,116 +1,63 @@
-<%@ Page Language="C#" MasterPageFile="~/COOPERP/NewScreens/SidebarMaster.master" AutoEventWireup="true" CodeFile="ContractRenewalView.aspx.cs" Inherits="COOPERP_NewScreens_ContractRenewalView" Title="Contract Renewal - Campus Dynamics" %>
+<%@ Page Language="C#" MasterPageFile="~/COOPERP/NewScreens/SidebarMaster.master" AutoEventWireup="true" CodeFile="ContractRenewalView.aspx.cs" Inherits="COOPERP_NewScreens_ContractRenewalView" Title="Contract renewal - Campus Dynamics" %>
 
 <asp:Content ID="HeadContent" ContentPlaceHolderID="HeadContent" runat="server">
 <meta name="csrf-token" content="<%= MarksAntiForgeryService.GetToken() %>" />
+<link rel="stylesheet" href="<%= ResolveUrl("~/COOPERP/NewScreens/css/hr.css") %>?v=1" />
 <style>
-/* ===== CONTRACT RENEWAL - APPLICATION ===== */
-.cr-page{--navy:#05275C;--navy-h:#041d45;--accent:#174DA4;--surface:#f5f7fa;--border:#e0e5ed;--border-in:#cdd3de;--text:#1a1a2e;--text2:#555;--muted:#888;--danger:#dc3545;--warn:#d97706;--ok:#16a34a;
-    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif;font-size:12px;color:var(--text);}
-.cr-page *,.cr-page *::before,.cr-page *::after{box-sizing:border-box;}
-.cr-head{display:flex;align-items:flex-start;gap:12px;margin-bottom:14px;flex-wrap:wrap;}
-.cr-head__icon{width:40px;height:40px;background:var(--navy);color:#fff;display:flex;align-items:center;justify-content:center;flex-shrink:0;border-radius:4px;}
-.cr-head__text{min-width:0;flex:1 1 260px;}
-.cr-head__title{font-size:19px;font-weight:700;line-height:1.25;display:flex;flex-wrap:wrap;gap:8px;align-items:center;}
-.cr-head__sub{font-size:12px;color:var(--muted);margin-top:3px;}
-.cr-head__actions{display:flex;gap:8px;flex-wrap:wrap;}
-.cr-actionbar{display:flex;gap:8px;flex-wrap:wrap;align-items:center;background:#fff;border:1px solid var(--border);border-left:3px solid var(--accent);padding:10px 14px;margin-bottom:14px;border-radius:4px;}
-.cr-actionbar__lbl{font-size:10px;font-weight:700;color:var(--text2);text-transform:uppercase;letter-spacing:.4px;margin-right:6px;}
-.cr-grid{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:14px;}
-@media(max-width:900px){.cr-grid{grid-template-columns:minmax(0,1fr);}}
-.cr-card{background:#fff;border:1px solid var(--border);border-radius:4px;margin-bottom:14px;min-width:0;}
-.cr-card__hdr{padding:10px 14px;border-bottom:1px solid var(--border);font-size:11px;font-weight:700;color:var(--text2);text-transform:uppercase;letter-spacing:.4px;background:var(--surface);display:flex;gap:8px;align-items:center;}
-.cr-card__hdr-right{margin-left:auto;font-weight:400;text-transform:none;letter-spacing:0;color:var(--muted);}
-.cr-card__body{padding:12px 14px;}
-.cr-dl{display:grid;grid-template-columns:140px minmax(0,1fr);gap:6px 12px;margin:0;}
-.cr-dl dt{font-size:10px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.3px;padding-top:2px;}
-.cr-dl dd{margin:0;word-break:break-word;}
-@media(max-width:520px){.cr-dl{grid-template-columns:minmax(0,1fr);}.cr-dl dd{margin-bottom:6px;}}
-.cr-para{margin-top:12px;}
-.cr-para__lbl{font-size:10px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.3px;margin-bottom:3px;}
-.cr-para__txt{line-height:1.55;background:var(--surface);border:1px solid var(--border);padding:8px 10px;}
-.cr-table-wrap{overflow-x:auto;}
-.cr-table{width:100%;border-collapse:collapse;font-size:12px;}
-.cr-table th{text-align:left;padding:7px 10px;background:var(--surface);border-bottom:1px solid var(--border);color:var(--text2);font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.4px;white-space:nowrap;}
-.cr-table td{padding:7px 10px;border-bottom:1px solid #f0f2f5;vertical-align:top;line-height:1.45;}
-.cr-num{text-align:right;width:40px;color:var(--muted);font-variant-numeric:tabular-nums;}
-.cr-strong{font-weight:600;min-width:140px;}
-.cr-muted{color:var(--muted);font-size:11px;}
-.cr-actions{white-space:nowrap;}
-.cr-empty{padding:14px;text-align:center;color:var(--muted);font-style:italic;}
-.cr-code{display:inline-block;font-family:Consolas,monospace;font-size:10px;padding:1px 5px;background:rgba(23,77,164,.07);border:1px solid rgba(23,77,164,.15);color:var(--accent);border-radius:0;font-weight:600;}
-.cr-badge{display:inline-block;font-size:10px;font-weight:600;padding:2px 7px;border-radius:0;text-transform:uppercase;letter-spacing:.3px;white-space:nowrap;}
-.cr-badge--green{background:#e6f4ea;color:#155724;border:1px solid #c3e6cb;}
-.cr-badge--amber{background:#fff8e1;color:#b45309;border:1px solid #fcd34d;}
-.cr-badge--red{background:#fef5f5;color:#dc3545;border:1px solid #f5c6cb;}
-.cr-badge--primary{background:rgba(5,39,92,.08);color:#05275C;border:1px solid rgba(5,39,92,.2);}
-.cr-badge--blue{background:rgba(23,77,164,.08);color:#174DA4;border:1px solid rgba(23,77,164,.2);}
-.cr-badge--accent{background:#174DA4;color:#fff;border:1px solid #174DA4;}
-.cr-badge--grey{background:#f1f3f6;color:#6b7280;border:1px solid #d1d5db;}
-.cr-days{display:inline-block;font-size:10px;font-weight:700;padding:1px 6px;border-radius:0;white-space:nowrap;}
-.cr-days--red{background:#fef5f5;color:#dc3545;border:1px solid #f5c6cb;}
-.cr-days--amber{background:#fff8e1;color:#b45309;border:1px solid #fcd34d;}
-.cr-days--ok{background:#f1f3f6;color:#555;border:1px solid #e0e5ed;}
-.cr-files{margin-top:4px;display:flex;flex-direction:column;gap:3px;}
-.cr-file,.cr-link{color:var(--accent);text-decoration:none;display:inline-flex;align-items:center;gap:4px;word-break:break-all;}
-.cr-file:hover,.cr-link:hover{text-decoration:underline;}
-.cr-check{display:flex;flex-direction:column;gap:6px;margin-bottom:12px;}
-.cr-check__row{display:flex;align-items:center;gap:8px;padding:6px 8px;border:1px solid var(--border);background:#fff;cursor:pointer;}
-.cr-check__row span:first-of-type{flex:1;}
-.cr-check__row--confirm{background:#fff8e1;border-color:#fcd34d;margin-top:10px;}
-.cr-auto{font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:.3px;padding:1px 5px;border-radius:0;}
-.cr-auto--ok{background:#e6f4ea;color:#155724;}
-.cr-auto--miss{background:#fef5f5;color:#dc3545;}
-.cr-auto--na{background:#f1f3f6;color:#6b7280;}
-.cr-hint{font-size:11px;color:var(--muted);margin-top:4px;line-height:1.5;}
-.cr-hint--warn{color:#b45309;}
-.cr-issued{margin-top:12px;padding:10px 12px;border:1px solid #c3e6cb;background:#f3fbf5;}
-.cr-issued__t{font-weight:700;color:#155724;margin-bottom:3px;}
-.cr-ul{margin:6px 0 0 18px;padding:0;}
-.cr-tl{list-style:none;margin:0;padding:0;}
-.cr-tl li{display:grid;grid-template-columns:130px minmax(0,1fr);gap:10px;padding:8px 14px;border-bottom:1px solid #f0f2f5;}
-.cr-tl__when{color:var(--muted);font-size:11px;font-variant-numeric:tabular-nums;}
-.cr-tl__what strong{text-transform:capitalize;}
-.cr-tl__d{font-size:11px;color:var(--text2);margin-top:2px;word-break:break-word;}
-@media(max-width:520px){.cr-tl li{grid-template-columns:minmax(0,1fr);gap:2px;}}
-.cr-btn{display:inline-flex;align-items:center;gap:5px;padding:6px 12px;font-size:12px;font-weight:600;border:1px solid var(--border-in);background:#fff;color:var(--text2);cursor:pointer;border-radius:0;white-space:nowrap;font-family:inherit;text-decoration:none;}
-.cr-btn:hover{border-color:var(--accent);color:var(--accent);}
-.cr-btn--primary{background:var(--navy);border-color:var(--navy);color:#fff;}
-.cr-btn--primary:hover{background:var(--navy-h);border-color:var(--navy-h);color:#fff;}
-.cr-btn--success{background:var(--ok);border-color:var(--ok);color:#fff;}
-.cr-btn--success:hover{background:#12813b;color:#fff;border-color:#12813b;}
-.cr-btn--danger-outline{color:var(--danger);border-color:#f1b0b7;}
-.cr-btn--danger-outline:hover{background:#fff5f5;color:var(--danger);border-color:var(--danger);}
-.cr-btn:disabled{opacity:.5;cursor:not-allowed;}
-.cr-field{margin-bottom:12px;}
-.cr-field label{display:block;font-size:10px;font-weight:700;color:var(--text2);text-transform:uppercase;letter-spacing:.4px;margin-bottom:4px;}
-.cr-field input,.cr-field select,.cr-field textarea{font-size:12px;padding:6px 8px;border:1px solid var(--border-in);border-radius:0;background:#fff;color:var(--text);font-family:inherit;width:100%;}
-.cr-field input:focus,.cr-field select:focus,.cr-field textarea:focus{outline:none;border-color:var(--accent);box-shadow:0 0 0 2px rgba(23,77,164,.15);}
-.cr-field textarea{min-height:80px;resize:vertical;}
-.cr-field textarea:disabled{background:var(--surface);}
-.cr-field-row{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:12px;}
-@media(max-width:520px){.cr-field-row{grid-template-columns:minmax(0,1fr);}}
-.cr-alert{padding:10px 14px;margin-bottom:12px;font-size:12px;border:1px solid;line-height:1.5;}
-.cr-alert--error{background:#f8d7da;color:#721c24;border-color:#f5c6cb;}
-.cr-alert--warn{background:#fff8e1;color:#7a4a05;border-color:#fcd34d;}
-.cr-alert--info{background:#eef3fb;color:#05275C;border-color:#c5d3e8;}
-.cr-modal-ov{display:none;position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:9999;align-items:center;justify-content:center;padding:16px;}
-.cr-modal-ov.is-open{display:flex;}
-.cr-modal{background:#fff;border-radius:2px;width:560px;max-width:100%;max-height:92vh;overflow-y:auto;box-shadow:0 10px 32px rgba(0,0,0,.2);}
-.cr-modal--wide{width:680px;}
-.cr-modal__hdr{padding:12px 16px;display:flex;align-items:center;background:var(--navy);color:#fff;}
-.cr-modal__hdr h3{margin:0;font-size:14px;font-weight:700;flex:1;}
-.cr-modal__close{background:none;border:none;color:#fff;font-size:20px;cursor:pointer;line-height:1;padding:0 4px;}
-.cr-modal__body{padding:16px;}
-.cr-modal__foot{padding:12px 16px;border-top:1px solid var(--border);display:flex;justify-content:flex-end;gap:8px;flex-wrap:wrap;}
-.cr-toast{position:fixed;bottom:20px;right:20px;padding:10px 16px;font-size:12px;font-weight:600;color:#fff;z-index:10000;opacity:0;transition:opacity .25s;pointer-events:none;max-width:420px;}
-.cr-toast.is-on{opacity:1;}
-.cr-toast--ok{background:#16a34a;}
-.cr-toast--err{background:var(--danger);}
+/* Contract renewal application: page-specific layout only (components come from hr.css) */
+.cr-title { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.cr-para { margin-top: 12px; }
+.cr-para__txt { margin-top: 4px; line-height: 1.55; background: var(--hr-surface); border: 1px solid var(--hr-border); padding: 8px 10px; word-break: break-word; }
+.cr-top td { vertical-align: top; line-height: 1.45; }
+.cr-files { margin-top: 4px; display: flex; flex-direction: column; gap: 3px; }
+.cr-file { color: var(--hr-accent); text-decoration: none; display: inline-flex; align-items: center; gap: 4px; word-break: break-all; }
+.cr-file:hover { text-decoration: underline; }
+.cr-file svg { width: 12px; height: 12px; flex: 0 0 auto; }
+.cr-check { display: flex; flex-direction: column; gap: 6px; margin-bottom: 12px; }
+.cr-check__row { display: flex; align-items: center; gap: 8px; padding: 6px 8px; border: 1px solid var(--hr-border); background: #fff; cursor: pointer; }
+.cr-check__row span:first-of-type { flex: 1; }
+.cr-check__row input { accent-color: var(--hr-navy); margin: 0; }
+.cr-confirm { display: flex; align-items: flex-start; gap: 8px; margin-top: 12px; font-size: 12px; cursor: pointer; line-height: 1.45; }
+.cr-confirm input { margin: 2px 0 0; accent-color: var(--hr-navy); }
+.cr-sec { margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--hr-border); }
+.cr-sec__t { margin-bottom: 8px; }
+.cr-mini { margin-top: 4px; }
+.cr-mini td, .cr-mini th { padding: 6px 8px; }
+.cr-tl { list-style: none; margin: 0; padding: 0; }
+.cr-tl li { display: grid; grid-template-columns: 140px minmax(0, 1fr); gap: 10px; padding: 8px 14px; border-bottom: 1px solid var(--hr-border); }
+.cr-tl li:last-child { border-bottom: none; }
+.cr-tl__when { color: var(--hr-muted); font-size: 11px; font-variant-numeric: tabular-nums; }
+.cr-tl__d { font-size: 11px; color: var(--hr-text-2); margin-top: 2px; word-break: break-word; }
+@media (max-width: 520px) { .cr-tl li { grid-template-columns: minmax(0, 1fr); gap: 2px; } }
+.hr-modal .hr-field { margin-bottom: 12px; }
+.hr-modal .hr-form { margin-bottom: 12px; }
+.hr-modal .hr-form .hr-field { margin-bottom: 0; }
+.cr-nowrap { white-space: nowrap; }
+.cr-actions { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
 </style>
 </asp:Content>
 
 <asp:Content ID="BodyContent" ContentPlaceHolderID="ContentPlaceHolder1" runat="server">
-<div class="cr-page">
+<div class="hr-page cr-page">
+
+<div class="hr-header">
+    <div class="hr-header__left">
+        <div class="hr-header__icon"><svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg></div>
+        <div>
+            <div class="hr-header__title cr-title"><asp:Literal ID="litName" runat="server" Text="Contract renewal" /> <asp:Literal ID="litStatus" runat="server" /></div>
+            <div class="hr-header__sub"><asp:Literal ID="litHeaderMeta" runat="server" /></div>
+        </div>
+    </div>
+    <div class="hr-header__actions">
+        <a href="ContractRenewals.aspx" class="hr-btn hr-btn--inverse">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="19" y1="12" x2="5" y2="12"/><polyline points="12 19 5 12 12 5"/></svg>
+            All renewals
+        </a>
+        <asp:Literal ID="litPrintLink" runat="server" />
+    </div>
+</div>
+<div class="hr-tabs"><a class="hr-tab" href="HRDashboard.aspx">Overview</a><a class="hr-tab" href="HREmployees.aspx">Employees</a><a class="hr-tab" href="HRContracts.aspx">Contracts</a><a class="hr-tab hr-tab--active" href="ContractRenewals.aspx">Renewals</a><a class="hr-tab" href="LeaveApplications.aspx">Leave applications</a><a class="hr-tab" href="HRLeaveManagement.aspx">Leave balances</a></div>
+
 <asp:Literal ID="litError" runat="server" />
 
 <asp:Panel ID="pnlMain" runat="server">
@@ -120,48 +67,34 @@
 <asp:HiddenField ID="hfDefStart" runat="server" Value="" />
 <asp:HiddenField ID="hfCurEnd" runat="server" Value="" />
 
-<div class="cr-head">
-    <div class="cr-head__icon">
-        <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>
-    </div>
-    <div class="cr-head__text">
-        <div class="cr-head__title"><span class="cr-code" style="font-size:12px;"><asp:Literal ID="litRef" runat="server" /></span> <asp:Literal ID="litName" runat="server" /> <asp:Literal ID="litStatus" runat="server" /></div>
-        <div class="cr-head__sub"><asp:Literal ID="litHeaderMeta" runat="server" /></div>
-    </div>
-    <div class="cr-head__actions">
-        <a href="ContractRenewals.aspx" class="cr-btn">
-            <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="19" y1="12" x2="5" y2="12"/><polyline points="12 19 5 12 12 5"/></svg>
-            All applications
-        </a>
-        <asp:Literal ID="litPrintLink" runat="server" />
-    </div>
-</div>
-
 <asp:Literal ID="litAlerts" runat="server" />
 
-<div class="cr-actionbar">
-    <span class="cr-actionbar__lbl">HR action</span>
-    <asp:Literal ID="litActions" runat="server" />
+<div class="hr-card">
+    <div class="hr-card__head">
+        <span class="hr-card__title">HR action</span>
+        <div class="cr-actions"><asp:Literal ID="litActions" runat="server" /></div>
+    </div>
+    <div class="hr-card__body"><asp:Literal ID="litStages" runat="server" /></div>
 </div>
 
-<div class="cr-grid">
-    <div class="cr-card">
-        <div class="cr-card__hdr">Applicant &amp; current contract</div>
-        <div class="cr-card__body"><asp:Literal ID="litApplicant" runat="server" /></div>
+<div class="hr-grid-2">
+    <div class="hr-card">
+        <div class="hr-card__head"><span class="hr-card__title">Applicant and current contract</span></div>
+        <div class="hr-card__body"><asp:Literal ID="litApplicant" runat="server" /></div>
     </div>
-    <div class="cr-card">
-        <div class="cr-card__hdr">Renewal request</div>
-        <div class="cr-card__body"><asp:Literal ID="litRequest" runat="server" /></div>
+    <div class="hr-card">
+        <div class="hr-card__head"><span class="hr-card__title">Renewal request</span></div>
+        <div class="hr-card__body"><asp:Literal ID="litRequest" runat="server" /></div>
     </div>
 </div>
 
-<div class="cr-card">
-    <div class="cr-card__hdr">Evaluation form - achievements of staff responsibilities and key performance areas</div>
-    <div class="cr-table-wrap">
-        <table class="cr-table">
+<div class="hr-card">
+    <div class="hr-card__head"><span class="hr-card__title">Evaluation form: achievements and key performance areas</span></div>
+    <div class="hr-table-wrap">
+        <table class="hr-table cr-top">
             <thead><tr>
-                <th class="cr-num">No</th>
-                <th>Responsibility / KPA</th>
+                <th class="hr-num">No</th>
+                <th>Responsibility or key performance area</th>
                 <th>Expected standard</th>
                 <th>Achievements</th>
                 <th>Evidence</th>
@@ -172,142 +105,130 @@
     </div>
 </div>
 
-<div class="cr-grid">
-    <div class="cr-card">
-        <div class="cr-card__hdr">Supervisor recommendation</div>
-        <div class="cr-card__body"><asp:Literal ID="litSupervisor" runat="server" /></div>
+<div class="hr-grid-2">
+    <div class="hr-card">
+        <div class="hr-card__head"><span class="hr-card__title">Supervisor recommendation</span></div>
+        <div class="hr-card__body"><asp:Literal ID="litSupervisor" runat="server" /></div>
     </div>
-    <div class="cr-card">
-        <div class="cr-card__hdr">Documents</div>
-        <div class="cr-table-wrap">
-            <table class="cr-table">
-                <thead><tr><th>Type</th><th>File</th><th>Size</th><th>Uploaded</th></tr></thead>
+    <div class="hr-card">
+        <div class="hr-card__head"><span class="hr-card__title">Documents</span></div>
+        <div class="hr-table-wrap">
+            <table class="hr-table cr-top">
+                <thead><tr><th>Type</th><th>File</th><th class="hr-num">Size</th><th>Uploaded</th></tr></thead>
                 <tbody><asp:Literal ID="litDocs" runat="server" /></tbody>
             </table>
         </div>
     </div>
 </div>
 
-<div class="cr-grid">
-    <div class="cr-card">
-        <div class="cr-card__hdr">HR verification
-            <span class="cr-card__hdr-right">"Found" / "Not found" is what the system detected</span>
-        </div>
-        <div class="cr-card__body"><asp:Literal ID="litHrVerify" runat="server" /></div>
+<div class="hr-grid-2">
+    <div class="hr-card">
+        <div class="hr-card__head"><span class="hr-card__title">HR verification</span></div>
+        <div class="hr-card__body"><asp:Literal ID="litHrVerify" runat="server" /></div>
     </div>
-    <div class="cr-card">
-        <div class="cr-card__hdr">Governance Council decision</div>
-        <div class="cr-card__body"><asp:Literal ID="litDecision" runat="server" /></div>
+    <div class="hr-card">
+        <div class="hr-card__head"><span class="hr-card__title">Governance Council decision</span></div>
+        <div class="hr-card__body"><asp:Literal ID="litDecision" runat="server" /></div>
     </div>
 </div>
 
-<div class="cr-card">
-    <div class="cr-card__hdr">Performance appraisals (latest first)</div>
-    <div class="cr-table-wrap">
-        <table class="cr-table">
-            <thead><tr><th>Session</th><th>Status</th><th class="cr-num">Score</th><th>Classification</th><th>Submitted</th><th></th></tr></thead>
-            <tbody><asp:Literal ID="litAppraisals" runat="server" /></tbody>
-        </table>
-    </div>
-</div>
-
-<div class="cr-card">
-    <div class="cr-card__hdr">History</div>
+<div class="hr-card">
+    <div class="hr-card__head"><span class="hr-card__title">History</span></div>
     <ul class="cr-tl"><asp:Literal ID="litAudit" runat="server" /></ul>
 </div>
 
 <!-- Return modal -->
-<div class="cr-modal-ov" id="returnModal">
-    <div class="cr-modal">
-        <div class="cr-modal__hdr"><h3>Return to employee</h3><button type="button" class="cr-modal__close" onclick="closeModal('returnModal')">&times;</button></div>
-        <div class="cr-modal__body">
-            <div class="cr-field">
-                <label for="retReason">What must the employee correct? *</label>
-                <textarea id="retReason" placeholder="e.g. Attach the signed application letter and complete the evidence column for rows 2 and 3."></textarea>
-                <div class="cr-hint">The employee is emailed this reason and can edit and resubmit in the staff portal.</div>
+<div class="hr-modal" id="returnModal">
+    <div class="hr-modal__box">
+        <div class="hr-modal__head"><span>Return to employee</span><button type="button" class="hr-modal__close" title="Close" onclick="closeModal('returnModal')"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button></div>
+        <div class="hr-modal__body">
+            <div class="hr-field">
+                <label class="hr-label" for="retReason">What must the employee correct? <span class="hr-req">*</span></label>
+                <textarea id="retReason" class="hr-textarea" placeholder="e.g. Attach the signed application letter and complete the evidence for rows 2 and 3."></textarea>
+                <span class="hr-hint">The employee is emailed this reason.</span>
             </div>
         </div>
-        <div class="cr-modal__foot">
-            <button type="button" class="cr-btn" onclick="closeModal('returnModal')">Cancel</button>
-            <button type="button" class="cr-btn cr-btn--primary" id="btnReturn" onclick="returnApp()">Return application</button>
+        <div class="hr-modal__foot">
+            <button type="button" class="hr-btn hr-btn--secondary" onclick="closeModal('returnModal')">Cancel</button>
+            <button type="button" class="hr-btn hr-btn--primary" id="btnReturn" onclick="returnApp()">Return application</button>
         </div>
     </div>
 </div>
 
 <!-- Skip supervisor modal -->
-<div class="cr-modal-ov" id="skipModal">
-    <div class="cr-modal">
-        <div class="cr-modal__hdr"><h3>Skip supervisor stage</h3><button type="button" class="cr-modal__close" onclick="closeModal('skipModal')">&times;</button></div>
-        <div class="cr-modal__body">
-            <div class="cr-alert cr-alert--info">The application moves to HR verification without a supervisor recommendation. Use this only when the supervisor is unavailable.</div>
-            <div class="cr-field">
-                <label for="skipReason">Reason *</label>
-                <textarea id="skipReason" placeholder="e.g. Supervisor on study leave until January 2027."></textarea>
+<div class="hr-modal" id="skipModal">
+    <div class="hr-modal__box">
+        <div class="hr-modal__head"><span>Skip supervisor stage</span><button type="button" class="hr-modal__close" title="Close" onclick="closeModal('skipModal')"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button></div>
+        <div class="hr-modal__body">
+            <div class="hr-field">
+                <label class="hr-label" for="skipReason">Reason <span class="hr-req">*</span></label>
+                <textarea id="skipReason" class="hr-textarea" placeholder="e.g. Supervisor on study leave until January 2027."></textarea>
+                <span class="hr-hint">Use only when the supervisor is unavailable.</span>
             </div>
         </div>
-        <div class="cr-modal__foot">
-            <button type="button" class="cr-btn" onclick="closeModal('skipModal')">Cancel</button>
-            <button type="button" class="cr-btn cr-btn--primary" id="btnSkip" onclick="skipSupervisor()">Move to HR</button>
+        <div class="hr-modal__foot">
+            <button type="button" class="hr-btn hr-btn--secondary" onclick="closeModal('skipModal')">Cancel</button>
+            <button type="button" class="hr-btn hr-btn--primary" id="btnSkip" onclick="skipSupervisor()">Move to HR</button>
         </div>
     </div>
 </div>
 
 <!-- Decision modal -->
-<div class="cr-modal-ov" id="decisionModal">
-    <div class="cr-modal">
-        <div class="cr-modal__hdr"><h3>Record Council decision</h3><button type="button" class="cr-modal__close" onclick="closeModal('decisionModal')">&times;</button></div>
-        <div class="cr-modal__body">
-            <div class="cr-field">
-                <label for="decDecision">Decision *</label>
-                <select id="decDecision" onchange="decChanged()">
-                    <option value="APPROVED">Approved - renew the contract</option>
+<div class="hr-modal" id="decisionModal">
+    <div class="hr-modal__box">
+        <div class="hr-modal__head"><span>Record Council decision</span><button type="button" class="hr-modal__close" title="Close" onclick="closeModal('decisionModal')"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button></div>
+        <div class="hr-modal__body">
+            <div class="hr-field">
+                <label class="hr-label" for="decDecision">Decision <span class="hr-req">*</span></label>
+                <select id="decDecision" class="hr-select" onchange="decChanged()">
+                    <option value="APPROVED">Approved</option>
                     <option value="NOT_APPROVED">Not approved</option>
                     <option value="DEFERRED">Deferred</option>
                 </select>
             </div>
             <div id="decApprovedFields">
-                <div class="cr-field-row">
-                    <div class="cr-field"><label for="decTerm">Approved term (months) *</label><input type="number" id="decTerm" min="1" max="120" oninput="decRecalc()" /></div>
-                    <div class="cr-field"><label for="decStart">New contract start *</label><input type="date" id="decStart" onchange="decRecalc()" /></div>
-                </div>
-                <div class="cr-field-row">
-                    <div class="cr-field"><label for="decEnd">New contract end *</label><input type="date" id="decEnd" /><div class="cr-hint">Computed from start + term; you may edit it.</div></div>
-                    <div></div>
+                <div class="hr-form">
+                    <div class="hr-field"><label class="hr-label" for="decTerm">Approved term (months) <span class="hr-req">*</span></label><input type="number" id="decTerm" class="hr-input" min="1" max="120" oninput="decRecalc()" /></div>
+                    <div class="hr-field"><label class="hr-label" for="decStart">New contract start <span class="hr-req">*</span></label><input type="date" id="decStart" class="hr-input" onchange="decRecalc()" /></div>
+                    <div class="hr-field"><label class="hr-label" for="decEnd">New contract end <span class="hr-req">*</span></label><input type="date" id="decEnd" class="hr-input" /><span class="hr-hint">Calculated from the start date and term.</span></div>
                 </div>
             </div>
-            <div class="cr-field">
-                <label for="decNotes">Council notes <span id="decNotesReq">(required unless approved)</span></label>
-                <textarea id="decNotes"></textarea>
+            <div class="hr-field">
+                <label class="hr-label" for="decNotes">Council notes</label>
+                <textarea id="decNotes" class="hr-textarea"></textarea>
+                <span class="hr-hint" id="decNotesReq">Required unless approved.</span>
             </div>
-            <div class="cr-hint">The employee is emailed the outcome.</div>
+            <div class="hr-hint">The employee is emailed the outcome.</div>
         </div>
-        <div class="cr-modal__foot">
-            <button type="button" class="cr-btn" onclick="closeModal('decisionModal')">Cancel</button>
-            <button type="button" class="cr-btn cr-btn--primary" id="btnDecision" onclick="saveDecision()">Record decision</button>
+        <div class="hr-modal__foot">
+            <button type="button" class="hr-btn hr-btn--secondary" onclick="closeModal('decisionModal')">Cancel</button>
+            <button type="button" class="hr-btn hr-btn--primary" id="btnDecision" onclick="saveDecision()">Record decision</button>
         </div>
     </div>
 </div>
 
 <!-- Issue contract modal -->
-<div class="cr-modal-ov" id="issueModal">
-    <div class="cr-modal cr-modal--wide">
-        <div class="cr-modal__hdr"><h3>Issue new contract</h3><button type="button" class="cr-modal__close" onclick="closeModal('issueModal')">&times;</button></div>
-        <div class="cr-modal__body"><asp:Literal ID="litIssueForm" runat="server" /></div>
-        <div class="cr-modal__foot">
-            <button type="button" class="cr-btn" onclick="closeModal('issueModal')">Cancel</button>
-            <button type="button" class="cr-btn cr-btn--success" id="btnIssue" onclick="issueContract()">Issue contract</button>
+<div class="hr-modal" id="issueModal">
+    <div class="hr-modal__box hr-modal__box--wide">
+        <div class="hr-modal__head"><span>Issue new contract</span><button type="button" class="hr-modal__close" title="Close" onclick="closeModal('issueModal')"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button></div>
+        <div class="hr-modal__body"><asp:Literal ID="litIssueForm" runat="server" /></div>
+        <div class="hr-modal__foot">
+            <button type="button" class="hr-btn hr-btn--secondary" onclick="closeModal('issueModal')">Cancel</button>
+            <button type="button" class="hr-btn hr-btn--primary" id="btnIssue" onclick="issueContract()">Issue contract</button>
         </div>
     </div>
 </div>
 </asp:Panel>
 
-<div class="cr-toast" id="crToast"></div>
+<div class="hr-toast" id="crToast"></div>
 </div>
 
 <script type="text/javascript">
 var CR_ID = parseInt((document.getElementById('<%= hfId.ClientID %>') || {}).value || '0', 10);
 var CR_DEF_TERM = (document.getElementById('<%= hfDefTerm.ClientID %>') || {}).value || '24';
 var CR_DEF_START = (document.getElementById('<%= hfDefStart.ClientID %>') || {}).value || '';
+var DECISION_LABELS = { APPROVED: 'Approved', NOT_APPROVED: 'Not approved', DEFERRED: 'Deferred' };
+var MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 
 // The page sits inside the master's <form>: Enter in a text box must not post it back.
 document.addEventListener('keydown', function (e) {
@@ -318,7 +239,7 @@ document.addEventListener('keydown', function (e) {
 function toast(msg, ok) {
     var t = document.getElementById('crToast');
     t.textContent = msg || '';
-    t.className = 'cr-toast cr-toast--' + (ok ? 'ok' : 'err') + ' is-on';
+    t.className = 'hr-toast' + (ok ? '' : ' hr-toast--err') + ' is-on';
     clearTimeout(t._h);
     t._h = setTimeout(function () { t.classList.remove('is-on'); }, ok ? 4000 : 7000);
 }
@@ -328,6 +249,7 @@ function openModal(id) {
 }
 function closeModal(id) { document.getElementById(id).classList.remove('is-open'); }
 function val(id) { var e = document.getElementById(id); return e ? (e.value || '').trim() : ''; }
+function fmtDate(iso) { var p = (iso || '').split('-'); return p.length === 3 ? parseInt(p[2], 10) + ' ' + MONTHS[parseInt(p[1], 10) - 1] + ' ' + p[0] : iso; }
 
 function post(action, fields, cb) {
     var fd = new FormData();
@@ -339,7 +261,8 @@ function post(action, fields, cb) {
     xhr.onreadystatechange = function () {
         if (xhr.readyState !== 4) return;
         var res;
-        try { res = JSON.parse(xhr.responseText); } catch (e) { res = { ok: false, msg: 'Server error (HTTP ' + xhr.status + ')' }; }
+        try { res = JSON.parse(xhr.responseText); } catch (e) { res = { ok: false, msg: 'The server did not respond. Reload the page and try again.' }; }
+        if (res && res.msg == null && res.message) res.msg = res.message;
         cb(res);
     };
     xhr.send(fd);
@@ -362,14 +285,14 @@ function saveChecklist() {
 function forwardApp() {
     var f = checklistFields();
     f.council_sitting = val('councilSitting');
-    if (f.chk_contract_ok !== '1') { toast('Tick "Current contract details verified correct" first', false); return; }
-    if (!f.council_sitting) { toast('Enter the Council sitting', false); return; }
+    if (f.chk_contract_ok !== '1') { toast('Tick "Current contract details verified" first.', false); return; }
+    if (!f.council_sitting) { toast('Enter the Council sitting.', false); return; }
     if (!confirm('Forward this application to the Governance Council (' + f.council_sitting + ')?')) return;
     post('forward', f, function (res) { toast(res.msg, res.ok); if (res.ok) reload(); });
 }
 function returnApp() {
     var reason = val('retReason');
-    if (reason.length < 5) { toast('Enter what the employee must correct', false); return; }
+    if (reason.length < 5) { toast('Enter what the employee must correct.', false); return; }
     busy('btnReturn', true);
     post('return', { id: CR_ID, reason: reason }, function (res) {
         busy('btnReturn', false); toast(res.msg, res.ok);
@@ -378,7 +301,7 @@ function returnApp() {
 }
 function skipSupervisor() {
     var reason = val('skipReason');
-    if (reason.length < 5) { toast('Enter the reason', false); return; }
+    if (reason.length < 5) { toast('Enter the reason.', false); return; }
     busy('btnSkip', true);
     post('skip_supervisor', { id: CR_ID, reason: reason }, function (res) {
         busy('btnSkip', false); toast(res.msg, res.ok);
@@ -386,7 +309,7 @@ function skipSupervisor() {
     });
 }
 
-/* ── decision ── */
+/* decision */
 function pad(n) { return (n < 10 ? '0' : '') + n; }
 function isoAddMonths(iso, months) {
     var p = iso.split('-'); if (p.length !== 3) return '';
@@ -413,13 +336,13 @@ function decChanged() {
 }
 function saveDecision() {
     var d = val('decDecision'), notes = val('decNotes');
-    if (d !== 'APPROVED' && !notes) { toast('Add the Council notes for this decision', false); return; }
+    if (d !== 'APPROVED' && !notes) { toast('Add the Council notes for this decision.', false); return; }
     var f = { id: CR_ID, decision: d, notes: notes };
     if (d === 'APPROVED') {
         f.term_months = val('decTerm'); f.start = val('decStart'); f.end = val('decEnd');
-        if (!(parseInt(f.term_months, 10) > 0) || !f.start || !f.end) { toast('Enter the approved term and the new contract dates', false); return; }
+        if (!(parseInt(f.term_months, 10) > 0) || !f.start || !f.end) { toast('Enter the approved term and the new contract dates.', false); return; }
     }
-    if (!confirm('Record the Council decision "' + d.replace('_', ' ') + '" and email the employee?')) return;
+    if (!confirm('Record the Council decision "' + DECISION_LABELS[d] + '" and email the employee?')) return;
     busy('btnDecision', true);
     post('decision', f, function (res) {
         busy('btnDecision', false); toast(res.msg, res.ok);
@@ -427,20 +350,20 @@ function saveDecision() {
     });
 }
 
-/* ── issue contract ── */
+/* issue contract */
 function issueContract() {
     var c = document.getElementById('icConfirm');
-    if (!c || !c.checked) { toast('Tick the confirmation first', false); return; }
+    if (!c || !c.checked) { toast('Tick the confirmation first.', false); return; }
     var f = {
         id: CR_ID, confirm: '1', start: val('icStart'), end: val('icEnd'),
         job_id: val('icJob'), dept_id: val('icDept'), contract_type: val('icType'),
         payscale: val('icScale'), fixedamount: val('icFixed') || '0'
     };
-    if (!f.start || !f.end) { toast('Enter the contract start and end dates', false); return; }
-    if (f.end <= f.start) { toast('The contract must end after it starts', false); return; }
+    if (!f.start || !f.end) { toast('Enter the contract start and end dates.', false); return; }
+    if (f.end <= f.start) { toast('The contract must end after it starts.', false); return; }
     var curEnd = (document.getElementById('<%= hfCurEnd.ClientID %>') || {}).value || '';
-    var warn = curEnd && f.start <= curEnd ? '\n\nNote: the new contract starts on or before the current contract end (' + curEnd + ').' : '';
-    if (!confirm('Issue the new contract ' + f.start + ' to ' + f.end + '?\n\nThis creates a VALID contract and marks the current one superseded. It cannot be undone from this screen.' + warn)) return;
+    var overlap = curEnd && f.start <= curEnd ? ' It starts before the current contract ends on ' + fmtDate(curEnd) + '.' : '';
+    if (!confirm('Issue the new contract from ' + fmtDate(f.start) + ' to ' + fmtDate(f.end) + '? The current contract will be closed.' + overlap)) return;
     busy('btnIssue', true);
     post('issue_contract', f, function (res) {
         busy('btnIssue', false); toast(res.msg, res.ok);
