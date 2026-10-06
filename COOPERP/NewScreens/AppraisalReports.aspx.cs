@@ -2,11 +2,19 @@ using System;
 using System.Collections.Generic;
 using System.Configuration;
 using System.Data;
+using System.Globalization;
 using System.Text;
 using System.Web;
 using System.Web.UI;
 using MySql.Data.MySqlClient;
 
+/// <summary>
+/// Appraisal reports: the single analysis page. Completion by category, department and session,
+/// one classification table, and the appraisal records export (HrExport .xlsx with Records,
+/// Summary by department and Classification sheets; .csv of Records).
+/// Population: every appraisal_records row matching the filters. The record list itself lives
+/// on the Appraisals page (no silent cap here).
+/// </summary>
 public partial class COOPERP_NewScreens_AppraisalReports : System.Web.UI.Page
 {
     private string ConnStr
@@ -14,713 +22,415 @@ public partial class COOPERP_NewScreens_AppraisalReports : System.Web.UI.Page
         get { return ConfigurationManager.ConnectionStrings["vacConnectionString"].ConnectionString; }
     }
 
-    // ─── Query-string helpers ──────────────────────────────────────────
-    private int QsSession
+    private int QsSession { get { int v; return int.TryParse(Request.QueryString["sid"] ?? "0", out v) && v > 0 ? v : 0; } }
+    private string QsDepartment { get { return (Request.QueryString["dept"] ?? "").Trim(); } }
+    private string QsCategory { get { return (Request.QueryString["cat"] ?? "").Trim().ToUpperInvariant(); } }
+    private string QsStatus { get { return (Request.QueryString["st"] ?? "").Trim().ToUpperInvariant(); } }
+
+    private static readonly string[][] Statuses = new string[][] {
+        new string[] { "PENDING", "Not started" },
+        new string[] { "EMPLOYEE_IN_PROGRESS", "In progress" },
+        new string[] { "RETURNED", "Returned" },
+        new string[] { "EMPLOYEE_SUBMITTED", "Submitted" },
+        new string[] { "SUPERVISOR_IN_PROGRESS", "With supervisor" },
+        new string[] { "COMPLETED", "Awaiting HR" },
+        new string[] { "HR_REVIEWED", "HR reviewed" },
+        new string[] { "CANCELLED", "Cancelled" }
+    };
+
+    private static readonly string[][] Bands = new string[][] {
+        new string[] { "Exceptional", "90 to 100", "ok" },
+        new string[] { "Above expectations", "75 to 89.99", "ok" },
+        new string[] { "Satisfactory", "60 to 74.99", "info" },
+        new string[] { "Development needed", "50 to 59.99", "warn" },
+        new string[] { "Unsatisfactory", "Below 50", "bad" }
+    };
+
+    /// <summary>Export link that keeps the current filters.</summary>
+    protected string ExportLink(string fmt)
     {
-        get
-        {
-            int v;
-            return int.TryParse(Request.QueryString["sid"] ?? "0", out v) && v > 0 ? v : 0;
-        }
+        StringBuilder sb = new StringBuilder("AppraisalReports.aspx?action=export&amp;fmt=" + fmt);
+        if (QsSession > 0) sb.Append("&amp;sid=" + QsSession);
+        if (QsDepartment != "") sb.Append("&amp;dept=" + HttpUtility.UrlEncode(QsDepartment));
+        if (QsCategory != "") sb.Append("&amp;cat=" + HttpUtility.UrlEncode(QsCategory));
+        if (QsStatus != "") sb.Append("&amp;st=" + HttpUtility.UrlEncode(QsStatus));
+        return sb.ToString();
     }
 
-    private string QsDepartment
-    {
-        get { return (Request.QueryString["dept"] ?? "").Trim(); }
-    }
-
-    private string QsCategory
-    {
-        get { return (Request.QueryString["cat"] ?? "").Trim(); }
-    }
-
-    private string QsStatus
-    {
-        get { return (Request.QueryString["st"] ?? "").Trim(); }
-    }
-
-    // ═══════════════════════════════════════════════════════════════════
-    //  PAGE LIFECYCLE
-    // ═══════════════════════════════════════════════════════════════════
     protected void Page_Load(object sender, EventArgs e)
     {
-        // ── AJAX CSV export ──
-        string ajax = (Request.QueryString["ajax"] ?? "").Trim().ToLower();
-        if (ajax == "exportcsv")
+        if (!HrAccess.RequireHr(false)) return;
+
+        string action = (Request.QueryString["action"] ?? Request.QueryString["ajax"] ?? "").Trim().ToLowerInvariant();
+        if (action == "export" || action == "exportcsv")
         {
-            // The ?ajax= path runs here, BEFORE SidebarMaster's login check, so it must
-            // gate itself or the full staff score list is downloadable anonymously.
-            if (!IsCallerAuthenticated())
-            {
-                Response.Clear();
-                Response.ContentType = "text/plain";
-                Response.Write("Your session has expired. Please sign in again, then retry the export.");
-                try { Response.End(); } catch (System.Threading.ThreadAbortException) { }
-                return;
-            }
-            HandleExportCsv();
+            string fmt = action == "exportcsv" ? "csv" : (Request.QueryString["fmt"] ?? "xlsx").ToLowerInvariant();
+            Export(fmt == "csv" ? "csv" : "xlsx");
             return;
         }
 
         if (!IsPostBack)
         {
-            LoadFilters();
-            LoadReport();
+            try
+            {
+                LoadFilters();
+                LoadReport();
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Trace.TraceError("AppraisalReports: " + ex);
+                litError.Text = "<div class='hr-notice hr-notice--bad'>The report could not be loaded. Refresh the page or try again later.</div>";
+            }
         }
     }
 
     // ═══════════════════════════════════════════════════════════════════
-    //  FILTER DROPDOWNS
+    //  FILTERS
     // ═══════════════════════════════════════════════════════════════════
     private void LoadFilters()
     {
-        // ── Session filter ──
         DataTable dtSess = ExecuteQuery(
-            @"SELECT session_id, session_title, status,
-                     DATE_FORMAT(period_start,'%d %b %Y') AS ps,
-                     DATE_FORMAT(period_end,'%d %b %Y') AS pe
-              FROM appraisal_sessions
+            @"SELECT session_id, session_title, status FROM appraisal_sessions
               ORDER BY FIELD(status,'ACTIVE','DRAFT','CLOSED','ARCHIVED'), created_at DESC");
-
-        StringBuilder sbSess = new StringBuilder();
-        sbSess.Append("<option value='0'>All Sessions</option>");
+        StringBuilder sb = new StringBuilder("<option value='0'>All sessions</option>");
         foreach (DataRow r in dtSess.Rows)
         {
             int sid = Convert.ToInt32(r["session_id"]);
-            string label = string.Format("{0} ({1}) \u2014 {2} to {3}",
-                HttpUtility.HtmlEncode(r["session_title"].ToString()),
-                r["status"].ToString(),
-                r["ps"].ToString(),
-                r["pe"].ToString());
-            sbSess.AppendFormat("<option value='{0}'{1}>{2}</option>",
-                sid,
-                sid == QsSession ? " selected" : "",
-                label);
+            sb.AppendFormat("<option value='{0}'{1}>{2} ({3})</option>", sid, sid == QsSession ? " selected" : "",
+                Enc(SafeStr(r["session_title"])), Word(SafeStr(r["status"])));
         }
-        litSessionOptions.Text = sbSess.ToString();
+        litSessionOptions.Text = sb.ToString();
 
-        // ── Department filter ──
-                string deptExpr = GetDepartmentSelectExpression("e");
-                DataTable dtDept = ExecuteQuery(string.Format(
-                        @"SELECT DISTINCT {0} AS dept
-                            FROM appraisal_records ar
-                            INNER JOIN hrm_employee e ON e.empID = ar.employee_id
-                            ORDER BY dept", deptExpr));
-
-        StringBuilder sbDept = new StringBuilder();
-        sbDept.Append("<option value=''>All Departments</option>");
+        string deptExpr = DeptExpr();
+        DataTable dtDept = ExecuteQuery(string.Format(
+            @"SELECT DISTINCT {0} AS dept FROM appraisal_records ar
+              LEFT JOIN hrm_employee e ON e.empID = ar.employee_id ORDER BY dept", deptExpr));
+        sb = new StringBuilder("<option value=''>All departments</option>");
         foreach (DataRow r in dtDept.Rows)
         {
-            string dept = SafeStr(r["dept"]);
-            sbDept.AppendFormat("<option value='{0}'{1}>{2}</option>",
-                HttpUtility.HtmlAttributeEncode(dept),
-                dept == QsDepartment ? " selected" : "",
-                HttpUtility.HtmlEncode(dept));
+            string d = SafeStr(r["dept"]);
+            sb.AppendFormat("<option value='{0}'{1}>{2}</option>", HttpUtility.HtmlAttributeEncode(d), d == QsDepartment ? " selected" : "", Enc(d));
         }
-        litDeptOptions.Text = sbDept.ToString();
+        litDeptOptions.Text = sb.ToString();
 
-        // ── Category filter ──
-        StringBuilder sbCat = new StringBuilder();
-        sbCat.Append("<option value=''>All Categories</option>");
-        string[] cats = new string[] { "ACADEMIC", "ADMINISTRATIVE", "SUPPORT" };
-        foreach (string c in cats)
-        {
-            sbCat.AppendFormat("<option value='{0}'{1}>{2}</option>",
-                c,
-                c == QsCategory ? " selected" : "",
-                c.Substring(0, 1) + c.Substring(1).ToLower());
-        }
-        litCatOptions.Text = sbCat.ToString();
+        sb = new StringBuilder("<option value=''>All categories</option>");
+        foreach (string c in new string[] { "ACADEMIC", "ADMINISTRATIVE", "SUPPORT" })
+            sb.AppendFormat("<option value='{0}'{1}>{2}</option>", c, c == QsCategory ? " selected" : "", CategoryWord(c));
+        litCatOptions.Text = sb.ToString();
 
-        // ── Status filter ──
-        StringBuilder sbSt = new StringBuilder();
-        sbSt.Append("<option value=''>All Statuses</option>");
-        string[][] statuses = new string[][] {
-            new string[] { "PENDING", "Not Started" },
-            new string[] { "EMPLOYEE_IN_PROGRESS", "Employee In Progress" },
-            new string[] { "RETURNED", "Returned to Employee" },
-            new string[] { "EMPLOYEE_SUBMITTED", "Employee Submitted" },
-            new string[] { "SUPERVISOR_IN_PROGRESS", "Supervisor Reviewing" },
-            new string[] { "COMPLETED", "Awaiting HR Review" },
-            new string[] { "HR_REVIEWED", "HR Reviewed" },
-            new string[] { "CANCELLED", "Cancelled" }
-        };
-        foreach (string[] st in statuses)
-        {
-            sbSt.AppendFormat("<option value='{0}'{1}>{2}</option>",
-                st[0],
-                st[0] == QsStatus ? " selected" : "",
-                st[1]);
-        }
-        litStatusOptions.Text = sbSt.ToString();
+        sb = new StringBuilder("<option value=''>All statuses</option>");
+        foreach (string[] st in Statuses)
+            sb.AppendFormat("<option value='{0}'{1}>{2}</option>", st[0], st[0] == QsStatus ? " selected" : "", st[1]);
+        litStatusOptions.Text = sb.ToString();
+
+        if (QsSession > 0)
+            litSessionReport.Text = "<a class='hr-btn hr-btn--inverse' href='AppraisalSessionReport.aspx?sid=" + QsSession + "' target='_blank' rel='noopener'>Session report</a>";
     }
 
     // ═══════════════════════════════════════════════════════════════════
-    //  BUILD WHERE CLAUSE
+    //  SQL
     // ═══════════════════════════════════════════════════════════════════
-    private string BuildWhereClause(string arAlias, string empAlias, MySqlConnection conn)
+    private string _deptExpr;
+    private string DeptExpr()
+    {
+        if (_deptExpr == null)
+            using (MySqlConnection conn = new MySqlConnection(ConnStr))
+            {
+                conn.Open();
+                _deptExpr = BuildDepartmentSqlExpression(conn, "e");
+            }
+        return _deptExpr;
+    }
+
+    private string Where(List<MySqlParameter> parms)
     {
         StringBuilder sb = new StringBuilder(" WHERE 1=1");
-        string deptExpr = BuildDepartmentSqlExpression(conn, empAlias);
-        if (QsSession > 0)
-            sb.AppendFormat(" AND {0}.session_id = {1}", arAlias, QsSession);
-        if (!string.IsNullOrEmpty(QsDepartment))
-            sb.AppendFormat(" AND {0} = @dept", deptExpr);
-        if (!string.IsNullOrEmpty(QsCategory))
-            sb.AppendFormat(" AND {0}.staff_category = @cat", arAlias);
-        if (!string.IsNullOrEmpty(QsStatus))
-            sb.AppendFormat(" AND {0}.status = @st", arAlias);
+        if (QsSession > 0) { sb.Append(" AND ar.session_id = @sid"); parms.Add(new MySqlParameter("@sid", QsSession)); }
+        if (QsDepartment != "") { sb.Append(" AND " + DeptExpr() + " = @dept"); parms.Add(new MySqlParameter("@dept", QsDepartment)); }
+        if (QsCategory != "") { sb.Append(" AND ar.staff_category = @cat"); parms.Add(new MySqlParameter("@cat", QsCategory)); }
+        if (QsStatus != "") { sb.Append(" AND ar.status = @st"); parms.Add(new MySqlParameter("@st", QsStatus)); }
         return sb.ToString();
     }
 
-    private void AddFilterParams(MySqlCommand cmd)
+    private const string Measures =
+        @"COUNT(*) AS total,
+          SUM(ar.status IN ('EMPLOYEE_SUBMITTED','SUPERVISOR_IN_PROGRESS','COMPLETED','HR_REVIEWED')) AS submitted,
+          SUM(ar.status IN ('COMPLETED','HR_REVIEWED')) AS completed,
+          SUM(ar.status = 'HR_REVIEWED') AS hr_reviewed,
+          AVG(CASE WHEN ar.status IN ('COMPLETED','HR_REVIEWED') THEN ar.final_percentage END) AS avg_score";
+
+    private const string From =
+        @" FROM appraisal_records ar
+           LEFT JOIN hrm_employee e ON e.empID = ar.employee_id
+           INNER JOIN appraisal_sessions s ON s.session_id = ar.session_id";
+
+    private DataTable Grouped(string keyExpr, string orderBy)
     {
-        if (!string.IsNullOrEmpty(QsDepartment))
-            cmd.Parameters.AddWithValue("@dept", QsDepartment);
-        if (!string.IsNullOrEmpty(QsCategory))
-            cmd.Parameters.AddWithValue("@cat", QsCategory);
-        if (!string.IsNullOrEmpty(QsStatus))
-            cmd.Parameters.AddWithValue("@st", QsStatus);
+        List<MySqlParameter> parms = new List<MySqlParameter>();
+        string sql = "SELECT " + keyExpr + " AS k, " + Measures + From + Where(parms) +
+                     " GROUP BY " + keyExpr + " ORDER BY " + orderBy;
+        return ExecuteQuery(sql, parms.ToArray());
     }
 
     // ═══════════════════════════════════════════════════════════════════
-    //  MAIN REPORT LOAD
+    //  SCREEN
     // ═══════════════════════════════════════════════════════════════════
     private void LoadReport()
     {
-        try
+        List<MySqlParameter> parms = new List<MySqlParameter>();
+        DataTable dtAll = ExecuteQuery("SELECT " + Measures + From + Where(parms), parms.ToArray());
+        DataRow a = dtAll.Rows[0];
+        int total = SafeInt(a["total"]), completed = SafeInt(a["completed"]);
+        litKpiTotal.Text = total.ToString("N0");
+        litKpiSubmitted.Text = SafeInt(a["submitted"]).ToString("N0");
+        litKpiCompleted.Text = completed.ToString("N0");
+        litKpiRate.Text = total > 0 ? Pct(completed, total) + "% of appraisals" : "";
+        litKpiHr.Text = SafeInt(a["hr_reviewed"]).ToString("N0");
+        litKpiAvg.Text = Dec(a["avg_score"]);
+
+        litCatRows.Text = Rows(Grouped("ar.staff_category", "FIELD(ar.staff_category,'ACADEMIC','ADMINISTRATIVE','SUPPORT')"), true, a);
+        litDeptRows.Text = Rows(Grouped(DeptExpr(), "k"), false, a);
+        litSessionRows.Text = Rows(Grouped("s.session_title", "MIN(s.created_at) DESC"), false, a);
+
+        // Classification
+        parms = new List<MySqlParameter>();
+        DataTable dtC = ExecuteQuery(
+            "SELECT appraisal_classify(ar.final_percentage) AS band, COUNT(*) AS n" + From + Where(parms) +
+            " AND ar.status IN ('COMPLETED','HR_REVIEWED') AND ar.final_percentage IS NOT NULL GROUP BY band", parms.ToArray());
+        Dictionary<string, int> counts = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+        int scored = 0;
+        foreach (DataRow r in dtC.Rows) { counts[SafeStr(r["band"])] = SafeInt(r["n"]); scored += SafeInt(r["n"]); }
+        StringBuilder sb = new StringBuilder("<tbody>");
+        foreach (string[] b in Bands)
         {
-            using (MySqlConnection conn = new MySqlConnection(ConnStr))
-            {
-                conn.Open();
-                LoadSummaryKpis(conn);
-                LoadScoreDistribution(conn);
-                LoadDepartmentSummary(conn);
-                LoadDetailedRecords(conn);
-            }
+            int n = counts.ContainsKey(b[0]) ? counts[b[0]] : 0;
+            sb.AppendFormat("<tr><td><span class='hr-badge hr-badge--{0}'>{1}</span></td><td>{2}</td><td class='hr-num'>{3}</td><td class='hr-num'>{4}</td></tr>",
+                b[2], b[0], b[1], n.ToString("N0"), scored > 0 ? Pct(n, scored) : "");
         }
-        catch (Exception ex)
+        sb.AppendFormat("</tbody><tfoot><tr><td colspan='2'>Scored appraisals</td><td class='hr-num'>{0}</td><td class='hr-num'></td></tr></tfoot>", scored.ToString("N0"));
+        litClassRows.Text = sb.ToString();
+
+        List<string> q = new List<string>();
+        if (QsSession > 0) q.Add("sid=" + QsSession);
+        if (QsCategory != "") q.Add("cat=" + QsCategory);
+        if (QsStatus != "") q.Add("status=" + QsStatus);
+        litRecordsLink.Text = "<a class='hr-btn hr-btn--secondary hr-btn--sm' href='AppraisalView.aspx" +
+            (q.Count > 0 ? "?" + string.Join("&amp;", q.ToArray()) : "") + "'>View the appraisals</a>";
+    }
+
+    private string Rows(DataTable dt, bool category, DataRow totals)
+    {
+        StringBuilder sb = new StringBuilder("<tbody>");
+        if (dt.Rows.Count == 0) sb.Append("<tr><td colspan='7' class='hr-empty'>No appraisals match the filters.</td></tr>");
+        foreach (DataRow r in dt.Rows)
         {
-            litError.Text = "<div class='pa-alert pa-alert--error'>Error loading report: " +
-                HttpUtility.HtmlEncode(ex.Message) + "</div>";
+            string key = SafeStr(r["k"]);
+            sb.AppendFormat("<tr><td>{0}</td>{1}</tr>", category ? CategoryWord(key) : Enc(key == "" ? "Not recorded" : key), Cells(r));
         }
+        sb.Append("</tbody>");
+        if (dt.Rows.Count > 1) sb.AppendFormat("<tfoot><tr><td>Total</td>{0}</tr></tfoot>", Cells(totals));
+        return sb.ToString();
+    }
+
+    private static string Cells(DataRow r)
+    {
+        int total = SafeInt(r["total"]), completed = SafeInt(r["completed"]);
+        return string.Format("<td class='hr-num'>{0}</td><td class='hr-num'>{1}</td><td class='hr-num'>{2}</td><td class='hr-num'>{3}</td><td class='hr-num'>{4}</td><td class='hr-num'>{5}</td>",
+            total.ToString("N0"), SafeInt(r["submitted"]).ToString("N0"), completed.ToString("N0"), SafeInt(r["hr_reviewed"]).ToString("N0"),
+            total > 0 ? Pct(completed, total) : "", Dec(r["avg_score"]));
     }
 
     // ═══════════════════════════════════════════════════════════════════
-    //  SUMMARY KPIs
+    //  EXPORT (HrExport)
     // ═══════════════════════════════════════════════════════════════════
-    private void LoadSummaryKpis(MySqlConnection conn)
+    private void Export(string fmt)
     {
-        string where = BuildWhereClause("ar", "e", conn);
-        string sql = string.Format(
-            @"SELECT
-                COUNT(*)                                                                                    AS total,
-                SUM(CASE WHEN ar.status IN ('COMPLETED','HR_REVIEWED') THEN 1 ELSE 0 END)                  AS completed,
-                SUM(CASE WHEN ar.status NOT IN ('COMPLETED','HR_REVIEWED','CANCELLED') THEN 1 ELSE 0 END)   AS outstanding,
-                ROUND(AVG(CASE WHEN ar.status IN ('COMPLETED','HR_REVIEWED') THEN ar.final_percentage END),1) AS avg_score,
-                ROUND(MIN(CASE WHEN ar.status IN ('COMPLETED','HR_REVIEWED') THEN ar.final_percentage END),1) AS min_score,
-                ROUND(MAX(CASE WHEN ar.status IN ('COMPLETED','HR_REVIEWED') THEN ar.final_percentage END),1) AS max_score
-              FROM appraisal_records ar
-              INNER JOIN hrm_employee e ON e.empID = ar.employee_id
-              {0}", where);
+        HrExport.Report rep = new HrExport.Report("Appraisal records", "appraisal-records");
+        rep.PreparedBy = Session["ScreenName"] != null ? Session["ScreenName"].ToString() : HrAccess.Username();
 
-        using (MySqlCommand cmd = new MySqlCommand(sql, conn))
+        if (QsSession > 0)
         {
-            AddFilterParams(cmd);
-            DataTable dt = new DataTable();
-            using (MySqlDataAdapter da = new MySqlDataAdapter(cmd)) { da.Fill(dt); }
-
-            if (dt.Rows.Count == 0) return;
-            DataRow r = dt.Rows[0];
-
-            int total     = SafeInt(r["total"]);
-            int completed = SafeInt(r["completed"]);
-            int outstanding = SafeInt(r["outstanding"]);
-            double pct = total > 0 ? Math.Round((double)completed / total * 100, 1) : 0;
-
-            litKpiTotal.Text      = total.ToString("N0");
-            litKpiCompleted.Text  = completed.ToString("N0");
-            litKpiOutstanding.Text = outstanding.ToString("N0");
-            litKpiRate.Text       = pct.ToString("F1") + "%";
-            litKpiAvg.Text        = FormatScore(r["avg_score"]);
-            litKpiMin.Text        = FormatScore(r["min_score"]);
-            litKpiMax.Text        = FormatScore(r["max_score"]);
+            DataTable dtS = ExecuteQuery("SELECT session_title FROM appraisal_sessions WHERE session_id = @sid", new MySqlParameter("@sid", QsSession));
+            rep.AddScope("Session", dtS.Rows.Count > 0 ? SafeStr(dtS.Rows[0]["session_title"]) : QsSession.ToString());
         }
-    }
+        rep.AddScope("Department", QsDepartment);
+        rep.AddScope("Category", QsCategory != "" ? CategoryWord(QsCategory) : "");
+        rep.AddScope("Status", QsStatus != "" ? StatusWord(QsStatus) : "");
 
-    // ═══════════════════════════════════════════════════════════════════
-    //  SCORE DISTRIBUTION (Classification bands)
-    // ═══════════════════════════════════════════════════════════════════
-    private void LoadScoreDistribution(MySqlConnection conn)
-    {
-        string where = BuildWhereClause("ar", "e", conn);
-        string sql = string.Format(
-            @"SELECT
-                SUM(CASE WHEN appraisal_classify(ar.final_percentage) = 'Exceptional'        THEN 1 ELSE 0 END) AS c_exc,
-                SUM(CASE WHEN appraisal_classify(ar.final_percentage) = 'Above Expectations' THEN 1 ELSE 0 END) AS c_above,
-                SUM(CASE WHEN appraisal_classify(ar.final_percentage) = 'Satisfactory'       THEN 1 ELSE 0 END) AS c_sat,
-                SUM(CASE WHEN appraisal_classify(ar.final_percentage) = 'Development Needed' THEN 1 ELSE 0 END) AS c_dev,
-                SUM(CASE WHEN appraisal_classify(ar.final_percentage) = 'Unsatisfactory'     THEN 1 ELSE 0 END) AS c_unsat,
-                COUNT(ar.final_percentage)                                                                     AS total_completed
-              FROM appraisal_records ar
-              INNER JOIN hrm_employee e ON e.empID = ar.employee_id
-              {0}
-              AND ar.status IN ('COMPLETED','HR_REVIEWED')", where);
+        // Records
+        List<MySqlParameter> parms = new List<MySqlParameter>();
+        DataTable dt = ExecuteQuery(
+            @"SELECT IFNULL(e.EMP_CODE,'') AS emp_code,
+                     IFNULL(e.emp_name, CONCAT('Staff record not found (ID ', ar.employee_id, ')')) AS emp_name,
+                     ar.staff_category, " + DeptExpr() + @" AS department, s.session_title,
+                     IFNULL(rev.emp_name,'') AS supervisor, ar.status,
+                     ar.section_b_self_total, ar.raw_score, ar.final_percentage, ar.classification,
+                     ar.hr_status, ar.hr_overall_rating, ar.hr_recommendation,
+                     ar.employee_submitted_at, ar.supervisor_submitted_at, ar.hr_submitted_at, ar.employee_ack" +
+            From + " LEFT JOIN hrm_employee rev ON rev.empID = ar.reviewer_id" + Where(parms) +
+            " ORDER BY s.created_at DESC, FIELD(ar.staff_category,'ACADEMIC','ADMINISTRATIVE','SUPPORT'), emp_name",
+            parms.ToArray());
 
-        using (MySqlCommand cmd = new MySqlCommand(sql, conn))
+        HrExport.Sheet rec = rep.NewSheet("Records");
+        rec.Add("Staff No").Add("Name").Add("Category").Add("Department").Add("Session").Add("Supervisor").Add("Status")
+           .Add("Self total", HrExport.Kind.Decimal).Add("Supervisor total", HrExport.Kind.Decimal)
+           .Add("Score %", HrExport.Kind.Percent).Add("Classification")
+           .Add("HR rating", HrExport.Kind.Number).Add("HR recommendation")
+           .Add("Submitted", HrExport.Kind.Date).Add("Supervisor completed", HrExport.Kind.Date)
+           .Add("HR reviewed", HrExport.Kind.Date).Add("Acknowledgement");
+
+        Dictionary<string, int[]> deptAgg = new Dictionary<string, int[]>();      // total, submitted, completed, hr, scored
+        Dictionary<string, decimal> deptSum = new Dictionary<string, decimal>();
+        Dictionary<string, int> bandCount = new Dictionary<string, int>();
+        int scoredAll = 0;
+        foreach (DataRow r in dt.Rows)
         {
-            AddFilterParams(cmd);
-            DataTable dt = new DataTable();
-            using (MySqlDataAdapter da = new MySqlDataAdapter(cmd)) { da.Fill(dt); }
+            string st = SafeStr(r["status"]).ToUpperInvariant();
+            bool done = st == "COMPLETED" || st == "HR_REVIEWED";
+            bool submitted = done || st == "EMPLOYEE_SUBMITTED" || st == "SUPERVISOR_IN_PROGRESS";
+            bool hrDone = st == "HR_REVIEWED";
+            object pct = r["final_percentage"];
+            bool scored = done && pct != DBNull.Value;
+            string band = scored ? Classify(Convert.ToDecimal(pct)) : "";
+            string ack = SafeStr(r["employee_ack"]).ToUpperInvariant();
+            int hrRating = SafeInt(r["hr_overall_rating"]);
 
-            if (dt.Rows.Count == 0) return;
-            DataRow r = dt.Rows[0];
+            rec.Row(SafeStr(r["emp_code"]), SafeStr(r["emp_name"]), CategoryWord(SafeStr(r["staff_category"])),
+                SafeStr(r["department"]), SafeStr(r["session_title"]),
+                SafeStr(r["supervisor"]) != "" ? SafeStr(r["supervisor"]) : "Not assigned",
+                StatusWord(st),
+                r["section_b_self_total"], r["raw_score"], done ? pct : null, band,
+                hrDone && hrRating > 0 ? (object)hrRating : null,
+                hrDone ? RecommendationWord(SafeStr(r["hr_recommendation"])) : "",
+                r["employee_submitted_at"], r["supervisor_submitted_at"], hrDone ? r["hr_submitted_at"] : null,
+                ack == "AGREE" ? "Agrees" : ack == "DISAGREE" ? "Disagrees" : "");
 
-            // Denominator = scored COMPLETED + HR_REVIEWED records (the WHERE below
-            // restricts to both), so the bands always add up to 100%.
-            int totalComp   = SafeInt(r["total_completed"]);
-            int exc         = SafeInt(r["c_exc"]);
-            int above       = SafeInt(r["c_above"]);
-            int sat         = SafeInt(r["c_sat"]);
-            int dev         = SafeInt(r["c_dev"]);
-            int unsat       = SafeInt(r["c_unsat"]);
-
-            StringBuilder sb = new StringBuilder();
-
-            if (totalComp == 0)
-            {
-                sb.Append("<div style='text-align:center;color:#999;padding:24px;font-size:13px;'>No completed appraisals to display</div>");
-            }
-            else
-            {
-                // Canonical scale (SQL appraisal_classify): 90 / 75 / 60 / 50
-                AppendDistBar(sb, "Exceptional (\u226590%)", exc, totalComp, "#28a745");
-                AppendDistBar(sb, "Above Expectations (75\u201389%)", above, totalComp, "#17a2b8");
-                AppendDistBar(sb, "Satisfactory (60\u201374%)", sat, totalComp, "#174DA4");
-                AppendDistBar(sb, "Development Needed (50\u201359%)", dev, totalComp, "#f59e0b");
-                AppendDistBar(sb, "Unsatisfactory (&lt;50%)", unsat, totalComp, "#dc3545");
-            }
-
-            litDistBars.Text = sb.ToString();
+            string dk = SafeStr(r["department"]);
+            if (!deptAgg.ContainsKey(dk)) { deptAgg[dk] = new int[5]; deptSum[dk] = 0m; }
+            int[] g = deptAgg[dk];
+            g[0]++; if (submitted) g[1]++; if (done) g[2]++; if (hrDone) g[3]++;
+            if (scored) { g[4]++; deptSum[dk] += Convert.ToDecimal(pct); scoredAll++; if (!bandCount.ContainsKey(band)) bandCount[band] = 0; bandCount[band]++; }
         }
-    }
 
-    private void AppendDistBar(StringBuilder sb, string label, int count, int total, string color)
-    {
-        double pct = total > 0 ? Math.Round((double)count / total * 100, 1) : 0;
-        sb.Append("<div class='pa-dist-row'>");
-        sb.AppendFormat("<span class='pa-dist-row__label'>{0}</span>", label);
-        sb.AppendFormat("<span class='pa-dist-row__count'>{0}</span>", count);
-        sb.AppendFormat("<div class='pa-dist-row__bar'><div class='pa-dist-row__fill' style='width:{0}%;background:{1};'></div></div>", pct, color);
-        sb.AppendFormat("<span class='pa-dist-row__pct'>{0}%</span>", pct);
-        sb.Append("</div>");
-    }
-
-    // ═══════════════════════════════════════════════════════════════════
-    //  DEPARTMENT SUMMARY TABLE
-    // ═══════════════════════════════════════════════════════════════════
-    private void LoadDepartmentSummary(MySqlConnection conn)
-    {
-                string where = BuildWhereClause("ar", "e", conn);
-                string deptExpr = BuildDepartmentSqlExpression(conn, "e");
-        string sql = string.Format(
-            @"SELECT
-                                {0} AS department,
-                COUNT(*) AS total,
-                SUM(CASE WHEN ar.status IN ('COMPLETED','HR_REVIEWED') THEN 1 ELSE 0 END) AS completed,
-                SUM(CASE WHEN ar.status NOT IN ('COMPLETED','HR_REVIEWED','CANCELLED') THEN 1 ELSE 0 END) AS outstanding,
-                ROUND(AVG(CASE WHEN ar.status IN ('COMPLETED','HR_REVIEWED') THEN ar.final_percentage END),1) AS avg_score,
-                ROUND(MIN(CASE WHEN ar.status IN ('COMPLETED','HR_REVIEWED') THEN ar.final_percentage END),1) AS min_score,
-                ROUND(MAX(CASE WHEN ar.status IN ('COMPLETED','HR_REVIEWED') THEN ar.final_percentage END),1) AS max_score
-              FROM appraisal_records ar
-              INNER JOIN hrm_employee e ON e.empID = ar.employee_id
-                            {1}
-                            GROUP BY {0}
-                            ORDER BY COUNT(*) DESC", deptExpr, where);
-
-        using (MySqlCommand cmd = new MySqlCommand(sql, conn))
+        // Summary by department
+        HrExport.Sheet sum = rep.NewSheet("Summary by department");
+        sum.Title = "Appraisal summary by department";
+        sum.Add("Department").Add("Records", HrExport.Kind.Number, true).Add("Submitted", HrExport.Kind.Number, true)
+           .Add("Completed", HrExport.Kind.Number, true).Add("HR reviewed", HrExport.Kind.Number, true)
+           .Add("Completion %", HrExport.Kind.Percent).Add("Average score %", HrExport.Kind.Percent);
+        List<string> depts = new List<string>(deptAgg.Keys);
+        depts.Sort(StringComparer.OrdinalIgnoreCase);
+        foreach (string dk in depts)
         {
-            AddFilterParams(cmd);
-            DataTable dt = new DataTable();
-            using (MySqlDataAdapter da = new MySqlDataAdapter(cmd)) { da.Fill(dt); }
-
-            StringBuilder sb = new StringBuilder();
-            if (dt.Rows.Count == 0)
-            {
-                sb.Append("<tr><td colspan='7' style='text-align:center;color:#999;padding:20px;'>No data available</td></tr>");
-            }
-            else
-            {
-                foreach (DataRow r in dt.Rows)
-                {
-                    int total = SafeInt(r["total"]);
-                    int comp  = SafeInt(r["completed"]);
-                    double pct = total > 0 ? Math.Round((double)comp / total * 100, 1) : 0;
-
-                    sb.Append("<tr>");
-                    sb.AppendFormat("<td><strong>{0}</strong></td>", HttpUtility.HtmlEncode(SafeStr(r["department"])));
-                    sb.AppendFormat("<td class='pa-num'>{0}</td>", total);
-                    sb.AppendFormat("<td class='pa-num'>{0}</td>", comp);
-                    sb.AppendFormat("<td class='pa-num'>{0}</td>", SafeInt(r["outstanding"]));
-                    sb.AppendFormat("<td>{0}</td>", BuildMiniProgress(comp, total));
-                    sb.AppendFormat("<td class='pa-num'>{0}</td>", FormatScore(r["avg_score"]));
-                    sb.AppendFormat("<td class='pa-num'>{0} / {1}</td>",
-                        FormatScoreShort(r["min_score"]),
-                        FormatScoreShort(r["max_score"]));
-                    sb.Append("</tr>");
-                }
-            }
-            litDeptRows.Text = sb.ToString();
+            int[] g = deptAgg[dk];
+            sum.Row(dk, g[0], g[1], g[2], g[3],
+                g[0] > 0 ? (object)Math.Round((decimal)g[2] * 100m / g[0], 1) : null,
+                g[4] > 0 ? (object)Math.Round(deptSum[dk] / g[4], 1) : null);
         }
-    }
 
-    // ═══════════════════════════════════════════════════════════════════
-    //  DETAILED RECORDS TABLE
-    // ═══════════════════════════════════════════════════════════════════
-    private void LoadDetailedRecords(MySqlConnection conn)
-    {
-                string where = BuildWhereClause("ar", "e", conn);
-                string deptExpr = BuildDepartmentSqlExpression(conn, "e");
-        string sql = string.Format(
-            @"SELECT
-                ar.record_id, ar.status, ar.staff_category,
-                ar.final_percentage, ar.classification,
-                ar.employee_submitted_at, ar.supervisor_submitted_at,
-                e.emp_name, e.EMP_CODE,
-                                {0} AS department,
-                s.session_title,
-                sup.emp_name AS supervisor_name
-              FROM appraisal_records ar
-              INNER JOIN hrm_employee e   ON e.empID = ar.employee_id
-              INNER JOIN appraisal_sessions s ON s.session_id = ar.session_id
-              LEFT  JOIN hrm_employee sup ON sup.empID = ar.reviewer_id
-                            {1}
-              ORDER BY
-                FIELD(ar.status,'HR_REVIEWED','COMPLETED','SUPERVISOR_IN_PROGRESS','EMPLOYEE_SUBMITTED',
-                      'EMPLOYEE_IN_PROGRESS','RETURNED','PENDING','CANCELLED'),
-                ar.final_percentage DESC,
-                e.emp_name ASC
-                            LIMIT 500", deptExpr, where);
-
-        using (MySqlCommand cmd = new MySqlCommand(sql, conn))
+        // Classification
+        HrExport.Sheet cls = rep.NewSheet("Classification");
+        cls.Title = "Appraisal classification (scored appraisals completed by the supervisor)";
+        cls.Add("Band").Add("Count", HrExport.Kind.Number, true).Add("% of scored", HrExport.Kind.Percent);
+        foreach (string[] b in Bands)
         {
-            AddFilterParams(cmd);
-            DataTable dt = new DataTable();
-            using (MySqlDataAdapter da = new MySqlDataAdapter(cmd)) { da.Fill(dt); }
-
-            litRecordCount.Text = dt.Rows.Count.ToString("N0");
-
-            StringBuilder sb = new StringBuilder();
-            if (dt.Rows.Count == 0)
-            {
-                sb.Append("<tr><td colspan='9' style='text-align:center;color:#999;padding:24px;'>No records match the selected filters</td></tr>");
-            }
-            else
-            {
-                int rowNum = 0;
-                foreach (DataRow r in dt.Rows)
-                {
-                    rowNum++;
-                    string status = SafeStr(r["status"]);
-                    string score = FormatScore(r["final_percentage"]);
-                    string classif = Classify(r["final_percentage"], SafeStr(r["classification"]));
-                    if (string.IsNullOrEmpty(classif)) classif = "\u2014";
-
-                    sb.Append("<tr>");
-                    sb.AppendFormat("<td class='pa-num' style='color:#aaa;'>{0}</td>", rowNum);
-                    sb.AppendFormat("<td><strong>{0}</strong><br/><span style='font-size:10px;color:#999;'>{1}</span></td>",
-                        HttpUtility.HtmlEncode(SafeStr(r["emp_name"])),
-                        HttpUtility.HtmlEncode(SafeStr(r["EMP_CODE"])));
-                    sb.AppendFormat("<td style='font-size:11px;'>{0}</td>",
-                        HttpUtility.HtmlEncode(SafeStr(r["department"])));
-                    sb.AppendFormat("<td><span class='pa-cat-badge pa-cat-badge--{0}'>{1}</span></td>",
-                        SafeStr(r["staff_category"]).ToLower(),
-                        FormatCategory(SafeStr(r["staff_category"])));
-                    sb.AppendFormat("<td><span class='pa-rec-badge pa-rec-badge--{0}'>{1}</span></td>",
-                        GetRecordBadgeModifier(status), FormatStatusLabel(status));
-                    sb.AppendFormat("<td class='pa-num' style='font-weight:700;{0}'>{1}</td>",
-                        GetScoreStyle(r["final_percentage"]), score);
-                    sb.AppendFormat("<td style='font-size:11px;'>{0}</td>", HttpUtility.HtmlEncode(classif));
-                    sb.AppendFormat("<td style='font-size:11px;'>{0}</td>",
-                        HttpUtility.HtmlEncode(SafeStr(r["supervisor_name"])));
-                    sb.AppendFormat("<td style='font-size:11px;'>{0}</td>",
-                        HttpUtility.HtmlEncode(SafeStr(r["session_title"])));
-                    sb.Append("</tr>");
-                }
-            }
-            litRecordRows.Text = sb.ToString();
+            int n = bandCount.ContainsKey(b[0]) ? bandCount[b[0]] : 0;
+            cls.Row(b[0], n, scoredAll > 0 ? (object)Math.Round((decimal)n * 100m / scoredAll, 1) : null);
         }
+
+        if (fmt == "csv") HrExport.SendCsv(Response, rep, 0);
+        else HrExport.SendXlsx(Response, rep);
+        try { Response.End(); } catch (System.Threading.ThreadAbortException) { }
     }
 
     // ═══════════════════════════════════════════════════════════════════
-    //  CSV EXPORT
+    //  VOCABULARY AND HELPERS
     // ═══════════════════════════════════════════════════════════════════
-    private void HandleExportCsv()
+    private static string StatusWord(string s)
     {
-        try
-        {
-            DataTable dt;
-            using (MySqlConnection conn = new MySqlConnection(ConnStr))
-            {
-                conn.Open();
-                string deptExpr = BuildDepartmentSqlExpression(conn, "e");
-                string where = BuildWhereClause("ar", "e", conn);
-                string sql = string.Format(
-                    @"SELECT
-                        e.EMP_CODE AS 'Employee Code',
-                        e.emp_name AS 'Employee Name',
-                        {0} AS 'Department',
-                        ar.staff_category AS 'Category',
-                        ar.status AS 'Status',
-                        ar.final_percentage AS 'Score (%)',
-                        IFNULL(appraisal_classify(ar.final_percentage), ar.classification) AS 'Classification',
-                        sup.emp_name AS 'Supervisor',
-                        s.session_title AS 'Session',
-                        DATE_FORMAT(ar.employee_submitted_at,'%Y-%m-%d %H:%i') AS 'Employee Submitted',
-                        DATE_FORMAT(ar.supervisor_submitted_at,'%Y-%m-%d %H:%i') AS 'Supervisor Submitted',
-                        DATE_FORMAT(ar.created_at,'%Y-%m-%d %H:%i') AS 'Created'
-                      FROM appraisal_records ar
-                      INNER JOIN hrm_employee e   ON e.empID = ar.employee_id
-                      INNER JOIN appraisal_sessions s ON s.session_id = ar.session_id
-                      LEFT  JOIN hrm_employee sup ON sup.empID = ar.reviewer_id
-                      {1}
-                      ORDER BY {0}, e.emp_name", deptExpr, where);
-
-                using (MySqlCommand cmd = new MySqlCommand(sql, conn))
-                {
-                    AddFilterParams(cmd);
-                    dt = new DataTable();
-                    using (MySqlDataAdapter da = new MySqlDataAdapter(cmd)) { da.Fill(dt); }
-                }
-            }
-
-            // Build filename
-            string fileLabel = "AppraisalReport";
-            if (QsSession > 0) fileLabel += "_Session" + QsSession;
-            fileLabel += "_" + DateTime.Now.ToString("yyyyMMdd_HHmmss");
-
-            Response.Clear();
-            Response.ContentType = "text/csv";
-            Response.AddHeader("Content-Disposition",
-                string.Format("attachment; filename={0}.csv", fileLabel));
-
-            StringBuilder sb = new StringBuilder();
-
-            // Header row
-            List<string> headers = new List<string>();
-            foreach (DataColumn col in dt.Columns)
-                headers.Add(CsvEscape(col.ColumnName));
-            sb.AppendLine(string.Join(",", headers.ToArray()));
-
-            // Data rows
-            foreach (DataRow r in dt.Rows)
-            {
-                List<string> vals = new List<string>();
-                foreach (DataColumn col in dt.Columns)
-                {
-                    string val = (r[col] == null || r[col] == DBNull.Value) ? "" : r[col].ToString();
-                    vals.Add(CsvEscape(val));
-                }
-                sb.AppendLine(string.Join(",", vals.ToArray()));
-            }
-
-            Response.Write(sb.ToString());
-            Response.End();
-        }
-        catch (System.Threading.ThreadAbortException)
-        {
-            // Response.End() throws this — safe to ignore
-        }
-        catch (Exception ex)
-        {
-            Response.Clear();
-            Response.ContentType = "text/plain";
-            Response.Write("Export failed: " + ex.Message);
-            Response.End();
-        }
+        foreach (string[] st in Statuses) if (st[0] == (s ?? "").ToUpperInvariant()) return st[1];
+        return s ?? "";
     }
 
-    private static string CsvEscape(string val)
+    private static string Classify(decimal d)
     {
-        if (string.IsNullOrEmpty(val)) return "";
-        if (val.Contains(",") || val.Contains("\"") || val.Contains("\n") || val.Contains("\r"))
-            return "\"" + val.Replace("\"", "\"\"") + "\"";
-        return val;
-    }
-
-    // ═══════════════════════════════════════════════════════════════════
-    //  HELPERS
-    // ═══════════════════════════════════════════════════════════════════
-
-    private string BuildMiniProgress(int completed, int total)
-    {
-        if (total == 0) return "<span style='color:#bbb;font-size:11px;'>\u2014</span>";
-        double pct = Math.Round((double)completed / total * 100, 1);
-        string color = pct >= 75 ? "#28a745" : pct >= 40 ? "#f59e0b" : pct > 0 ? "#174DA4" : "#dee2e6";
-        return string.Format(
-            "<div class='pa-mini-prog'>" +
-            "<div class='pa-mini-prog__bar' style='width:{0}%;background:{1}'></div>" +
-            "</div>" +
-            "<span class='pa-mini-prog__text'>{0}%</span>",
-            pct, color);
-    }
-
-    private string FormatScore(object val)
-    {
-        if (val == null || val == DBNull.Value) return "\u2014";
-        decimal d;
-        if (decimal.TryParse(val.ToString(), out d))
-            return d.ToString("F1") + "%";
-        return "\u2014";
-    }
-
-    private string FormatScoreShort(object val)
-    {
-        if (val == null || val == DBNull.Value) return "\u2014";
-        decimal d;
-        if (decimal.TryParse(val.ToString(), out d))
-            return d.ToString("F1");
-        return "\u2014";
-    }
-
-    private string GetScoreStyle(object val)
-    {
-        if (val == null || val == DBNull.Value) return "";
-        decimal d;
-        if (!decimal.TryParse(val.ToString(), out d)) return "";
-        if (d >= 90) return "color:#28a745;";
-        if (d >= 75) return "color:#17a2b8;";
-        if (d >= 60) return "color:#174DA4;";
-        if (d >= 50) return "color:#f59e0b;";
-        return "color:#dc3545;";
-    }
-
-    /// <summary>
-    /// The one classification scale (mirrors SQL appraisal_classify): 90 Exceptional,
-    /// 75 Above Expectations, 60 Satisfactory, 50 Development Needed, else Unsatisfactory.
-    /// Computed from the percentage so older records stored under retired labels read the same.
-    /// </summary>
-    private static string Classify(object pct, string fallback)
-    {
-        if (pct == null || pct == DBNull.Value) return fallback ?? "";
-        decimal d;
-        if (!decimal.TryParse(pct.ToString(), out d)) return fallback ?? "";
         if (d >= 90) return "Exceptional";
-        if (d >= 75) return "Above Expectations";
+        if (d >= 75) return "Above expectations";
         if (d >= 60) return "Satisfactory";
-        if (d >= 50) return "Development Needed";
+        if (d >= 50) return "Development needed";
         return "Unsatisfactory";
     }
 
-    /// <summary>Forms ticket OR Session["username"] (see eadmin anonymous ?action= fix).</summary>
-    private bool IsCallerAuthenticated()
+    private static string RecommendationWord(string rec)
     {
-        try
+        switch ((rec ?? "").ToUpperInvariant())
         {
-            if (User != null && User.Identity != null && User.Identity.IsAuthenticated
-                && !string.IsNullOrEmpty(User.Identity.Name)) return true;
-        }
-        catch { }
-        try
-        {
-            if (Session != null)
-            {
-                object u = Session["username"];
-                if (u != null && !string.IsNullOrEmpty(u.ToString().Trim())) return true;
-            }
-        }
-        catch { }
-        return false;
-    }
-
-    private string FormatCategory(string cat)
-    {
-        if (string.IsNullOrEmpty(cat)) return "\u2014";
-        return cat.Substring(0, 1) + cat.Substring(1).ToLower();
-    }
-
-    private string FormatStatusLabel(string status)
-    {
-        switch (status.ToUpper())
-        {
-            case "PENDING":                return "Not Started";
-            case "EMPLOYEE_IN_PROGRESS":   return "Emp. In Progress";
-            case "RETURNED":               return "Returned";
-            case "EMPLOYEE_SUBMITTED":     return "Emp. Submitted";
-            case "SUPERVISOR_IN_PROGRESS": return "Sup. Reviewing";
-            case "COMPLETED":              return "Awaiting HR";
-            case "HR_REVIEWED":            return "HR Reviewed";
-            case "CANCELLED":              return "Cancelled";
-            default:                       return status;
+            case "CONFIRM":          return "Confirm appointment";
+            case "EXTEND_PROBATION": return "Extend probation";
+            case "PIP":              return "Performance improvement plan";
+            case "PROMOTE":          return "Promote";
+            case "OTHER":            return "Other";
+            default:                 return rec ?? "";
         }
     }
 
-    private string GetRecordBadgeModifier(string status)
+    private static string CategoryWord(string c)
     {
-        switch (status.ToUpper())
+        switch ((c ?? "").ToUpperInvariant())
         {
-            case "PENDING":                return "pending";
-            case "EMPLOYEE_IN_PROGRESS":   return "emp-prog";
-            case "RETURNED":               return "returned";
-            case "EMPLOYEE_SUBMITTED":     return "emp-done";
-            case "SUPERVISOR_IN_PROGRESS": return "sup-prog";
-            case "COMPLETED":              return "completed";
-            case "HR_REVIEWED":            return "hr-reviewed";
-            case "CANCELLED":              return "cancelled";
-            default:                       return "pending";
+            case "ACADEMIC": return "Academic";
+            case "ADMINISTRATIVE": return "Administrative";
+            case "SUPPORT": return "Support";
+            default: return c == "" ? "Not recorded" : HttpUtility.HtmlEncode(c);
         }
     }
 
-    private int SafeInt(object val)
+    private static string Word(string s)
+    {
+        s = (s ?? "").Trim();
+        return s.Length == 0 ? "" : s.Substring(0, 1).ToUpperInvariant() + s.Substring(1).ToLowerInvariant();
+    }
+
+    private static string Pct(int n, int of)
+    {
+        return of > 0 ? ((decimal)n * 100m / of).ToString("0.0", CultureInfo.InvariantCulture) : "";
+    }
+
+    private static string Dec(object v)
+    {
+        decimal d;
+        if (v == null || v == DBNull.Value || !decimal.TryParse(v.ToString(), out d)) return "";
+        return d.ToString("0.0", CultureInfo.InvariantCulture);
+    }
+
+    private static string Enc(string s) { return HttpUtility.HtmlEncode(HrExport.Clean(s ?? "")); }
+
+    private static int SafeInt(object val)
     {
         if (val == null || val == DBNull.Value) return 0;
-        int result;
-        return int.TryParse(val.ToString(), out result) ? result : 0;
+        decimal d;
+        return decimal.TryParse(val.ToString(), out d) ? (int)d : 0;
     }
 
-    private string SafeStr(object val)
-    {
-        if (val == null || val == DBNull.Value) return "";
-        return val.ToString();
-    }
-
-    private string GetDepartmentSelectExpression(string employeeAlias)
-    {
-        using (MySqlConnection conn = new MySqlConnection(ConnStr))
-        {
-            conn.Open();
-            return BuildDepartmentSqlExpression(conn, employeeAlias);
-        }
-    }
+    private static string SafeStr(object val) { return val == null || val == DBNull.Value ? "" : val.ToString(); }
 
     private string BuildDepartmentSqlExpression(MySqlConnection conn, string employeeAlias)
     {
         if (ColumnExists(conn, "hrm_employee", "department"))
-        {
-            return string.Format("IFNULL(NULLIF(TRIM({0}.department),''), 'Unassigned')", employeeAlias);
-        }
+            return string.Format("IFNULL(NULLIF(TRIM({0}.department),''), 'Not recorded')", employeeAlias);
 
         if (TableExists(conn, "hrm_emp_contracts") && TableExists(conn, "hrm_departments") && ColumnExists(conn, "hrm_emp_contracts", "departmentID"))
         {
             string deptColumn = ColumnExists(conn, "hrm_departments", "dept_name")
-                ? "dept_name"
-                : (ColumnExists(conn, "hrm_departments", "department") ? "department" : "");
-
+                ? "dept_name" : (ColumnExists(conn, "hrm_departments", "department") ? "department" : "");
             string sortColumn = ColumnExists(conn, "hrm_emp_contracts", "contractStart")
-                ? "contractStart"
-                : (ColumnExists(conn, "hrm_emp_contracts", "created_at") ? "created_at" : "empID");
-
+                ? "contractStart" : (ColumnExists(conn, "hrm_emp_contracts", "created_at") ? "created_at" : "empID");
             if (!string.IsNullOrEmpty(deptColumn))
-            {
                 return string.Format(
-                    "IFNULL(NULLIF(TRIM((SELECT d.{0} FROM hrm_emp_contracts c LEFT JOIN hrm_departments d ON c.departmentID = d.ID WHERE c.empID = {1}.empID ORDER BY (CASE WHEN IFNULL(c.contractStatus,'')='VALID' THEN 0 ELSE 1 END), c.{2} DESC LIMIT 1)),''), 'Unassigned')",
-                    deptColumn,
-                    employeeAlias,
-                    sortColumn);
-            }
+                    "IFNULL(NULLIF(TRIM((SELECT d.{0} FROM hrm_emp_contracts c LEFT JOIN hrm_departments d ON c.departmentID = d.ID WHERE c.empID = {1}.empID ORDER BY (CASE WHEN IFNULL(c.contractStatus,'')='VALID' THEN 0 ELSE 1 END), c.{2} DESC LIMIT 1)),''), 'Not recorded')",
+                    deptColumn, employeeAlias, sortColumn);
         }
-
-        return "'Unassigned'";
+        return "'Not recorded'";
     }
 
     private bool TableExists(MySqlConnection conn, string tableName)
@@ -744,9 +454,6 @@ public partial class COOPERP_NewScreens_AppraisalReports : System.Web.UI.Page
         }
     }
 
-    // ═══════════════════════════════════════════════════════════════════
-    //  DATA ACCESS
-    // ═══════════════════════════════════════════════════════════════════
     private DataTable ExecuteQuery(string sql, params MySqlParameter[] parms)
     {
         DataTable dt = new DataTable();
@@ -755,8 +462,7 @@ public partial class COOPERP_NewScreens_AppraisalReports : System.Web.UI.Page
             conn.Open();
             using (MySqlCommand cmd = new MySqlCommand(sql, conn))
             {
-                if (parms != null)
-                    foreach (MySqlParameter p in parms) cmd.Parameters.Add(p);
+                if (parms != null) foreach (MySqlParameter p in parms) cmd.Parameters.Add(p);
                 using (MySqlDataAdapter da = new MySqlDataAdapter(cmd)) { da.Fill(dt); }
             }
         }

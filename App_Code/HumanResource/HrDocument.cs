@@ -20,6 +20,7 @@ public static class HrDocument
         public bool Landscape = false;
         public bool Confidential = true;
         public string BackUrl = "";            // toolbar "Back" link; empty = history.back()
+        public string FooterNote = "";         // e.g. "Record reference APR-1306", printed in the footer
     }
 
     public static string E(string s) { return HttpUtility.HtmlEncode(HrExport.Clean(s ?? "")); }
@@ -32,7 +33,7 @@ public static class HrDocument
         if (o == null) o = new Options();
         HttpRequest req = HttpContext.Current != null ? HttpContext.Current.Request : null;
         string crest = req == null ? "" : req.Url.GetLeftPart(UriPartial.Authority) + VirtualPathUtility.ToAbsolute("~/COOPERP/images/mru-crest.png");
-        string printed = DateTime.Now.ToString("d MMMM yyyy, HH:mm", CultureInfo.InvariantCulture);
+        string printed = DateTime.Now.ToString("d MMM yyyy, HH:mm", CultureInfo.InvariantCulture);
 
         StringBuilder h = new StringBuilder();
         h.Append("<!DOCTYPE html><html lang=\"en\"><head><meta charset=\"utf-8\" />");
@@ -53,6 +54,7 @@ public static class HrDocument
         if (!string.IsNullOrEmpty(o.Reference)) h.Append("<div class=\"ref\">").Append(E(o.Reference)).Append("</div>");
         h.Append(bodyHtml);
         h.Append("<div class=\"ft\"><span>Muteesa I Royal University").Append(o.Confidential ? " | Confidential" : "")
+         .Append(string.IsNullOrEmpty(o.FooterNote) ? "" : " | " + E(o.FooterNote))
          .Append("</span><span>Printed ").Append(printed).Append("</span></div>");
         h.Append("</div></body></html>");
         return h.ToString();

@@ -8,16 +8,16 @@ using System.Web.UI;
 using MySql.Data.MySqlClient;
 
 /// <summary>
-/// Expected Standards catalogue (Performance Appraisal, Section B).
+/// Expected standards catalogue (performance appraisal, Section B).
 ///
-/// appraisal_standard_groups  - one group per office / staff type (Lecturers, Finance, ICT ...)
-/// appraisal_standards        - the Responsibility / KPA + Expected Standard rows of a group
+/// appraisal_standard_groups  - one group per office or staff type (Lecturers, Finance, ICT ...)
+/// appraisal_standards        - the responsibility / key performance area and expected standard rows of a group
 /// hrm_departments.standards_group_id - which group a department's staff are given
 ///
-/// The resolver appraisal_resolve_group(empID, category) reads these tables when a record
-/// is generated, and the staff portal pre-fills Section B from the group's active standards.
-/// Anything already referenced by appraisal_section_b.standard_id (or, for a group, by a
-/// record / department / standard) is deactivated, never hard-deleted.
+/// appraisal_resolve_group(empID, category) reads these tables when a record is generated, and
+/// the staff portal pre-fills Section B from the group's active standards. Anything already
+/// referenced is deactivated, never hard-deleted. ?action=print gives the printable catalogue.
+/// Signed-in staff may view; changes and every ?ajax= call need HR access.
 /// </summary>
 public partial class COOPERP_NewScreens_ExpectedStandards : System.Web.UI.Page
 {
@@ -33,15 +33,21 @@ public partial class COOPERP_NewScreens_ExpectedStandards : System.Web.UI.Page
 
     private static readonly string[] AppliesTo = new string[] { "ACADEMIC", "ADMINISTRATIVE", "ANY" };
 
-    // ═══════════════════════════════════════════════════════════════════
-    //  PAGE LIFECYCLE
-    // ═══════════════════════════════════════════════════════════════════
     protected void Page_Load(object sender, EventArgs e)
     {
         string ajax = (Request.QueryString["ajax"] ?? "").Trim().ToLower();
         if (!string.IsNullOrEmpty(ajax))
         {
+            if (!HrAccess.RequireHr(true)) return;
             HandleAjax(ajax);
+            return;
+        }
+
+        if (!HrAccess.IsSignedIn()) { HrAccess.RequireHr(false); return; }
+
+        if ((Request.QueryString["action"] ?? "").ToLower() == "print")
+        {
+            PrintCatalogue();
             return;
         }
 
@@ -50,79 +56,14 @@ public partial class COOPERP_NewScreens_ExpectedStandards : System.Web.UI.Page
             try { LoadPage(); }
             catch (Exception ex)
             {
-                litError.Text = "<div class='es-alert es-alert--error'>Error loading catalogue: " +
-                    HttpUtility.HtmlEncode(ex.Message) + "</div>";
+                System.Diagnostics.Trace.TraceError("ExpectedStandards: " + ex);
+                litError.Text = "<div class='hr-notice hr-notice--bad'>The catalogue could not be loaded. Refresh the page or try again later.</div>";
             }
         }
     }
 
     // ═══════════════════════════════════════════════════════════════════
-    //  AUTH
-    // ═══════════════════════════════════════════════════════════════════
-    private bool IsCallerAuthenticated()
-    {
-        try
-        {
-            if (User != null && User.Identity != null && User.Identity.IsAuthenticated
-                && !string.IsNullOrEmpty(User.Identity.Name)) return true;
-        }
-        catch { }
-        try
-        {
-            if (Session != null)
-            {
-                object u = Session["username"];
-                if (u != null && !string.IsNullOrEmpty(u.ToString().Trim())) return true;
-            }
-        }
-        catch { }
-        return false;
-    }
-
-    private bool? _hrAccess;
-
-    /// <summary>
-    /// HR appraisal administration: RBAC admin wildcard, an active sys role 'admin' or
-    /// 'hr_manager', or legacy my_aspnet role Administrator / System Admin / Human Resource /
-    /// Human Resource Manager. (Same rule as AppraisalView / AppraisalSessions.)
-    /// </summary>
-    private bool HasHrAppraisalAccess()
-    {
-        if (_hrAccess.HasValue) return _hrAccess.Value;
-        bool ok = false;
-        try
-        {
-            if (IsCallerAuthenticated())
-            {
-                if (RoleAccessService.IsAdmin()) ok = true;
-                string u = Session != null && Session["username"] != null ? Session["username"].ToString().Trim()
-                         : (User != null && User.Identity != null ? User.Identity.Name : "");
-                if (!ok && !string.IsNullOrEmpty(u))
-                {
-                    DataTable dt = Q(
-                        @"SELECT
-                            (SELECT COUNT(*) FROM sys_user_roles ur
-                               JOIN sys_roles r ON r.id = ur.role_id
-                              WHERE ur.username = @u AND ur.is_active = 1 AND r.is_active = 1
-                                AND (ur.expires_at IS NULL OR ur.expires_at > NOW())
-                                AND r.role_code IN ('admin','hr_manager'))
-                          + (SELECT COUNT(*) FROM my_aspnet_users mu
-                               JOIN my_aspnet_usersinroles mur ON mur.userId = mu.id
-                               JOIN my_aspnet_roles mr ON mr.id = mur.roleId
-                              WHERE mu.name = @u
-                                AND mr.name IN ('Administrator','System Admin','Human Resource','Human Resource Manager')) AS n",
-                        new MySqlParameter("@u", u));
-                    ok = dt.Rows.Count > 0 && SafeInt(dt.Rows[0]["n"]) > 0;
-                }
-            }
-        }
-        catch { ok = false; }
-        _hrAccess = ok;
-        return ok;
-    }
-
-    // ═══════════════════════════════════════════════════════════════════
-    //  AJAX ROUTER
+    //  AJAX (caller already passed HrAccess.RequireHr)
     // ═══════════════════════════════════════════════════════════════════
     private void HandleAjax(string action)
     {
@@ -130,24 +71,11 @@ public partial class COOPERP_NewScreens_ExpectedStandards : System.Web.UI.Page
         Response.ContentType = "application/json";
         try
         {
-            // ?ajax= runs BEFORE SidebarMaster's login check, so it gates itself.
-            if (!IsCallerAuthenticated())
-            {
-                Response.Write("{\"ok\":false,\"msg\":\"Your session has expired. Please sign in again, then retry.\"}");
-            }
-            else if (action == "get_group" || action == "get_standard")
-            {
-                if (action == "get_group") AjaxGetGroup(); else AjaxGetStandard();
-            }
+            if (action == "get_group") AjaxGetGroup();
+            else if (action == "get_standard") AjaxGetStandard();
             else if (!string.Equals(Request.HttpMethod, "POST", StringComparison.OrdinalIgnoreCase)
                      || !MarksAntiForgeryService.ValidateRequest())
-            {
-                Response.Write("{\"ok\":false,\"msg\":\"Security validation failed. Please refresh and try again.\"}");
-            }
-            else if (!HasHrAppraisalAccess())
-            {
-                Response.Write("{\"ok\":false,\"msg\":\"Access denied. HR or administrator access is required.\"}");
-            }
+                Response.Write("{\"ok\":false,\"msg\":\"The page has expired. Refresh it and try again.\"}");
             else
             {
                 switch (action)
@@ -160,14 +88,15 @@ public partial class COOPERP_NewScreens_ExpectedStandards : System.Web.UI.Page
                     case "delete_standard": AjaxDeleteStandard(); break;
                     case "reorder":         AjaxReorder(); break;
                     case "map_department":  AjaxMapDepartment(); break;
-                    default: Response.Write("{\"ok\":false,\"msg\":\"Unknown action\"}"); break;
+                    default: Response.Write("{\"ok\":false,\"msg\":\"Unknown action.\"}"); break;
                 }
             }
         }
         catch (System.Threading.ThreadAbortException) { }
         catch (Exception ex)
         {
-            Response.Write("{\"ok\":false,\"msg\":\"" + Js(ex.Message) + "\"}");
+            System.Diagnostics.Trace.TraceError("ExpectedStandards " + action + ": " + ex);
+            Response.Write("{\"ok\":false,\"msg\":\"The change could not be saved. Try again, or contact MIS if it keeps failing.\"}");
         }
         try { Response.End(); } catch (System.Threading.ThreadAbortException) { }
     }
@@ -180,7 +109,7 @@ public partial class COOPERP_NewScreens_ExpectedStandards : System.Web.UI.Page
         int id = SafeInt(Request.QueryString["id"]);
         DataTable dt = Q("SELECT group_id, group_code, group_name, applies_to, sort_order, is_active FROM appraisal_standard_groups WHERE group_id = @id",
             new MySqlParameter("@id", id));
-        if (dt.Rows.Count == 0) { Response.Write("{\"ok\":false,\"msg\":\"Group not found\"}"); return; }
+        if (dt.Rows.Count == 0) { Response.Write("{\"ok\":false,\"msg\":\"The group was not found.\"}"); return; }
         DataRow r = dt.Rows[0];
         Response.Write(string.Format(
             "{{\"ok\":true,\"data\":{{\"group_id\":{0},\"group_code\":\"{1}\",\"group_name\":\"{2}\",\"applies_to\":\"{3}\",\"sort_order\":{4},\"is_active\":{5}}}}}",
@@ -196,15 +125,15 @@ public partial class COOPERP_NewScreens_ExpectedStandards : System.Web.UI.Page
         string applies = F("applies_to").ToUpper();
         int sort = SafeInt(F("sort_order"));
 
-        if (code == "" || code.Length > 30) { Response.Write("{\"ok\":false,\"msg\":\"Group code is required (max 30 characters)\"}"); return; }
+        if (code == "" || code.Length > 30) { Response.Write("{\"ok\":false,\"msg\":\"Enter a code of up to 30 characters.\"}"); return; }
         foreach (char c in code)
-            if (!(char.IsLetterOrDigit(c) || c == '_')) { Response.Write("{\"ok\":false,\"msg\":\"Group code may contain only letters, digits and _\"}"); return; }
-        if (name == "" || name.Length > 150) { Response.Write("{\"ok\":false,\"msg\":\"Group name is required (max 150 characters)\"}"); return; }
-        if (Array.IndexOf(AppliesTo, applies) < 0) { Response.Write("{\"ok\":false,\"msg\":\"Choose who the group applies to\"}"); return; }
+            if (!(char.IsLetterOrDigit(c) || c == '_')) { Response.Write("{\"ok\":false,\"msg\":\"The code may contain only letters, digits and underscore.\"}"); return; }
+        if (name == "" || name.Length > 150) { Response.Write("{\"ok\":false,\"msg\":\"Enter a name of up to 150 characters.\"}"); return; }
+        if (Array.IndexOf(AppliesTo, applies) < 0) { Response.Write("{\"ok\":false,\"msg\":\"Choose who the group applies to.\"}"); return; }
 
         DataTable dup = Q("SELECT COUNT(*) AS n FROM appraisal_standard_groups WHERE group_code = @c AND group_id <> @id",
             new MySqlParameter("@c", code), new MySqlParameter("@id", id));
-        if (SafeInt(dup.Rows[0]["n"]) > 0) { Response.Write("{\"ok\":false,\"msg\":\"Group code '" + Js(code) + "' is already used\"}"); return; }
+        if (SafeInt(dup.Rows[0]["n"]) > 0) { Response.Write("{\"ok\":false,\"msg\":\"Code " + Js(code) + " is already used.\"}"); return; }
 
         if (id > 0)
         {
@@ -213,7 +142,7 @@ public partial class COOPERP_NewScreens_ExpectedStandards : System.Web.UI.Page
                  WHERE group_id = @id",
               new MySqlParameter("@c", code), new MySqlParameter("@n", name), new MySqlParameter("@a", applies),
               new MySqlParameter("@s", sort), new MySqlParameter("@id", id));
-            Response.Write("{\"ok\":true,\"msg\":\"Group updated\",\"id\":" + id + "}");
+            Response.Write("{\"ok\":true,\"msg\":\"Group saved.\",\"id\":" + id + "}");
         }
         else
         {
@@ -231,7 +160,7 @@ public partial class COOPERP_NewScreens_ExpectedStandards : System.Web.UI.Page
                     cmd.Parameters.AddWithValue("@a", applies);
                     cmd.Parameters.AddWithValue("@s", sort);
                     int newId = Convert.ToInt32(cmd.ExecuteScalar());
-                    Response.Write("{\"ok\":true,\"msg\":\"Group created\",\"id\":" + newId + "}");
+                    Response.Write("{\"ok\":true,\"msg\":\"Group added.\",\"id\":" + newId + "}");
                 }
             }
         }
@@ -250,14 +179,14 @@ public partial class COOPERP_NewScreens_ExpectedStandards : System.Web.UI.Page
     private void AjaxDeleteGroup()
     {
         int id = SafeInt(F("id"));
-        if (id <= 0) { Response.Write("{\"ok\":false,\"msg\":\"Invalid group\"}"); return; }
+        if (id <= 0) { Response.Write("{\"ok\":false,\"msg\":\"Invalid group.\"}"); return; }
         if (GroupReferences(id) > 0)
         {
-            Response.Write("{\"ok\":false,\"msg\":\"This group has standards, departments or appraisal records attached - deactivate it instead.\"}");
+            Response.Write("{\"ok\":false,\"msg\":\"This group has standards, departments or appraisals attached. Deactivate it instead.\"}");
             return;
         }
         int n = X("DELETE FROM appraisal_standard_groups WHERE group_id = @id", new MySqlParameter("@id", id));
-        Response.Write(n > 0 ? "{\"ok\":true,\"msg\":\"Group deleted\"}" : "{\"ok\":false,\"msg\":\"Group not found\"}");
+        Response.Write(n > 0 ? "{\"ok\":true,\"msg\":\"Group deleted.\"}" : "{\"ok\":false,\"msg\":\"The group was not found.\"}");
     }
 
     private void AjaxToggle(string table, string key, string label)
@@ -266,8 +195,8 @@ public partial class COOPERP_NewScreens_ExpectedStandards : System.Web.UI.Page
         int active = F("active") == "1" ? 1 : 0;
         int n = X(string.Format("UPDATE {0} SET is_active = @a, updated_at = NOW() WHERE {1} = @id", table, key),
             new MySqlParameter("@a", active), new MySqlParameter("@id", id));
-        if (n == 0) { Response.Write("{\"ok\":false,\"msg\":\"Not found\"}"); return; }
-        Response.Write("{\"ok\":true,\"msg\":\"" + (label == "group" ? "Group " : "Standard ") + (active == 1 ? "activated" : "deactivated") + "\"}");
+        if (n == 0) { Response.Write("{\"ok\":false,\"msg\":\"Not found.\"}"); return; }
+        Response.Write("{\"ok\":true,\"msg\":\"" + (label == "group" ? "Group " : "Standard ") + (active == 1 ? "activated." : "deactivated.") + "\"}");
     }
 
     // ── standards ───────────────────────────────────────────────────────
@@ -276,7 +205,7 @@ public partial class COOPERP_NewScreens_ExpectedStandards : System.Web.UI.Page
         int id = SafeInt(Request.QueryString["id"]);
         DataTable dt = Q("SELECT standard_id, group_id, kpa_title, expected_standard, sort_order, is_active FROM appraisal_standards WHERE standard_id = @id",
             new MySqlParameter("@id", id));
-        if (dt.Rows.Count == 0) { Response.Write("{\"ok\":false,\"msg\":\"Standard not found\"}"); return; }
+        if (dt.Rows.Count == 0) { Response.Write("{\"ok\":false,\"msg\":\"The standard was not found.\"}"); return; }
         DataRow r = dt.Rows[0];
         Response.Write(string.Format(
             "{{\"ok\":true,\"data\":{{\"standard_id\":{0},\"group_id\":{1},\"kpa_title\":\"{2}\",\"expected_standard\":\"{3}\",\"sort_order\":{4},\"is_active\":{5}}}}}",
@@ -292,9 +221,9 @@ public partial class COOPERP_NewScreens_ExpectedStandards : System.Web.UI.Page
         string std = F("expected_standard");
 
         if (gid <= 0 || Q("SELECT 1 FROM appraisal_standard_groups WHERE group_id = @g", new MySqlParameter("@g", gid)).Rows.Count == 0)
-        { Response.Write("{\"ok\":false,\"msg\":\"Choose a valid group\"}"); return; }
-        if (kpa == "" || kpa.Length > 255) { Response.Write("{\"ok\":false,\"msg\":\"Responsibility / KPA is required (max 255 characters)\"}"); return; }
-        if (std == "") { Response.Write("{\"ok\":false,\"msg\":\"Expected standard is required\"}"); return; }
+        { Response.Write("{\"ok\":false,\"msg\":\"Choose a group.\"}"); return; }
+        if (kpa == "" || kpa.Length > 255) { Response.Write("{\"ok\":false,\"msg\":\"Enter the responsibility or key performance area (up to 255 characters).\"}"); return; }
+        if (std == "") { Response.Write("{\"ok\":false,\"msg\":\"Enter the expected standard.\"}"); return; }
 
         if (id > 0)
         {
@@ -303,8 +232,8 @@ public partial class COOPERP_NewScreens_ExpectedStandards : System.Web.UI.Page
                          WHERE standard_id = @id AND group_id = @g",
                 new MySqlParameter("@k", kpa), new MySqlParameter("@s", std),
                 new MySqlParameter("@id", id), new MySqlParameter("@g", gid));
-            Response.Write(n > 0 ? "{\"ok\":true,\"msg\":\"Standard updated. Appraisals already started keep the wording they were given.\"}"
-                                 : "{\"ok\":false,\"msg\":\"Standard not found\"}");
+            Response.Write(n > 0 ? "{\"ok\":true,\"msg\":\"Standard saved. Appraisals already started keep their wording.\"}"
+                                 : "{\"ok\":false,\"msg\":\"The standard was not found.\"}");
         }
         else
         {
@@ -314,30 +243,30 @@ public partial class COOPERP_NewScreens_ExpectedStandards : System.Web.UI.Page
                 VALUES (@g, @k, @s, @o, 1, NOW(), NOW())",
               new MySqlParameter("@g", gid), new MySqlParameter("@k", kpa),
               new MySqlParameter("@s", std), new MySqlParameter("@o", sort));
-            Response.Write("{\"ok\":true,\"msg\":\"Standard added\"}");
+            Response.Write("{\"ok\":true,\"msg\":\"Standard added.\"}");
         }
     }
 
     private void AjaxDeleteStandard()
     {
         int id = SafeInt(F("id"));
-        if (id <= 0) { Response.Write("{\"ok\":false,\"msg\":\"Invalid standard\"}"); return; }
+        if (id <= 0) { Response.Write("{\"ok\":false,\"msg\":\"Invalid standard.\"}"); return; }
         int refs = SafeInt(Q("SELECT COUNT(*) AS n FROM appraisal_section_b WHERE standard_id = @id",
             new MySqlParameter("@id", id)).Rows[0]["n"]);
         if (refs > 0)
         {
-            Response.Write("{\"ok\":false,\"msg\":\"Used on " + refs + " appraisal row(s) - deactivate it instead.\"}");
+            Response.Write("{\"ok\":false,\"msg\":\"Used on " + refs + " appraisal row(s). Deactivate it instead.\"}");
             return;
         }
         int n = X("DELETE FROM appraisal_standards WHERE standard_id = @id", new MySqlParameter("@id", id));
-        Response.Write(n > 0 ? "{\"ok\":true,\"msg\":\"Standard deleted\"}" : "{\"ok\":false,\"msg\":\"Standard not found\"}");
+        Response.Write(n > 0 ? "{\"ok\":true,\"msg\":\"Standard deleted.\"}" : "{\"ok\":false,\"msg\":\"The standard was not found.\"}");
     }
 
     private void AjaxReorder()
     {
         int gid = SafeInt(F("group_id"));
         string ids = F("ids");
-        if (gid <= 0 || ids == "") { Response.Write("{\"ok\":false,\"msg\":\"Nothing to reorder\"}"); return; }
+        if (gid <= 0 || ids == "") { Response.Write("{\"ok\":false,\"msg\":\"Nothing to reorder.\"}"); return; }
         int order = 0;
         using (MySqlConnection conn = new MySqlConnection(ConnStr))
         {
@@ -361,33 +290,28 @@ public partial class COOPERP_NewScreens_ExpectedStandards : System.Web.UI.Page
                 tx.Commit();
             }
         }
-        Response.Write("{\"ok\":true,\"msg\":\"Order saved\"}");
+        Response.Write("{\"ok\":true,\"msg\":\"Order saved.\"}");
     }
 
     private void AjaxMapDepartment()
     {
         int deptId = SafeInt(F("dept_id"));
         int gid = SafeInt(F("group_id"));
-        if (deptId <= 0) { Response.Write("{\"ok\":false,\"msg\":\"Invalid department\"}"); return; }
+        if (deptId <= 0) { Response.Write("{\"ok\":false,\"msg\":\"Invalid department.\"}"); return; }
         if (gid > 0 && Q("SELECT 1 FROM appraisal_standard_groups WHERE group_id = @g", new MySqlParameter("@g", gid)).Rows.Count == 0)
-        { Response.Write("{\"ok\":false,\"msg\":\"Unknown group\"}"); return; }
+        { Response.Write("{\"ok\":false,\"msg\":\"Unknown group.\"}"); return; }
         int n = X("UPDATE hrm_departments SET standards_group_id = @g WHERE ID = @d",
             new MySqlParameter("@g", gid > 0 ? (object)gid : DBNull.Value), new MySqlParameter("@d", deptId));
-        Response.Write(n > 0 ? "{\"ok\":true,\"msg\":\"Department mapping saved. It applies to records generated from now on.\"}"
-                              : "{\"ok\":false,\"msg\":\"Department not found\"}");
+        Response.Write(n > 0 ? "{\"ok\":true,\"msg\":\"Saved. It applies to appraisals created from now on.\"}"
+                              : "{\"ok\":false,\"msg\":\"The department was not found.\"}");
     }
 
     // ═══════════════════════════════════════════════════════════════════
     //  PAGE RENDER
     // ═══════════════════════════════════════════════════════════════════
-    private void LoadPage()
+    private DataTable LoadGroups()
     {
-        bool canEdit = HasHrAppraisalAccess();
-        litReadOnly.Text = canEdit ? "" :
-            "<div class='es-alert es-alert--info'>Read-only: HR or administrator access is required to change the catalogue.</div>" +
-            "<script type='text/javascript'>window.ES_READ_ONLY=true;</script>";
-
-        DataTable groups = Q(
+        return Q(
             @"SELECT g.group_id, g.group_code, g.group_name, g.applies_to, g.sort_order, g.is_active,
                      (SELECT COUNT(*) FROM appraisal_standards s WHERE s.group_id = g.group_id AND s.is_active = 1) AS n_active,
                      (SELECT COUNT(*) FROM appraisal_standards s WHERE s.group_id = g.group_id) AS n_all,
@@ -395,11 +319,20 @@ public partial class COOPERP_NewScreens_ExpectedStandards : System.Web.UI.Page
                      (SELECT COUNT(*) FROM appraisal_records r WHERE r.standards_group_id = g.group_id) AS n_records
               FROM appraisal_standard_groups g
               ORDER BY g.is_active DESC, g.sort_order, g.group_name");
+    }
 
+    private static string Plural(int n, string one, string many) { return n.ToString("N0") + " " + (n == 1 ? one : many); }
+
+    private void LoadPage()
+    {
+        bool canEdit = HrAccess.IsHr();
+        if (canEdit)
+            litAddGroup.Text = "<button type='button' class='hr-btn hr-btn--inverse' onclick='addGroup()'>" + IconPlus() + "Add group</button>";
+
+        DataTable groups = LoadGroups();
         int selected = QsGroup;
         if (selected == 0 && groups.Rows.Count > 0) selected = SafeInt(groups.Rows[0]["group_id"]);
 
-        // KPIs
         int gActive = 0, sActive = 0;
         foreach (DataRow g in groups.Rows) { if (SafeInt(g["is_active"]) == 1) gActive++; sActive += SafeInt(g["n_active"]); }
         litKpiGroups.Text = gActive.ToString("N0");
@@ -418,21 +351,18 @@ public partial class COOPERP_NewScreens_ExpectedStandards : System.Web.UI.Page
             sb.AppendFormat("<a href='ExpectedStandards.aspx?gid={0}' class='es-group{1}{2}'>", gid,
                 gid == selected ? " is-selected" : "", active ? "" : " is-inactive");
             sb.AppendFormat("<span class='es-group__name'>{0}</span>", Enc(SafeStr(g["group_name"])));
-            sb.Append("<span class='es-group__meta'>");
-            sb.AppendFormat("<span class='es-code'>{0}</span>", Enc(SafeStr(g["group_code"])));
-            sb.AppendFormat("<span class='es-badge es-badge--{0}'>{1}</span>", SafeStr(g["applies_to"]).ToLower(), AppliesLabel(SafeStr(g["applies_to"])));
-            if (!active) sb.Append("<span class='es-badge es-badge--off'>Inactive</span>");
-            sb.AppendFormat("<span class='es-group__count'>{0} std &middot; {1} dept</span>", SafeInt(g["n_active"]), SafeInt(g["n_depts"]));
-            sb.Append("</span></a>");
+            sb.AppendFormat("<span class='es-group__meta'>{0}, {1}, {2}{3}</span>",
+                AppliesLabel(SafeStr(g["applies_to"])), Plural(SafeInt(g["n_active"]), "standard", "standards"),
+                Plural(SafeInt(g["n_depts"]), "department", "departments"), active ? "" : ", inactive");
+            sb.Append("</a>");
         }
-        if (groups.Rows.Count == 0) sb.Append("<div class='es-empty'>No groups yet. Add the first one.</div>");
+        if (groups.Rows.Count == 0) sb.Append("<div class='hr-empty'>No groups yet.</div>");
         litGroups.Text = sb.ToString();
 
-        // Selected group panel
         if (sel == null)
         {
-            litGroupHead.Text = "<div class='es-empty'>Select or create a group.</div>";
-            litStandards.Text = "";
+            litGroupHead.Text = "<div class='hr-card__head'><div class='hr-card__title'>Standards</div></div>";
+            litStandards.Text = "<tr><td colspan='5' class='hr-empty'>Choose or add a group.</td></tr>";
             hfGroupId.Value = "0";
         }
         else
@@ -442,24 +372,24 @@ public partial class COOPERP_NewScreens_ExpectedStandards : System.Web.UI.Page
             hfGroupId.Value = gid.ToString();
             int refs = SafeInt(sel["n_all"]) + SafeInt(sel["n_depts"]) + SafeInt(sel["n_records"]);
 
-            StringBuilder h = new StringBuilder();
-            h.Append("<div class='es-panel-head'>");
-            h.Append("<div class='es-panel-head__text'>");
-            h.AppendFormat("<div class='es-panel-head__title'>{0}</div>", Enc(SafeStr(sel["group_name"])));
-            h.AppendFormat("<div class='es-panel-head__sub'><span class='es-code'>{0}</span> Applies to: <strong>{1}</strong> &middot; {2} active standard(s) &middot; {3} department(s) mapped &middot; used by {4} appraisal record(s){5}</div>",
-                Enc(SafeStr(sel["group_code"])), AppliesLabel(SafeStr(sel["applies_to"])),
-                SafeInt(sel["n_active"]), SafeInt(sel["n_depts"]), SafeInt(sel["n_records"]),
-                active ? "" : " &middot; <span class='es-badge es-badge--off'>Inactive</span>");
+            StringBuilder h = new StringBuilder("<div class='hr-card__head'><div>");
+            h.AppendFormat("<div class='hr-card__title'>{0} <span class='hr-code'>{1}</span>{2}</div>",
+                Enc(SafeStr(sel["group_name"])), Enc(SafeStr(sel["group_code"])),
+                active ? "" : " <span class='hr-badge hr-badge--neutral'>Inactive</span>");
+            h.AppendFormat("<div class='hr-card__meta'>{0}. {1}, {2}, used by {3}.</div>",
+                AppliesLabel(SafeStr(sel["applies_to"])), Plural(SafeInt(sel["n_active"]), "active standard", "active standards"),
+                Plural(SafeInt(sel["n_depts"]), "department", "departments"), Plural(SafeInt(sel["n_records"]), "appraisal", "appraisals"));
             h.Append("</div>");
             if (canEdit)
             {
-                h.Append("<div class='es-panel-head__actions'>");
-                h.AppendFormat("<button type='button' class='es-btn es-btn--outline' onclick='editGroup({0})'>{1} Edit Group</button>", gid, IconEdit());
-                h.AppendFormat("<button type='button' class='es-btn es-btn--outline' onclick='toggleGroup({0},{1})'>{2}</button>",
+                h.Append("<div class='hr-row'>");
+                h.AppendFormat("<button type='button' class='hr-btn hr-btn--secondary hr-btn--sm' onclick='editGroup({0})'>Edit group</button>", gid);
+                h.AppendFormat("<button type='button' class='hr-btn hr-btn--secondary hr-btn--sm' onclick='toggleGroup({0},{1})'>{2}</button>",
                     gid, active ? 0 : 1, active ? "Deactivate" : "Activate");
                 if (refs == 0)
-                    h.AppendFormat("<button type='button' class='es-btn es-btn--danger-outline' onclick='deleteGroup({0})'>Delete</button>", gid);
-                h.AppendFormat("<button type='button' class='es-btn es-btn--primary' onclick='addStandard()'>{0} Add Standard</button>", IconPlus());
+                    h.AppendFormat("<button type='button' class='hr-btn hr-btn--danger hr-btn--sm' onclick='deleteGroup({0})'>Delete</button>", gid);
+                h.AppendFormat("<a class='hr-btn hr-btn--secondary hr-btn--sm' href='ExpectedStandards.aspx?action=print&amp;gid={0}' target='_blank' rel='noopener'>Print</a>", gid);
+                h.Append("<button type='button' class='hr-btn hr-btn--primary hr-btn--sm' onclick='addStandard()'>Add standard</button>");
                 h.Append("</div>");
             }
             h.Append("</div>");
@@ -474,44 +404,34 @@ public partial class COOPERP_NewScreens_ExpectedStandards : System.Web.UI.Page
                 new MySqlParameter("@g", gid));
 
             StringBuilder t = new StringBuilder();
-            if (stds.Rows.Count == 0)
+            if (stds.Rows.Count == 0) t.Append("<tr><td colspan='5' class='hr-empty'>No standards in this group yet.</td></tr>");
+            int i = 0;
+            foreach (DataRow s in stds.Rows)
             {
-                t.Append("<tr><td colspan='6' class='es-empty'>No standards in this group yet.</td></tr>");
-            }
-            else
-            {
-                int i = 0;
-                foreach (DataRow s in stds.Rows)
+                i++;
+                int sid = SafeInt(s["standard_id"]);
+                bool on = SafeInt(s["is_active"]) == 1;
+                int used = SafeInt(s["n_used"]);
+                t.AppendFormat("<tr data-id='{0}' data-active='{1}'{2}>", sid, on ? 1 : 0, on ? "" : " class='es-off'");
+                t.AppendFormat("<td class='hr-num'>{0}</td>", i);
+                t.AppendFormat("<td>{0}{1}</td>", Enc(SafeStr(s["kpa_title"])), on ? "" : " <span class='hr-badge hr-badge--neutral'>Inactive</span>");
+                t.AppendFormat("<td>{0}</td>", Enc(SafeStr(s["expected_standard"])).Replace("\n", "<br/>"));
+                t.AppendFormat("<td class='hr-num'>{0}</td>", used.ToString("N0"));
+                t.Append("<td class='hr-right' style='white-space:nowrap;'>");
+                if (canEdit)
                 {
-                    i++;
-                    int sid = SafeInt(s["standard_id"]);
-                    bool sActiveRow = SafeInt(s["is_active"]) == 1;
-                    int used = SafeInt(s["n_used"]);
-                    t.AppendFormat("<tr data-id='{0}' data-active='{1}'{2}>", sid, sActiveRow ? 1 : 0, sActiveRow ? "" : " class='is-inactive'");
-                    t.AppendFormat("<td class='es-num'>{0}</td>", i);
-                    t.AppendFormat("<td class='es-kpa'>{0}{1}</td>", Enc(SafeStr(s["kpa_title"])),
-                        sActiveRow ? "" : " <span class='es-badge es-badge--off'>Inactive</span>");
-                    t.AppendFormat("<td class='es-std'>{0}</td>", Enc(SafeStr(s["expected_standard"])));
-                    t.AppendFormat("<td class='es-num'>{0}</td>", used > 0 ? used.ToString() : "<span style='color:#bbb;'>0</span>");
-                    t.Append("<td class='es-actions'>");
-                    if (canEdit)
+                    if (on)
                     {
-                        if (sActiveRow)
-                        {
-                            t.Append("<button type='button' class='es-icon-btn' title='Move up' onclick='moveRow(this,-1)'><svg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2'><polyline points='18 15 12 9 6 15'/></svg></button>");
-                            t.Append("<button type='button' class='es-icon-btn' title='Move down' onclick='moveRow(this,1)'><svg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2'><polyline points='6 9 12 15 18 9'/></svg></button>");
-                        }
-                        t.AppendFormat("<button type='button' class='es-icon-btn' title='Edit' onclick='editStandard({0})'>{1}</button>", sid, IconEdit());
-                        t.AppendFormat("<button type='button' class='es-icon-btn' title='{0}' onclick='toggleStandard({1},{2})'>{3}</button>",
-                            sActiveRow ? "Deactivate" : "Activate", sid, sActiveRow ? 0 : 1,
-                            sActiveRow
-                                ? "<svg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2'><circle cx='12' cy='12' r='10'/><line x1='4.93' y1='4.93' x2='19.07' y2='19.07'/></svg>"
-                                : "<svg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2'><polyline points='20 6 9 17 4 12'/></svg>");
-                        if (used == 0)
-                            t.AppendFormat("<button type='button' class='es-icon-btn es-icon-btn--danger' title='Delete (never used)' onclick='deleteStandard({0})'><svg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2'><polyline points='3 6 5 6 21 6'/><path d='M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2'/></svg></button>", sid);
+                        t.Append("<button type='button' class='hr-btn hr-btn--secondary hr-btn--sm es-move' title='Move up' onclick='moveRow(this,-1)'><svg viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2'><polyline points='18 15 12 9 6 15'/></svg></button> ");
+                        t.Append("<button type='button' class='hr-btn hr-btn--secondary hr-btn--sm es-move' title='Move down' onclick='moveRow(this,1)'><svg viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2'><polyline points='6 9 12 15 18 9'/></svg></button> ");
                     }
-                    t.Append("</td></tr>");
+                    t.AppendFormat("<button type='button' class='hr-btn hr-btn--secondary hr-btn--sm' onclick='editStandard({0})'>Edit</button> ", sid);
+                    t.AppendFormat("<button type='button' class='hr-btn hr-btn--secondary hr-btn--sm' onclick='toggleStandard({0},{1})'>{2}</button>",
+                        sid, on ? 0 : 1, on ? "Deactivate" : "Activate");
+                    if (used == 0)
+                        t.AppendFormat(" <button type='button' class='hr-btn hr-btn--danger hr-btn--sm' onclick='deleteStandard({0})'>Delete</button>", sid);
                 }
+                t.Append("</td></tr>");
             }
             litStandards.Text = t.ToString();
         }
@@ -533,23 +453,87 @@ public partial class COOPERP_NewScreens_ExpectedStandards : System.Web.UI.Page
         {
             int did = SafeInt(d["ID"]);
             int cur = SafeInt(d["standards_group_id"]);
-            dsb.AppendFormat("<tr><td>{0}</td><td class='es-muted'>{1}</td><td class='es-num'>{2}</td><td>",
+            dsb.AppendFormat("<tr><td>{0}</td><td>{1}</td><td class='hr-num'>{2}</td><td>",
                 Enc(SafeStr(d["dept_name"])), Enc(SafeStr(d["faculty_code"])), SafeInt(d["n_staff"]));
-            dsb.AppendFormat("<select class='es-select es-dept-sel' data-dept='{0}' data-cur='{1}'{2} onchange='mapDept(this)'>", did, cur, canEdit ? "" : " disabled");
-            dsb.Append("<option value='0'>Default (by staff category)</option>");
+            dsb.AppendFormat("<select class='hr-select' data-dept='{0}' data-cur='{1}'{2} onchange='mapDept(this)'>", did, cur, canEdit ? "" : " disabled");
+            dsb.Append("<option value='0'>Default for the staff category</option>");
             dsb.Append(cur > 0 ? optHtml.Replace("value='" + cur + "'", "value='" + cur + "' selected") : optHtml);
             dsb.Append("</select></td></tr>");
         }
-        if (depts.Rows.Count == 0) dsb.Append("<tr><td colspan='4' class='es-empty'>No departments found.</td></tr>");
+        if (depts.Rows.Count == 0) dsb.Append("<tr><td colspan='4' class='hr-empty'>No departments found.</td></tr>");
         litDepts.Text = dsb.ToString();
+    }
+
+    // ═══════════════════════════════════════════════════════════════════
+    //  PRINTABLE CATALOGUE (HrDocument)
+    // ═══════════════════════════════════════════════════════════════════
+    private void PrintCatalogue()
+    {
+        HrDocument.Options o = new HrDocument.Options();
+        o.Confidential = false;
+        o.BackUrl = "ExpectedStandards.aspx" + (QsGroup > 0 ? "?gid=" + QsGroup : "");
+        o.Reference = "Section B of the staff performance appraisal";
+
+        StringBuilder h = new StringBuilder();
+        try
+        {
+            DataTable groups = LoadGroups();
+            int printed = 0;
+            foreach (DataRow g in groups.Rows)
+            {
+                int gid = SafeInt(g["group_id"]);
+                if (QsGroup > 0 ? gid != QsGroup : SafeInt(g["is_active"]) != 1) continue;
+                DataTable stds = Q(
+                    @"SELECT kpa_title, expected_standard FROM appraisal_standards
+                      WHERE group_id = @g AND is_active = 1 ORDER BY sort_order, standard_id", new MySqlParameter("@g", gid));
+                h.Append(HrDocument.Heading(SafeStr(g["group_name"])));
+                h.AppendFormat("<div class=\"ref\" style=\"text-align:left;margin:0 0 4px;\">{0}</div>", HrDocument.E(AppliesLabel(SafeStr(g["applies_to"]))));
+                List<string[]> rows = new List<string[]>();
+                int n = 0;
+                foreach (DataRow s in stds.Rows)
+                {
+                    n++;
+                    rows.Add(new string[] { n.ToString(), HrDocument.E(SafeStr(s["kpa_title"])), HrDocument.Multiline(SafeStr(s["expected_standard"])) });
+                }
+                h.Append(HrDocument.Table(new string[] { "No.", "Responsibility or key performance area", "Expected standard" },
+                    rows, new bool[] { true, false, false }, null));
+                printed++;
+            }
+            if (printed == 0) h.Append(HrDocument.Paragraph("No standards are recorded."));
+
+            if (QsGroup == 0)
+            {
+                DataTable depts = Q(
+                    @"SELECT d.dept_name, IFNULL(g.group_name,'') AS group_name
+                      FROM hrm_departments d LEFT JOIN appraisal_standard_groups g ON g.group_id = d.standards_group_id
+                      ORDER BY d.dept_name");
+                List<string[]> rows = new List<string[]>();
+                foreach (DataRow d in depts.Rows)
+                    rows.Add(new string[] { HrDocument.E(SafeStr(d["dept_name"])),
+                        SafeStr(d["group_name"]) != "" ? HrDocument.E(SafeStr(d["group_name"])) : "Default for the staff category" });
+                h.Append("<div class=\"pb\"></div>");
+                h.Append(HrDocument.Heading("Department groups"));
+                h.Append(HrDocument.Table(new string[] { "Department", "Standards group" }, rows, null, null));
+            }
+        }
+        catch (Exception ex)
+        {
+            System.Diagnostics.Trace.TraceError("ExpectedStandards print: " + ex);
+            h = new StringBuilder(HrDocument.Paragraph("The catalogue could not be loaded."));
+        }
+
+        Response.Clear();
+        Response.ContentType = "text/html";
+        Response.Write(HrDocument.Page("Expected standards catalogue", h.ToString(), o));
+        try { Response.End(); } catch (System.Threading.ThreadAbortException) { }
     }
 
     private static string AppliesLabel(string a)
     {
         switch ((a ?? "").ToUpper())
         {
-            case "ACADEMIC":       return "Academic";
-            case "ADMINISTRATIVE": return "Administrative";
+            case "ACADEMIC":       return "Academic staff";
+            case "ADMINISTRATIVE": return "Administrative staff";
             case "ANY":            return "Any staff";
             default:               return a;
         }
