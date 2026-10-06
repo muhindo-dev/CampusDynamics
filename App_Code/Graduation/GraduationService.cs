@@ -288,6 +288,12 @@ public static class GraduationService
                 if (g.graduatedYear != "")
                     return Fail(regno + " is already on the " + g.graduatedYear + " graduation list.");
 
+                // A disciplinary block (C9) is a decision of the Disciplinary Committee, not a data
+                // gap a Registrar may know better about: it cannot be overridden here.
+                foreach (GradFinding df in g.findings)
+                    if (df.code == "C9" && df.level == "BLOCK")
+                        return Fail("This student cannot be approved: " + df.detail + " It can only be cleared through Student Discipline.");
+
                 if (g.readiness == "BLOCKED" && !overrideBlock)
                 {
                     var blockers = new List<string>();

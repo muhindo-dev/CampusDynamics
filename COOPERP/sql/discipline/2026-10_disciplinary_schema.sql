@@ -21,7 +21,9 @@ INSERT IGNORE INTO dc_settings (setting_key, setting_value, description, updated
  ('contact_office',          'Office of the Dean of Students', 'Shown to a student whose portal access is restricted', 'install', NOW()),
  ('contact_details',         'deanofstudents@mru.ac.ug', 'Contact line shown with the office', 'install', NOW()),
  ('appellate_authority',     'University Appeals Committee', 'Name of the body that decides appeals, printed on letters', 'install', NOW()),
- ('letter_office',           'Office of the Academic Registrar', 'Office line on disciplinary letters', 'install', NOW());
+ ('letter_office',           'Office of the Academic Registrar', 'Office line on disciplinary letters', 'install', NOW()),
+ ('summon_notice_days',      '3',  'Minimum days between a summons and the hearing, unless a reason for short notice is recorded', 'install', NOW()),
+ ('attachment_max_mb',       '15', 'Largest file that can be attached to a case, in MB', 'install', NOW());
 
 CREATE TABLE IF NOT EXISTS dc_case_type (
   id              INT UNSIGNED      NOT NULL AUTO_INCREMENT,
@@ -70,6 +72,7 @@ CREATE TABLE IF NOT EXISTS dc_case_type_sanction (
   case_type_id     INT UNSIGNED      NOT NULL,
   sanction_type_id INT UNSIGNED      NOT NULL,
   sort_order       SMALLINT UNSIGNED NOT NULL DEFAULT 0,
+  is_active        TINYINT(1)        NOT NULL DEFAULT 1,      -- pairings are switched off, never deleted
   PRIMARY KEY (case_type_id, sanction_type_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_general_ci;
 

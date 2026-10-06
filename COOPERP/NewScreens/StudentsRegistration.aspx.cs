@@ -709,7 +709,7 @@ public partial class COOPERP_NewScreens_StudentsRegistration : System.Web.UI.Pag
         if (ClearStudent(id))
             ShowToast(true, "Student cleared for exams.");
         else
-            ShowToast(false, "Could not clear student. They must be Registered or Late Registered first.");
+            ShowToast(false, dcClearRefusal ?? "Could not clear student. They must be Registered or Late Registered first.");
         LoadStats(); BindGrid();
     }
 
@@ -1722,13 +1722,28 @@ public partial class COOPERP_NewScreens_StudentsRegistration : System.Web.UI.Pag
         catch { }
     }
 
+    // Why the last ClearStudent call refused, when the refusal was a disciplinary one.
+    private string dcClearRefusal;
+
     private bool ClearStudent(int id)
     {
+        dcClearRefusal = null;
         try
         {
             using (var conn = new MySqlConnection(ConnectionString))
             {
                 conn.Open();
+                // Student Discipline: a suspended or expelled student is not cleared for examinations.
+                object dcReg = new MySqlCommand("SELECT regno FROM acad_registration WHERE ID=" + id, conn).ExecuteScalar();
+                if (dcReg != null)
+                {
+                    DcClearanceResult dcr = DcClearance.Check(conn, null, Convert.ToString(dcReg));
+                    if (dcr.BlocksExamClearance)
+                    {
+                        dcClearRefusal = "Not cleared: " + dcr.Summary + ". See Student Discipline.";
+                        return false;
+                    }
+                }
                 const string sql = @"UPDATE acad_registration
                     SET regstatus='CLEARED', examClearance='CLEARED',
                         examClearanceDate=NOW(), clearedBy=@user

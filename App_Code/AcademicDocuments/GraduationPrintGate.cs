@@ -153,6 +153,18 @@ public static class GraduationPrintGate
                             found[v.RegNo] = v;
                         }
                 }
+
+                // Student Discipline: results withheld (or expulsion) stops a transcript or
+                // certificate whatever the graduation position. The sanction is lifted in
+                // Student Discipline, never overridden here.
+                foreach (KeyValuePair<string, DcClearanceResult> kv in DcClearance.CheckMany(c, wanted))
+                {
+                    Verdict v;
+                    if (!kv.Value.BlocksDocuments || !found.TryGetValue(kv.Key, out v)) continue;
+                    v.Allowed = false;
+                    v.Reason = v.RegNo + ": " + (kv.Value.Summary == "" ? "results are withheld under a disciplinary decision" : kv.Value.Summary) +
+                               ". A " + (kind == CERTIFICATE ? "certificate" : "transcript") + " cannot be issued while the sanction is in force.";
+                }
             }
         }
         catch (Exception ex)

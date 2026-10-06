@@ -1,4 +1,5 @@
 <%@ Page Language="C#" MasterPageFile="~/COOPERP/NewScreens/SidebarMaster.master" AutoEventWireup="true" CodeFile="StudentProfile.aspx.cs" Inherits="COOPERP_NewScreens_StudentProfile" Title="Student Profile - Campus Dynamics" %>
+<%@ Register Src="~/COOPERP/NewScreens/DcStudentBanner.ascx" TagName="DcStudentBanner" TagPrefix="dc" %>
 
 <asp:Content ID="HeadContent" ContentPlaceHolderID="HeadContent" runat="server">
 <style>
@@ -113,6 +114,7 @@
         <a id="aDocs" runat="server" href="#" class="sp-btn sp-btn--outline" style="color:#174DA4;border-color:#174DA4;">Documents</a>
     </div>
 </div>
+<dc:DcStudentBanner ID="dcBanner" runat="server" />
 
 <!-- Section: Biographical Information -->
 <div class="sp-section">

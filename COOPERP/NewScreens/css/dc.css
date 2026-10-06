@@ -1,0 +1,96 @@
+/* =====================================================================
+   Student Disciplinary module: additions to the shared fa.css toolkit.
+   Prefix: dc-. Same tokens: navy #05275C, accent #174DA4, gold #D4A017,
+   surface #F5F7FA, border #E0E5ED. Flat: radius 0, no shadows or gradients.
+   ===================================================================== */
+
+/* Student card (new-case form, case header) */
+.dc-student { display: flex; gap: 12px; align-items: flex-start; min-width: 0; }
+.dc-student img { width: 56px; height: 56px; object-fit: cover; border: 1px solid var(--fa-border); background: var(--fa-surface); flex: 0 0 auto; }
+.dc-student__name { font-size: 14px; font-weight: 700; color: var(--fa-navy); }
+.dc-student__meta { font-size: 11.5px; color: var(--fa-text-2); margin-top: 2px; line-height: 1.5; }
+.dc-picked { border: 1px solid var(--fa-border); background: #fff; padding: 10px; margin-bottom: 8px; display: flex; gap: 10px; align-items: flex-start; }
+.dc-picked .dc-student { flex: 1; }
+.dc-picked__warn { margin-top: 6px; font-size: 11px; color: var(--fa-warn); }
+
+/* Case header */
+.dc-casehead { background: #fff; border: 1px solid var(--fa-border); padding: 14px; margin-bottom: 14px; display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 12px; }
+@media (max-width: 760px) { .dc-casehead { grid-template-columns: minmax(0, 1fr); } }
+.dc-casehead__no { font-family: Consolas, "Courier New", monospace; font-size: 13px; font-weight: 700; color: var(--fa-navy); }
+.dc-casehead__aside { display: flex; flex-direction: column; gap: 6px; align-items: flex-end; text-align: right; font-size: 11.5px; color: var(--fa-text-2); }
+@media (max-width: 760px) { .dc-casehead__aside { align-items: flex-start; text-align: left; } }
+.dc-restrict { display: inline-flex; align-items: center; gap: 5px; padding: 2px 7px; font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: .3px;
+    background: var(--fa-navy); color: #fff; }
+.dc-restrict svg { width: 11px; height: 11px; }
+
+/* Status stepper */
+.dc-steps { display: flex; list-style: none; margin: 0 0 14px; padding: 0; border: 1px solid var(--fa-border); background: #fff; overflow-x: auto; }
+.dc-steps li { flex: 1 0 auto; padding: 8px 12px; font-size: 11px; color: var(--fa-muted); border-right: 1px solid var(--fa-border); white-space: nowrap; }
+.dc-steps li:last-child { border-right: 0; }
+.dc-steps li.is-done { color: var(--fa-ok); }
+.dc-steps li.is-now { color: var(--fa-navy); font-weight: 700; box-shadow: inset 0 -3px 0 var(--fa-navy); }
+.dc-steps li.is-off { color: var(--fa-bad); font-weight: 700; box-shadow: inset 0 -3px 0 var(--fa-bad); }
+
+/* Sanctions in force */
+.dc-force { display: flex; flex-wrap: wrap; gap: 6px; }
+.dc-force span { display: inline-block; padding: 3px 8px; font-size: 11px; font-weight: 600; background: var(--fa-bad-bg); color: var(--fa-bad); border: 1px solid #f4c7c3; }
+.dc-force span.is-interim { background: var(--fa-warn-bg); color: var(--fa-warn); border-color: #ecd9a0; }
+
+/* Timeline (case file) */
+.dc-timeline { list-style: none; margin: 0; padding: 0; position: relative; }
+.dc-timeline:before { content: ""; position: absolute; left: 13px; top: 0; bottom: 0; width: 2px; background: var(--fa-border); }
+.dc-entry { position: relative; padding: 0 0 14px 38px; }
+.dc-entry__dot { position: absolute; left: 6px; top: 2px; width: 16px; height: 16px; background: #fff; border: 2px solid var(--fa-accent); display: flex; align-items: center; justify-content: center; }
+.dc-entry--key .dc-entry__dot { background: var(--fa-navy); border-color: var(--fa-navy); }
+.dc-entry--system .dc-entry__dot { border-color: var(--fa-muted); }
+.dc-entry--correction .dc-entry__dot { border-color: var(--fa-gold); }
+.dc-entry__card { background: #fff; border: 1px solid var(--fa-border); padding: 10px 12px; }
+.dc-entry--internal .dc-entry__card { background: var(--fa-band); }
+.dc-entry__top { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; flex-wrap: wrap; }
+.dc-entry__title { font-weight: 600; color: var(--fa-text); font-size: 12.5px; }
+.dc-entry__type { font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: .4px; color: var(--fa-accent); margin-right: 6px; }
+.dc-entry__when { font-size: 11px; color: var(--fa-muted); white-space: nowrap; }
+.dc-entry__body { margin-top: 6px; font-size: 12px; line-height: 1.6; color: var(--fa-text-2); white-space: pre-wrap; word-wrap: break-word; }
+.dc-entry__meta { margin-top: 6px; font-size: 10.5px; color: var(--fa-muted); display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }
+.dc-entry__files { margin-top: 6px; display: flex; flex-wrap: wrap; gap: 6px; }
+.dc-file { display: inline-flex; align-items: center; gap: 5px; padding: 3px 8px; border: 1px solid var(--fa-border); background: var(--fa-surface); font-size: 11px; color: var(--fa-navy); text-decoration: none; }
+.dc-file:hover { border-color: var(--fa-accent); }
+.dc-file svg { width: 12px; height: 12px; }
+.dc-vis { display: inline-flex; align-items: center; gap: 4px; font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: .3px; }
+.dc-vis--student { color: var(--fa-ok); }
+.dc-vis--internal { color: var(--fa-muted); }
+.dc-vis svg { width: 11px; height: 11px; }
+
+/* Action panel */
+.dc-actions { display: flex; flex-direction: column; gap: 6px; }
+.dc-actions .fa-btn { justify-content: flex-start; width: 100%; }
+.dc-actions__group { font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: .4px; color: var(--fa-muted); margin: 8px 0 0; }
+.dc-actions__group:first-child { margin-top: 0; }
+
+/* Sanction picker (decision form) */
+.dc-sanction { border: 1px solid var(--fa-border); background: #fff; margin-bottom: 8px; }
+.dc-sanction__head { display: flex; align-items: center; gap: 8px; padding: 8px 10px; cursor: pointer; }
+.dc-sanction__head input { accent-color: var(--fa-navy); margin: 0; }
+.dc-sanction__name { font-weight: 600; flex: 1; }
+.dc-sanction__fx { font-size: 10.5px; color: var(--fa-muted); }
+.dc-sanction__body { display: none; padding: 0 10px 10px 30px; }
+.dc-sanction.is-on { border-color: var(--fa-accent); }
+.dc-sanction.is-on .dc-sanction__body { display: block; }
+.dc-default { font-size: 9.5px; font-weight: 700; text-transform: uppercase; color: var(--fa-accent); border: 1px solid #cddcf3; padding: 1px 5px; }
+
+/* Severity marks in tables */
+.dc-sev { display: inline-block; width: 8px; height: 8px; margin-right: 6px; vertical-align: middle; }
+.dc-sev--MINOR { background: #9aa3b2; }
+.dc-sev--SERIOUS { background: var(--fa-gold); }
+.dc-sev--GROSS { background: var(--fa-bad); }
+
+/* Letter preview */
+.dc-letter { border: 1px solid var(--fa-border); background: #fff; padding: 18px 22px; font-family: "Segoe UI", Arial, sans-serif; font-size: 12.5px; line-height: 1.6; max-height: 420px; overflow-y: auto; }
+.dc-letter h4 { margin: 0 0 10px; font-size: 12.5px; text-transform: uppercase; text-decoration: underline; }
+.dc-letter p { margin: 0 0 10px; white-space: pre-wrap; }
+
+/* Audit before and after */
+.dc-json { font-family: Consolas, monospace; font-size: 10.5px; color: var(--fa-text-2); white-space: pre-wrap; word-break: break-all; max-width: 360px; }
+
+/* Prose (Senate summary) */
+.dc-prose p { margin: 0 0 10px; line-height: 1.7; font-size: 12.5px; }

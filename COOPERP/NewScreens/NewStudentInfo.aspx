@@ -1,4 +1,5 @@
 <%@ Page Language="C#" MasterPageFile="~/COOPERP/NewScreens/SidebarMaster.master" AutoEventWireup="true" CodeFile="NewStudentInfo.aspx.cs" Inherits="COOPERP_NewScreens_NewStudentInfo" Title="Student Records - Campus Dynamics" %>
+<%@ Register Src="~/COOPERP/NewScreens/DcStudentBanner.ascx" TagName="DcStudentBanner" TagPrefix="dc" %>
 
 <%@ Register Assembly="DevExpress.Web.v16.1, Version=16.1.4.0, Culture=neutral, PublicKeyToken=b88d1754d700e49a" Namespace="DevExpress.Web" TagPrefix="dx" %>
 
@@ -1941,6 +1942,7 @@
                             <div class="sp-profile-regno"><asp:Literal ID="litRegNo" runat="server" /></div>
                             <div class="sp-profile-programme"><asp:Literal ID="litProgramme" runat="server" /></div>
                             <div class="sp-profile-specialisation"><asp:Literal ID="litSpecialisation" runat="server" /></div>
+                            <dc:DcStudentBanner ID="dcBanner" runat="server" RegnoField="hdnSelectedRegno" />
                             <div class="sp-profile-quick-stats">
                                 <div class="sp-quick-stat">
                                     <span class="sp-quick-stat__label">Entry Year</span>

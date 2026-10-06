@@ -91,6 +91,21 @@ public partial class API_doc_verification : System.Web.UI.Page
 
     protected void Page_Load(object sender, EventArgs e)
     {
+        // Student Discipline: results withheld (or suspension, for the exam card) stops these
+        // documents for the student, whoever asks. Lifted only in Student Discipline.
+        string dcDoc = Request["doc"] ?? "";
+        if (dcDoc == "ResultStatement" || dcDoc == "Transcript" || dcDoc == "Certificate" || dcDoc == "Student Exam Card")
+        {
+            string dcReg = (Request["reg"] ?? "").Trim();
+            DcClearanceResult dcr = DcClearance.Check(dcReg);
+            bool stop = dcDoc == "Student Exam Card" ? dcr.BlocksExamCard : dcr.BlocksDocuments;
+            if (stop)
+            {
+                RenderDisciplinaryDenied(dcDoc == "Student Exam Card" ? "The examination card" : "This document", dcr);
+                return;
+            }
+        }
+
         if (Request["doc"] == "ResultStatement")
         {
             Transcript RPT = new Transcript();
@@ -735,6 +750,28 @@ public partial class API_doc_verification : System.Web.UI.Page
                 }
             }
         }
+    }
+
+    /// <summary>Plain refusal for a document withheld under a disciplinary decision.</summary>
+    private void RenderDisciplinaryDenied(string what, DcClearanceResult dcr)
+    {
+        DisableReportUi();
+        Response.Clear();
+        Response.StatusCode = 403;
+        Response.ContentType = "text/html; charset=utf-8";
+        Response.Cache.SetCacheability(HttpCacheability.NoCache);
+        Response.Cache.SetNoStore();
+        string contact = DcSettings.ContactOffice + (DcSettings.ContactDetails == "" ? "" : " (" + DcSettings.ContactDetails + ")");
+        Response.Write("<html><head><meta charset='utf-8'><meta name='viewport' content='width=device-width, initial-scale=1' /><title>Document withheld</title></head>" +
+            "<body style=\"margin:0;background:#F5F7FA;font-family:Segoe UI,Arial,sans-serif;color:#1a1a2e\">" +
+            "<div style=\"max-width:560px;margin:40px auto;background:#fff;border:1px solid #E0E5ED\">" +
+            "<div style=\"background:#05275C;color:#fff;padding:14px 18px;font-weight:600\">Muteesa I Royal University</div>" +
+            "<div style=\"padding:18px;font-size:14px;line-height:1.6\"><p style=\"margin:0 0 10px;font-weight:600;color:#05275C\">" + HttpUtility.HtmlEncode(what) + " is withheld</p>" +
+            "<p style=\"margin:0 0 10px\">It is withheld under a disciplinary decision" + (dcr.CaseNos.Count > 0 ? " (case " + HttpUtility.HtmlEncode(string.Join(", ", dcr.CaseNos.ToArray())) + ")" : "") + ".</p>" +
+            "<p style=\"margin:0\">Contact the " + HttpUtility.HtmlEncode(contact) + ".</p></div></div></body></html>");
+        Response.Flush();
+        Response.SuppressContent = true;
+        HttpContext.Current.ApplicationInstance.CompleteRequest();
     }
 
     private void RenderPolicyDenied(string regno, string reason, AccessSnapshot snapshot)

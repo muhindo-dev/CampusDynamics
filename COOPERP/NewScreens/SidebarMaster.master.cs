@@ -463,6 +463,24 @@ public partial class COOPERP_NewScreens_SidebarMaster : System.Web.UI.MasterPage
             case "assetimport":
                 title = "Import Assets";
                 break;
+            case "disciplinarydashboard":
+                title = "Disciplinary Dashboard";
+                break;
+            case "disciplinaryrecords":
+                title = "Disciplinary Records";
+                break;
+            case "disciplinarycase":
+                title = "Disciplinary Case";
+                break;
+            case "disciplinaryupdates":
+                title = "Record Updates";
+                break;
+            case "disciplinarysettings":
+                title = "Case Types and Sanctions";
+                break;
+            case "disciplinaryreports":
+                title = "Disciplinary Reports";
+                break;
             case "appraisaldashboard":
                 title = "Appraisal Overview";
                 break;

@@ -1,7 +1,7 @@
 # Student Disciplinary module: plan
 
 Prepared 6 October 2026 by MIS for the Academic Registrar, the Dean of Students and MIS.
-Status: **Phase 1, awaiting approval.** No application code has been written. The SQL in the appendices has been run and tested on MySQL 5.6.43 in throwaway schemas (section 11.1); nothing has been applied to production.
+Status: **Built and live, 6 October 2026 (Phase 2).** Section 13 records what was built, the defaults taken for the open questions and the test results. The user guide is `COOPERP/docs/disciplinary-user-guide.md`.
 
 Scope: a Disciplinary module in eadmin (dashboard, records, case file, settings, reports) and in eportal (My Disciplinary Cases, the restricted-access page and the enforcement of sanctions).
 
@@ -586,8 +586,75 @@ A dedicated test student (and portal login) is created for the tests and removed
 
 ---
 
-## Appendix A: schema SQL (tested)
+## 13. Phase 2: what was built (6 October 2026)
 
+### 13.1 Defaults taken for the open questions
+
+| # | Default applied | Change it by |
+|---|---|---|
+| Q1 | Section 3 lists seeded as proposed | Case Types and Sanctions screen |
+| Q2 | Roles `dean_students` and `dc_committee` exist with no members | User Roles; Committee tab |
+| Q3 | Appellate authority: the Vice-Chancellor role holds `discipline.appeal`; letters name the "University Appeals Committee" | setting `appellate_authority`; role grants |
+| Q4 | Only holders of `discipline.decide` record decisions (Committee; administrators) | role grants |
+| Q5 | Minor cases may be decided without a hearing | n/a (rule in code) |
+| Q6 | The module does not change `acad_student.new_status` on expulsion | Registrar, in NewStudentInfo |
+| Q7 | Fines and restitution are billed by hand and recorded as follow-ups | n/a |
+| Q8 | Wardens and security report through the Dean of Students | grant `discipline.report` to a role |
+| Q9 | Minimum summons notice 3 days | setting `summon_notice_days` |
+| Q10 | Suspension blocks registration and examinations only; the portal stays open unless a portal block is applied | n/a |
+| Q11 | Two test students were used and removed with all test data (`2026-10_disciplinary_purge_testdata.sql`) | n/a |
+| Q12 | Summon list in a standard grouped layout | report definition |
+| Q13 | Closed cases kept indefinitely | not built |
+| Q14 | `COOPERP/Mobile/Default.aspx` (portal) now needs a signed-in session: no request reached it in 99 days of web logs | n/a |
+
+### 13.2 Changes against the plan
+
+- **Pairings are switched off, not deleted:** `dc_case_type_sanction` gained `is_active`.
+- **Two more settings:** `summon_notice_days` and `attachment_max_mb`.
+- **Two more slugs:** `discipline.case` and `discipline.files`, so page-gated roles (Auditor) can open the case file and letters.
+- **Email does not attach letters**, because they are confidential. The email points to My Disciplinary Cases.
+- **The portal gate runs twice:** at `AcquireRequestState` (PageMethods are answered before `PreRequestHandlerExecute`) and at `PreRequestHandlerExecute`.
+- **One plan item dropped:** the marks audit "Disciplinary" label was not needed, since the module never writes marks.
+- **Document requests also checked:** `API/doc_verification.aspx` checks results withheld for result statements, transcripts and certificates as well as the exam card. **That endpoint still answers without sign-in for any registration number; this is outside this module and should be reviewed.**
+
+### 13.3 Files
+
+- **eadmin library:** `App_Code/Discipline/Dc*.cs` (Core, Cases, Workflow, Letters, Notify, Files, Clearance, Admin, Dashboard, Reports, Export, Pdf).
+- **eadmin screens:** `NewScreens/Disciplinary{Dashboard,Records,Case,Updates,Settings,Reports}.aspx`, `DcHeader.ascx`, `DcStudentBanner.ascx`, `DcFile.ashx`, `DcUpload.ashx`, `css/dc.css`, `js/dc*.js`.
+- **eadmin hooks:**
+  - `GraduationEngine` (C9) and `GraduationService.Clear` (C9 cannot be overridden);
+  - `GraduationPrintGate`;
+  - `API/doc_verification.aspx.cs`;
+  - `FeesRegistration` and `StudentsRegistration` exam clearance;
+  - `StudentProfile` and `NewStudentInfo` banner;
+  - `TicketsController` link;
+  - the sidebar and page titles.
+- **Portal library:** `App_Code/Portal/DisciplinaryPortal.cs` (gate, results withheld, the student's cases, appeal).
+- **Portal pages:** `AccessRestricted.aspx`, `MyDisciplinaryCases.aspx`, `DcPortal.ashx`.
+- **Portal hooks:**
+  - `Global.asax`;
+  - `PortalHelper` exemptions;
+  - `PortalMaster` (notice and footer link);
+  - `PortalAlerts` icon;
+  - results: `StudentResults`, `PrintResults`, `Results.ascx`, `Results_complaint.ascx`, `CourseWorkResults.ascx`, the dashboard control (results, CGPA, exam card), `MyCourses`, `MyGraduation`, `COOPERP/Mobile/Default.aspx`;
+  - registration: the wizard service, course registration and retakes.
+
+### 13.4 Test results (production, test students, then purged)
+
+| Area | Result |
+|---|---|
+| Lifecycle | Report with two students, investigate, schedule and summon, adjourn (re-summons), record the hearing, decide with suspension, cancellation and fine (interim measure replaced), follow-up, vary, appeal, appeal varied, close, withdraw: all pass. The six letters render on letterhead. |
+| Refusals | Deciding a serious case without a hearing, a stale version, short notice without a reason, recording a hearing before it happened, suspension without an end date, dismissal combined with a fine, a clearance letter while something is pending, a reporter deciding: all refused with a plain message. |
+| Database guards | Entry edits and letter deletion refused. Suspended student refused by both registration triggers; another student allowed; the automatic-registration rule still fires. |
+| Restricted case | As a manage-all officer without `discipline.restricted`: absent from list, search, filters, dashboard, feed, register and Senate summary; a direct link says "not found"; actions refused. Admin views are logged. |
+| Portal block | 179 pages, 72 PageMethods, `?ajax=`/`?action=` calls and handlers all refused for the blocked student (the only exceptions were 4 pages that already fail to compile). The same holds with the session lost and the cookie kept, and with the master key. The restricted page shows the case. The student's own letter downloads; another student's gives 404. The appeal from the portal is recorded with the EPORTAL interface and IP; a second appeal is refused, as is an appeal on another student's case. |
+| Results withheld | Notice shown on StudentResults and the dashboard (results and CGPA hidden). PrintResults answers 403. The exam card picker explains the withholding; the exam card PDF answers 403. My Graduation redirects. The mobile endpoint refuses. The notice clears after reading. |
+| Graduation and documents | C9 blocks the suspended student and the pending cancellation; the print gate refuses withheld documents. |
+| Automatic ending | A past-dated block was not in force before any job ran. The procedure (run from the dashboard) recorded the SYSTEM entry and notice and set the sanction to EXPIRED. |
+| Exports | Register (PDF, Excel, CSV), Senate summary, sanctions, appeals, follow-ups, student statement and list export all produced; group order is kept. |
+| Errors | No errors were logged by either application. |
+
+## Appendix A: schema SQL (tested, applied)
 
 ```sql
 -- ---------------------------------------------------------------------------
@@ -613,7 +680,9 @@ INSERT IGNORE INTO dc_settings (setting_key, setting_value, description, updated
  ('contact_office',          'Office of the Dean of Students', 'Shown to a student whose portal access is restricted', 'install', NOW()),
  ('contact_details',         'deanofstudents@mru.ac.ug', 'Contact line shown with the office', 'install', NOW()),
  ('appellate_authority',     'University Appeals Committee', 'Name of the body that decides appeals, printed on letters', 'install', NOW()),
- ('letter_office',           'Office of the Academic Registrar', 'Office line on disciplinary letters', 'install', NOW());
+ ('letter_office',           'Office of the Academic Registrar', 'Office line on disciplinary letters', 'install', NOW()),
+ ('summon_notice_days',      '3',  'Minimum days between a summons and the hearing, unless a reason for short notice is recorded', 'install', NOW()),
+ ('attachment_max_mb',       '15', 'Largest file that can be attached to a case, in MB', 'install', NOW());
 
 CREATE TABLE IF NOT EXISTS dc_case_type (
   id              INT UNSIGNED      NOT NULL AUTO_INCREMENT,
@@ -662,6 +731,7 @@ CREATE TABLE IF NOT EXISTS dc_case_type_sanction (
   case_type_id     INT UNSIGNED      NOT NULL,
   sanction_type_id INT UNSIGNED      NOT NULL,
   sort_order       SMALLINT UNSIGNED NOT NULL DEFAULT 0,
+  is_active        TINYINT(1)        NOT NULL DEFAULT 1,      -- pairings are switched off, never deleted
   PRIMARY KEY (case_type_id, sanction_type_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_general_ci;
 
@@ -1119,10 +1189,9 @@ DELIMITER ;
 DROP EVENT IF EXISTS ev_dc_expire_sanctions;
 CREATE EVENT ev_dc_expire_sanctions ON SCHEDULE EVERY 1 DAY STARTS (CURRENT_DATE + INTERVAL 1 DAY + INTERVAL 10 MINUTE)
   ON COMPLETION PRESERVE ENABLE DO CALL dc_expire_sanctions();
-
 ```
 
-## Appendix B: registration guard SQL (tested)
+## Appendix B: registration guard SQL (tested, applied)
 
 ```sql
 -- ---------------------------------------------------------------------------
@@ -1175,10 +1244,9 @@ DELIMITER ;
 
 -- Rollback: re-run sql/guardrails/acad_registration_block_autoreg_trigger.sql and
 --           DROP TRIGGER campus_dynamics_portal.trg_dc_coursereg_bi;
-
 ```
 
-## Appendix C: seed SQL (tested; run only after section 3 is approved)
+## Appendix C: seed SQL (applied)
 
 ```sql
 -- ---------------------------------------------------------------------------
@@ -1278,10 +1346,9 @@ Reason: {{lift_reason}}', 1, 40, 'seed', NOW()),
 Sanctions now in force: {{sanctions}}
 
 This decision is final within the University.', 1, 60, 'seed', NOW());
-
 ```
 
-## Appendix D: menu, roles and grants SQL (tested)
+## Appendix D: menu, roles and grants SQL (applied)
 
 ```sql
 -- ---------------------------------------------------------------------------
@@ -1368,4 +1435,57 @@ JOIN (
 ) g ON g.rc = r.role_code
 WHERE NOT EXISTS (SELECT 1 FROM sys_role_permissions x WHERE x.role_id = r.id AND x.menu_slug = g.slug);
 
+-- The case file and its file handler are reached from the records list, not the sidebar. They get slugs
+-- of their own so that page-gated roles (the read-only Auditor) can open them; every role that holds
+-- discipline.records receives both.
+INSERT INTO sys_menu_items (menu_slug, label, section, item_type, parent_slug, url, sort_order, is_active, created_at) VALUES
+ ('discipline.case',  'Disciplinary case file',           'academics','subitem','discipline','~/COOPERP/NewScreens/DisciplinaryCase.aspx',947,1,NOW()),
+ ('discipline.files', 'Disciplinary letters and evidence','academics','subitem','discipline','~/COOPERP/NewScreens/DcFile.ashx',948,1,NOW())
+ON DUPLICATE KEY UPDATE label=VALUES(label), url=VALUES(url), parent_slug=VALUES(parent_slug), sort_order=VALUES(sort_order), is_active=1;
+
+INSERT INTO sys_role_permissions (role_id, menu_slug, can_view, can_edit, can_delete, granted_by, granted_at)
+SELECT p.role_id, s.slug, 1, 0, 0, 'disciplinary-2026-10', NOW()
+FROM sys_role_permissions p JOIN (SELECT 'discipline.case' slug UNION ALL SELECT 'discipline.files') s
+WHERE p.menu_slug='discipline.records'
+  AND NOT EXISTS (SELECT 1 FROM sys_role_permissions x WHERE x.role_id=p.role_id AND x.menu_slug=s.slug);
+```
+
+## Appendix E: test-data purge (run once before go-live)
+
+```sql
+-- ---------------------------------------------------------------------------
+-- Student Disciplinary module: removes the acceptance-test data (run once before go-live, 6 Oct 2026).
+-- Touches ONLY rows that belong to the two test students MRUZZTEST0001/0002 and the test users zz_dc_*.
+-- The append-only guards refuse deletes, so they are dropped for this run and restored at the end by
+-- re-running 2026-10_disciplinary_schema.sql (idempotent). Back up the dc_ tables first.
+-- ---------------------------------------------------------------------------
+DROP TRIGGER IF EXISTS trg_dc_entry_bd;   DROP TRIGGER IF EXISTS trg_dc_case_bd;      DROP TRIGGER IF EXISTS trg_dc_sanction_bd;
+DROP TRIGGER IF EXISTS trg_dc_audit_bd;   DROP TRIGGER IF EXISTS trg_dc_letter_bd;    DROP TRIGGER IF EXISTS trg_dc_appeal_bd;
+DROP TRIGGER IF EXISTS trg_dc_incident_bd; DROP TRIGGER IF EXISTS trg_dc_attachment_bd; DROP TRIGGER IF EXISTS trg_dc_notification_bd;
+DROP TRIGGER IF EXISTS trg_dc_access_bd;
+
+DROP TABLE IF EXISTS zz_cases;
+CREATE TABLE zz_cases AS SELECT id, incident_id FROM dc_case WHERE regno IN ('MRUZZTEST0001','MRUZZTEST0002');
+DELETE FROM dc_access_log  WHERE case_id IN (SELECT id FROM zz_cases);
+DELETE FROM dc_notification WHERE case_id IN (SELECT id FROM zz_cases);
+DELETE FROM dc_letter      WHERE case_id IN (SELECT id FROM zz_cases);
+DELETE FROM dc_appeal      WHERE case_id IN (SELECT id FROM zz_cases);
+DELETE FROM dc_sanction    WHERE case_id IN (SELECT id FROM zz_cases);
+DELETE FROM dc_hearing     WHERE case_id IN (SELECT id FROM zz_cases);
+DELETE FROM dc_attachment  WHERE case_id IN (SELECT id FROM zz_cases);
+DELETE FROM dc_entry       WHERE case_id IN (SELECT id FROM zz_cases);
+DELETE FROM dc_audit       WHERE case_id IN (SELECT id FROM zz_cases)
+                              OR (entity='INCIDENT' AND entity_id IN (SELECT incident_id FROM zz_cases));
+DELETE FROM dc_case        WHERE id IN (SELECT id FROM zz_cases);
+DELETE FROM dc_incident    WHERE id IN (SELECT incident_id FROM zz_cases) AND NOT EXISTS (SELECT 1 FROM dc_case c WHERE c.incident_id=dc_incident.id);
+DELETE FROM acad_activity_log WHERE page_function='Student Discipline' AND user_id LIKE 'zz\_dc\_%';
+-- Numbering starts again at 0001 for real cases, but only if no real case has been opened.
+DELETE FROM dc_sequence WHERE NOT EXISTS (SELECT 1 FROM dc_case);
+DROP TABLE zz_cases;
+
+-- The test students and their portal logins.
+DELETE FROM acad_student WHERE regno IN ('MRUZZTEST0001','MRUZZTEST0002');
+DELETE m FROM campus_dynamics_portal.my_aspnet_membership m JOIN campus_dynamics_portal.my_aspnet_users u ON u.id=m.userId WHERE u.name IN ('MRUZZTEST0001','MRUZZTEST0002');
+DELETE FROM campus_dynamics_portal.my_aspnet_users WHERE name IN ('MRUZZTEST0001','MRUZZTEST0002');
+-- Then: re-run 2026-10_disciplinary_schema.sql to restore the guards, and delete Data_Private\Disciplinary\{case ids}.
 ```

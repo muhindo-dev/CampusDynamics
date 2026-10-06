@@ -346,6 +346,10 @@
                             onclick="ajaxAction('set_status','RESOLVED')">&#10003; Resolve</button>
                     <button type="button" class="tc-ctrl-btn tc-ctrl-btn--danger"
                             onclick="ajaxAction('set_status','CLOSED')">&#10005; Close</button>
+                    <% if (DcAccess.CanAny(DcAccess.Report, DcAccess.Manage, DcAccess.ManageAll, DcAccess.ManageExam)) { %>
+                    <div class="tc-ctrl-sep"></div>
+                    <a id="tcDcLink" class="tc-ctrl-btn" href="DisciplinaryRecords.aspx?new=1" target="_blank" rel="noopener" title="Report this complaint as a disciplinary case">Open disciplinary case</a>
+                    <% } %>
                     <span id="tcActionMsg" class="tc-action-msg"></span>
                 </div>
 
@@ -487,6 +491,8 @@ function renderDetail(d) {
         aw.style.display = 'none';
     }
 
+    var dcl = document.getElementById('tcDcLink');
+    if (dcl) dcl.href = 'DisciplinaryRecords.aspx?new=1&ticket=' + encodeURIComponent(tcId || '');
     setVal('tcDdlStatus',   d.status);
     setVal('tcDdlPriority', d.priority);
     setVal('tcTxtAssign',   d.assigned);

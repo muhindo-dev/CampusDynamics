@@ -563,6 +563,53 @@
                         </li>
 
                         <!-- ══════════════════════════════════════════════
+                             STUDENT DISCIPLINE (Disciplinary module, 2026-10)
+                             Shown by permission slug (discipline.*), not by legacy role, so the
+                             Dean of Students, committee, exam officer, VC and auditor all reach it.
+                             ══════════════════════════════════════════════ -->
+                        <li class="cd-sidebar__heading" data-roles="all">Student Discipline</li>
+
+                        <li class="cd-sidebar__item cd-sidebar__item--has-submenu" data-roles="all">
+                            <a href="javascript:void(0)" class="cd-sidebar__link cd-sidebar__link--toggle">
+                                <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"></path></svg>
+                                <span>Discipline</span>
+                                <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="cd-sidebar__arrow"><polyline points="9 18 15 12 9 6"></polyline></svg>
+                            </a>
+                            <ul class="cd-sidebar__submenu">
+                                <li class="cd-sidebar__subitem" data-roles="all">
+                                    <asp:HyperLink ID="lnkDisciplinaryDashboard" runat="server" NavigateUrl="~/COOPERP/NewScreens/DisciplinaryDashboard.aspx" CssClass="cd-sidebar__sublink">
+                                        <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="20" x2="18" y2="10"></line><line x1="12" y1="20" x2="12" y2="4"></line><line x1="6" y1="20" x2="6" y2="14"></line></svg>
+                                        <span>Disciplinary Dashboard</span>
+                                    </asp:HyperLink>
+                                </li>
+                                <li class="cd-sidebar__subitem" data-roles="all">
+                                    <asp:HyperLink ID="lnkDisciplinaryRecords" runat="server" NavigateUrl="~/COOPERP/NewScreens/DisciplinaryRecords.aspx" CssClass="cd-sidebar__sublink">
+                                        <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path></svg>
+                                        <span>Disciplinary Records</span>
+                                    </asp:HyperLink>
+                                </li>
+                                <li class="cd-sidebar__subitem" data-roles="all">
+                                    <asp:HyperLink ID="lnkDisciplinaryUpdates" runat="server" NavigateUrl="~/COOPERP/NewScreens/DisciplinaryUpdates.aspx" CssClass="cd-sidebar__sublink">
+                                        <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"></polyline></svg>
+                                        <span>Record Updates</span>
+                                    </asp:HyperLink>
+                                </li>
+                                <li class="cd-sidebar__subitem" data-roles="all">
+                                    <asp:HyperLink ID="lnkDisciplinarySettings" runat="server" NavigateUrl="~/COOPERP/NewScreens/DisciplinarySettings.aspx" CssClass="cd-sidebar__sublink">
+                                        <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="4" y1="21" x2="4" y2="14"></line><line x1="4" y1="10" x2="4" y2="3"></line><line x1="12" y1="21" x2="12" y2="12"></line><line x1="12" y1="8" x2="12" y2="3"></line><line x1="20" y1="21" x2="20" y2="16"></line><line x1="20" y1="12" x2="20" y2="3"></line></svg>
+                                        <span>Case Types and Sanctions</span>
+                                    </asp:HyperLink>
+                                </li>
+                                <li class="cd-sidebar__subitem" data-roles="all">
+                                    <asp:HyperLink ID="lnkDisciplinaryReports" runat="server" NavigateUrl="~/COOPERP/NewScreens/DisciplinaryReports.aspx" CssClass="cd-sidebar__sublink">
+                                        <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline><line x1="16" y1="13" x2="8" y2="13"></line><line x1="16" y1="17" x2="8" y2="17"></line></svg>
+                                        <span>Disciplinary Reports</span>
+                                    </asp:HyperLink>
+                                </li>
+                            </ul>
+                        </li>
+
+                        <!-- ══════════════════════════════════════════════
                              ④ SCHOOL FEES
                              Roles: fees_officer | bursar | admin
                              Task focus: Everything income-side, collect, track, bursaries.

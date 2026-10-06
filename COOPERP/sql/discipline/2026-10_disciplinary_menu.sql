@@ -81,3 +81,17 @@ JOIN (
   UNION ALL SELECT 'auditor','discipline.reports'              UNION ALL SELECT 'auditor','discipline.view_all'
 ) g ON g.rc = r.role_code
 WHERE NOT EXISTS (SELECT 1 FROM sys_role_permissions x WHERE x.role_id = r.id AND x.menu_slug = g.slug);
+
+-- The case file and its file handler are reached from the records list, not the sidebar. They get slugs
+-- of their own so that page-gated roles (the read-only Auditor) can open them; every role that holds
+-- discipline.records receives both.
+INSERT INTO sys_menu_items (menu_slug, label, section, item_type, parent_slug, url, sort_order, is_active, created_at) VALUES
+ ('discipline.case',  'Disciplinary case file',           'academics','subitem','discipline','~/COOPERP/NewScreens/DisciplinaryCase.aspx',947,1,NOW()),
+ ('discipline.files', 'Disciplinary letters and evidence','academics','subitem','discipline','~/COOPERP/NewScreens/DcFile.ashx',948,1,NOW())
+ON DUPLICATE KEY UPDATE label=VALUES(label), url=VALUES(url), parent_slug=VALUES(parent_slug), sort_order=VALUES(sort_order), is_active=1;
+
+INSERT INTO sys_role_permissions (role_id, menu_slug, can_view, can_edit, can_delete, granted_by, granted_at)
+SELECT p.role_id, s.slug, 1, 0, 0, 'disciplinary-2026-10', NOW()
+FROM sys_role_permissions p JOIN (SELECT 'discipline.case' slug UNION ALL SELECT 'discipline.files') s
+WHERE p.menu_slug='discipline.records'
+  AND NOT EXISTS (SELECT 1 FROM sys_role_permissions x WHERE x.role_id=p.role_id AND x.menu_slug=s.slug);

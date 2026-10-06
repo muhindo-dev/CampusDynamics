@@ -22,7 +22,7 @@ using MySql.Data.MySqlClient;
 /// <summary>One automated check's result on one student, with the numbers behind it.</summary>
 public class GradFinding
 {
-    public string code = "";     // C1 .. C8
+    public string code = "";     // C1 .. C9
     public string name = "";     // what the check is called on screen
     public string level = "";    // PASS | WARN | BLOCK | NA
     public string detail = "";   // a sentence a Registrar can act on
@@ -60,6 +60,11 @@ public class GradCandidate
     public string graduatedYear = "";          // non-empty => already on a graduation list
     public string holdReason = "", holdActor = "", holdAt = "";
     public string clearedActor = "", clearedAt = "";
+
+    // C9, student discipline (Disciplinary module). Filled set-based by Enrich for a page of
+    // candidates, or one at a time by Assess when a single student is loaded.
+    public bool dcChecked = false;
+    public string dcLevel = "", dcDetail = "";
 
     public string readiness = "READY";         // READY | WARN | BLOCKED
     public List<GradFinding> findings = new List<GradFinding>();
@@ -623,6 +628,16 @@ public static class GraduationEngine
                 else if (RS(r, 1) == "CLEARED")
                 { g.clearedActor = RS(r, 3); g.clearedAt = RS(r, 4); }
             }
+
+        // C9: disciplinary restrictions, one query for the whole page (only students with
+        // something to report come back). DcClearance fails open on its own errors.
+        var regnos = new List<string>();
+        foreach (GradCandidate g in list) { regnos.Add(g.regno); g.dcChecked = true; }
+        foreach (KeyValuePair<string, DcClearanceResult> kv in DcClearance.CheckMany(c, regnos))
+        {
+            GradCandidate g;
+            if (byReg.TryGetValue(kv.Key, out g)) DcClearance.ForGraduation(kv.Value, out g.dcLevel, out g.dcDetail);
+        }
     }
 
     /// <summary>
@@ -707,6 +722,7 @@ public static class GraduationEngine
                 " JOIN acad_programme p ON p.progcode=s.progid " +
                 " LEFT JOIN (SELECT DISTINCT regno, 1 held FROM acad_grad_review " +
                 "            WHERE verdict='HELD' AND superseded_at IS NULL) h ON h.regno=a.regno " +
+                " LEFT JOIN (" + DcClearance.GraduationBlockSql + ") dcb ON dcb.regno=a.regno " +
                 " WHERE a.is_candidate=1 ";
 
             var p = new Dictionary<string, object>();
@@ -726,9 +742,9 @@ public static class GraduationEngine
             // the CGPA floor is one blocked student, not two, and Ready is what is left.
             using (var cmd = new MySqlCommand(
                 "SELECT COUNT(*), SUM(a.fails>0), SUM(a.cgpa<2.0), SUM(h.held IS NOT NULL), " +
-                " SUM(a.fails>0 OR a.cgpa<2.0 OR h.held IS NOT NULL), " +
-                " SUM(NOT (a.fails>0 OR a.cgpa<2.0 OR h.held IS NOT NULL) " +
-                "     AND (a.zero_marks>0 OR a.no_score>0)) " +
+                " SUM(a.fails>0 OR a.cgpa<2.0 OR h.held IS NOT NULL OR dcb.regno IS NOT NULL), " +
+                " SUM(NOT (a.fails>0 OR a.cgpa<2.0 OR h.held IS NOT NULL OR dcb.regno IS NOT NULL) " +
+                "     AND (a.zero_marks>0 OR a.no_score>0)), SUM(dcb.regno IS NOT NULL) " +
                 where + notListed, c))
             {
                 foreach (KeyValuePair<string, object> kv in p) cmd.Parameters.AddWithValue(kv.Key, kv.Value);
@@ -748,6 +764,7 @@ public static class GraduationEngine
                         AddGc(o.blockers, "CGPA below " + N(CGPA_FLOOR, 1), blkCgpa);
                         AddGc(o.blockers, "Marks of zero, or no mark at all", warnMarks);
                         AddGc(o.blockers, "On hold", o.held);
+                        AddGc(o.blockers, "Disciplinary sanction", RI(r, 6));
                     }
             }
 
@@ -865,6 +882,21 @@ public static class GraduationEngine
         if (g.holdReason != "")
             Add(g, "C8", "On hold", "BLOCK",
                 "Put on hold by " + g.holdActor + " on " + g.holdAt + ": " + g.holdReason);
+
+        // C9: student discipline. A graduation bar, suspension, expulsion, or a results
+        // cancellation the marks office has not yet carried out, blocks and cannot be
+        // overridden (GraduationService.Clear refuses it). An open case without a bar warns.
+        if (!g.dcChecked)
+        {
+            DcClearance.ForGraduation(DcClearance.Check(c, null, g.regno), out g.dcLevel, out g.dcDetail);
+            g.dcChecked = true;
+        }
+        if (g.dcLevel == "BLOCK")
+            Add(g, "C9", "Disciplinary", "BLOCK", g.dcDetail);
+        else if (g.dcLevel == "WARN")
+            Add(g, "C9", "Disciplinary", "WARN", g.dcDetail);
+        else
+            Add(g, "C9", "Disciplinary", "PASS", "No disciplinary case or sanction stands in the way.");
 
         // C2, outstanding papers.
         //
