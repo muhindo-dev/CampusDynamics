@@ -445,6 +445,24 @@ public partial class COOPERP_NewScreens_SidebarMaster : System.Web.UI.MasterPage
             case "profilechangerequests":
                 title = "Profile Requests";
                 break;
+            case "assetsdashboard":
+                title = "Assets Dashboard";
+                break;
+            case "assets":
+                title = "Assets";
+                break;
+            case "assetrecords":
+                title = "Asset Records";
+                break;
+            case "assetcategories":
+                title = "Asset Categories";
+                break;
+            case "assetreports":
+                title = "Asset Reports";
+                break;
+            case "assetimport":
+                title = "Import Assets";
+                break;
             case "appraisaldashboard":
                 title = "Appraisal Overview";
                 break;

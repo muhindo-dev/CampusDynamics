@@ -1,7 +1,7 @@
 # Fixed Assets module: plan
 
 Prepared 6 October 2026 by MIS for the University Bursar and MIS review.
-Status: **Phase 1, awaiting approval.** No application code has been written.
+Status: **Built, tested and live (6 October 2026).** Phase 2 followed MIS's recommended answers to section 10; see section 11.
 
 Scope: a new Fixed Assets module in eadmin with five screens (Assets Dashboard, Asset Categories, Assets, Asset Records, Reports), its database, depreciation engine, permissions, reports, import and tests.
 
@@ -653,6 +653,11 @@ Records that do not affect value (transfer, status, verification) need no catch-
 
 ---
 
+### 5.11 Opening balances (added during testing)
+
+An opening value "as at 31 July 2026" is the brought-forward position on 1 August 2026. The Opening record is therefore dated the day after the opening date: it falls in the new financial year, depreciation is treated as charged to the opening date, and the first charge is for the following month. This keeps opening balances loadable after the closing year is locked, and the Depreciation Schedule shows them in their own column, *Brought into register*, never as additions.
+
+
 ## 6. Permissions
 
 **Slugs** (Appendix C, tested). Page slugs map to URLs; action slugs have no URL and show in role management under "Fixed Assets".
@@ -726,36 +731,60 @@ R11 and R12 are needed by Finance because of D4.
 Phase 2 follows this order. Each item is ticked here when done, with any change from the plan noted beneath it.
 
 **Database**
-- [ ] 1. Copy the tested scripts to `COOPERP/sql/assets/`: `2026-10_fixed_assets_schema.sql`, `2026-10_fixed_assets_seed_categories.sql`, `2026-10_fixed_assets_menu.sql`.
-- [ ] 2. Run the schema script on production (new tables only).
-- [ ] 3. Run the menu script (it backs up `sys_menu_items`, `sys_role_permissions` and `sys_roles` first).
-- [ ] 4. Run the seed script, **only after section 3 is approved**, with any changes made.
+- [x] 1. Copy the tested scripts to `COOPERP/sql/assets/`: `2026-10_fixed_assets_schema.sql`, `2026-10_fixed_assets_seed_categories.sql`, `2026-10_fixed_assets_menu.sql`.
+  - Done. Scripts in `COOPERP/sql/assets/`.
+- [x] 2. Run the schema script on production (new tables only).
+  - Done 6 Oct 2026. Change: a follow-up `2026-10_fixed_assets_schema_02.sql` adds `fa_record.details_json` (structured detail for transfers and changes of estimate) and extends the immutability trigger to it and to reason, reference, approval reference and proceeds. Idempotent.
+- [x] 3. Run the menu script (it backs up `sys_menu_items`, `sys_role_permissions` and `sys_roles` first).
+  - Done. New role `assets_officer` is id 45; backups `sys_menu_items_bak_20261006`, `sys_role_permissions_bak_20261006`, `sys_roles_bak_20261006`.
+- [x] 4. Run the seed script, **only after section 3 is approved**, with any changes made.
+  - Done with the list as proposed (decision: proceed on recommended answers). Capitalisation threshold default set to UGX 500,000 (Q5), warning only.
 
 **Server core** (`App_Code/FixedAssets`, deployed as one batch out of hours)
-- [ ] 5. `FaDb`, `FaAccess`, `FaAudit` (transaction helper, slug checks, audit plus activity log), `FaFinYear`, `FaSettings`.
-- [ ] 6. `FaMath` (SL, RB, NONE, cumulative rounding, residual cap) and its console test harness (9.2), passing.
-- [ ] 7. `FaCategoryService` (tree, inheritance, save, move, deactivate, codes).
-- [ ] 8. `FaAssetService` (numbering, create with Acquisition or Opening, edit with row_version, list query builder, flags).
-- [ ] 9. `FaPosting` (ledger replay) and `FaRecordService` (every record type, validation, catch-up, reversal rules, year locks).
-- [ ] 10. `FaDepreciation` (preview, hash, post, reverse run, journal summary).
-- [ ] 11. `FaExport` and `FaPdf` (adapted from Graduation), `FaReports` (R1 to R12 queries), tag label PDF.
-- [ ] 12. `FaImport` (template writer, xlsx and csv reader, validator, commit).
-- [ ] 13. `FaUpload.ashx`, `FaFile.ashx`.
+- [x] 5. `FaDb`, `FaAccess`, `FaAudit` (transaction helper, slug checks, audit plus activity log), `FaFinYear`, `FaSettings`.
+  - Done (`App_Code/FixedAssets/FaCore.cs`). Added `FaApi` (every PageMethod runs through one permission and error wrapper) and `FaLog` (errors go to `App_Data/FixedAssets/errors.log`, users see a plain sentence).
+- [x] 6. `FaMath` (SL, RB, NONE, cumulative rounding, residual cap) and its console test harness (9.2), passing.
+  - Done. 25 console tests pass, including the five journal figures (Coaster 40,000,000; lab equipment 122,069; Mubende 4,409,694; Masaka 96,682,424). One defect found and fixed: the final month of a life was capped at zero instead of at the residual value.
+- [x] 7. `FaCategoryService` (tree, inheritance, save, move, deactivate, codes).
+  - Done. Added a light lookup (`GetLite`) used on every asset create, so imports do not recount assets per row.
+- [x] 8. `FaAssetService` (numbering, create with Acquisition or Opening, edit with row_version, list query builder, flags).
+  - Done. Asset creation split into `Create` and `CreateCore` so the import can rehearse and commit through exactly the same code. A wrong acquisition (cost or purchase date) is corrected by a reversal plus a new acquisition record, allowed only before any value history.
+- [x] 9. `FaPosting` (ledger replay) and `FaRecordService` (every record type, validation, catch-up, reversal rules, year locks).
+  - Done (`FaPosting`, `FaRecords`). Records added: Opening, Verification, Change of estimate, Void, Reversal (as planned). Change of estimate records are not reversible: a new estimate is recorded instead.
+- [x] 10. `FaDepreciation` (preview, hash, post, reverse run, journal summary).
+  - Done. Change: a run may not charge months that have not ended (period end at most the end of the current month).
+- [x] 11. `FaExport` and `FaPdf` (adapted from Graduation), `FaReports` (R1 to R12 queries), tag label PDF.
+  - Done (`FaExport`, `FaPdf`, `FaReports`, tag labels). Change: a 13th report, Asset Records Ledger, serves the export on the Records screen.
+- [x] 12. `FaImport` (template writer, xlsx and csv reader, validator, commit).
+  - Done. Change: `.xlsx` is read and written with a small built-in ZIP helper (`FaZip`) instead of `System.IO.Packaging`, because WindowsBase is not referenced in web.config and changing web.config would restart every site user for no gain.
+- [x] 13. `FaUpload.ashx`, `FaFile.ashx`.
+  - Done (`FaUpload.ashx`, `FaFile.ashx`, `FaFiles`). File type is checked against its first bytes; a file already attached (same SHA-1) is refused.
 
 **Front end**
-- [ ] 14. `css/fa.css`, `js/fa.js` (toolkit adapted from Graduation, design rules applied).
-- [ ] 15. Sidebar: the "Fixed Assets" parent and five links in `SidebarMaster.master`, plus page titles in `SetPageTitle()`.
-- [ ] 16. `AssetCategories.aspx` (tree, editor, drag and drop, review and save).
-- [ ] 17. `Assets.aspx` (list, filters, batch, detail modal, form, record forms, attachments, export).
-- [ ] 18. `AssetImport.aspx`.
-- [ ] 19. `AssetRecords.aspx` (ledger, depreciation, year locks).
-- [ ] 20. `AssetsDashboard.aspx`.
-- [ ] 21. `AssetReports.aspx` and the 12 reports in three formats.
+- [x] 14. `css/fa.css`, `js/fa.js` (toolkit adapted from Graduation, design rules applied).
+  - Done. Change: the stylesheet follows the HR module look staff already use, with this brief's rules (radius 0, no shadows).
+- [x] 15. Sidebar: the "Fixed Assets" parent and five links in `SidebarMaster.master`, plus page titles in `SetPageTitle()`.
+  - Done. **Change from D14:** the module has its own sidebar heading, **Assets**, holding the Fixed Assets menu. The legacy role filter hides the Expenditure & Accounts heading from the Assets Officer, VC, Auditor and Procurement, so a menu placed there would have appeared under the wrong heading for them. The new heading is shown by permission slug only.
+- [x] 16. `AssetCategories.aspx` (tree, editor, drag and drop, review and save).
+  - Done. Drag and drop tested (synthetic HTML5 drag events) and the keyboard Move to path tested; both audited.
+- [x] 17. `Assets.aspx` (list, filters, batch, detail modal, form, record forms, attachments, export).
+  - Done. Shared header control `FaHeader.ascx` gives every screen the same header and module tabs, each tab shown only with its permission.
+- [x] 18. `AssetImport.aspx`.
+  - Done.
+- [x] 19. `AssetRecords.aspx` (ledger, depreciation, year locks).
+  - Done. Live run reproduced the 2024/25 journal: Coaster 40,000,000 to 31 Jul 2025 and 48,000,000 to 31 Jul 2026; a repeat run charged nothing.
+- [x] 20. `AssetsDashboard.aspx`.
+  - Done. Charts are drawn without animation (crisper, and correct in screenshots and printouts).
+- [x] 21. `AssetReports.aspx` and the 12 reports in three formats.
+  - Done. Each report can be previewed on screen (first 100 rows with totals) before export.
 
 **Finish**
-- [ ] 22. Run the full test plan (section 9) and fix failures.
-- [ ] 23. User guide, `COOPERP/docs/fixed-assets-user-guide.md`: one page per screen, plus year-end steps.
-- [ ] 24. Memory note for future work, then commit and push.
+- [x] 22. Run the full test plan (section 9) and fix failures.
+  - Done. Engine 25/25; service, record and security 70/70; import 21/21; exports 69/69 (13 reports x 3 formats plus tags, ledger and selection exports); performance within target with 5,000 assets; every screen clean at 1366 px and 390 px. Defects found by the tests and fixed: client_op_id was CHAR(36), which MySql.Data reads as a GUID (now VARCHAR(40), script 03); required fields are now checked before the catch-up prompt; opening balances are dated the day after the opening date (see 5.11); unwrapped PDF text wider than its column was dropped (rows are now table rows that grow together); Code 128 tags now accept lower-case asset numbers; the import reports every error in one pass; a possible double entry (same name, date and cost) now warns. Test data was then removed once, as approved in Q11 (backup taken first), and the guard triggers restored by re-running scripts 01 to 03.
+- [x] 23. User guide, `COOPERP/docs/fixed-assets-user-guide.md`: one page per screen, plus year-end steps.
+  - Done: `COOPERP/docs/fixed-assets-user-guide.md`.
+- [x] 24. Memory note for future work, then commit and push.
+  - Done.
 
 ---
 
@@ -875,7 +904,48 @@ The tables are new and empty, so tests on production would leave rows that can n
 
 ---
 
-## Appendix A: schema SQL (tested)
+---
+
+## 11. Phase 2 record: decisions, production scripts, results
+
+### 11.1 Open questions, as settled for the build
+
+| # | Decision | Can MIS change it later? |
+|---|---|---|
+| Q1 | Financial year 1 August to 31 July, derived from dates (`fa_settings.fy_start_month = 8`). `fin_financial_years` is not used. | Yes, setting |
+| Q2 | Rates as proposed in section 3. | Yes, on the Categories screen (affects new assets; existing ones by Change of estimate) |
+| Q3 | Register only. The module produces the depreciation journal and the reconciliation; Finance posts the journal by hand. | Later phase |
+| Q4 | AC80xx accounts, which hold the balances. | Yes, per category |
+| Q5 | Capitalisation threshold UGX 500,000, warning only. | Yes, setting or per category |
+| Q6 | Opening register: physical count, then import with opening_date 31 Jul 2026 and opening_accum_dep CALC or the known figure. | Operational |
+| Q7 | Assets recorded under the responsible campus; off-campus land in the building field. | Yes |
+| Q8 | `assets_officer` role created (id 45), no users assigned yet. | MIS assigns |
+| Q9 | Disposal needs the dispose permission, an external approval reference and a reason; no second approver in the system. | Later phase |
+| Q10 | Land and Buildings revalued every 12 months (brief). | Yes, per category |
+| Q11 | Tests ran on production tables before go-live; test data was removed once afterwards with a backup. | Done |
+| Q12 to Q15 | Partial disposal, staff self-service, label printer, department scope: not built; candidates for a later phase. | |
+
+### 11.2 SQL scripts (all applied to production 6 Oct 2026; run in this order on any other copy)
+
+| Order | Script | What it does |
+|---|---|---|
+| 1 | `sql/assets/2026-10_fixed_assets_schema.sql` | Nine `fa_` tables and the guard triggers |
+| 2 | `sql/assets/2026-10_fixed_assets_schema_02.sql` | Adds `fa_record.details_json`, extends the record guard, sets the capitalisation threshold |
+| 3 | `sql/assets/2026-10_fixed_assets_schema_03.sql` | `client_op_id` to VARCHAR(40) |
+| 4 | `sql/assets/2026-10_fixed_assets_menu.sql` | Menu items, 13 slugs, `assets_officer` role and grants; backs up the three RBAC tables first |
+| 5 | `sql/assets/2026-10_fixed_assets_seed_categories.sql` | 11 categories, 42 sub-categories |
+
+All five are idempotent (safe to run again).
+
+### 11.3 Files
+
+- Core: `App_Code/FixedAssets/` (FaCore, FaMath, FaCategories, FaAssets, FaPosting, FaRecords, FaDepreciation, FaDashboard, FaReports, FaExport, FaPdf, FaImport, FaZip, FaFiles)
+- Screens: `COOPERP/NewScreens/AssetsDashboard, AssetCategories, Assets, AssetRecords, AssetReports, AssetImport` (.aspx and .aspx.cs), `FaHeader.ascx`, `FaFile.ashx`, `FaUpload.ashx`
+- Front end: `css/fa.css`, `js/fa.js`, `js/fa-assets.js`, `js/fa-records.js`, `js/fa-categories.js`, `js/fa-dashboard.js`, `js/fa-reports.js`, `js/fa-import.js`
+- Sidebar: new Assets heading in `SidebarMaster.master`; titles in `SidebarMaster.master.cs`
+- Attachments and the error log: `App_Data/FixedAssets/` (not served by IIS)
+
+## Appendix A: schema SQL (as applied)
 
 ```sql
 -- ---------------------------------------------------------------------------
@@ -1043,7 +1113,7 @@ CREATE TABLE IF NOT EXISTS fa_record (
   recorded_by            VARCHAR(100)      NOT NULL,
   recorded_role          VARCHAR(40)       NULL,
   recorded_at            DATETIME          NOT NULL,
-  client_op_id           CHAR(36)          NULL,
+  client_op_id           VARCHAR(40)       NULL,
   PRIMARY KEY (id),
   KEY ix_fa_record_asset (asset_id, record_date, id),
   KEY ix_fa_record_type (record_type, record_date),
@@ -1069,7 +1139,7 @@ CREATE TABLE IF NOT EXISTS fa_depreciation_run (
   reversed_by     VARCHAR(100)  NULL,
   reversed_at     DATETIME      NULL,
   reverse_reason  VARCHAR(1000) NULL,
-  client_op_id    CHAR(36)      NULL,
+  client_op_id    VARCHAR(40)   NULL,
   PRIMARY KEY (id),
   KEY ix_fa_run_year (fin_year, period_end),
   UNIQUE KEY uq_fa_run_client_op (client_op_id)
@@ -1194,7 +1264,66 @@ END$$
 DELIMITER ;
 ```
 
-## Appendix B: seed categories SQL (tested; run only after approval)
+### A.2 Schema step 2
+
+```sql
+-- ---------------------------------------------------------------------------
+-- Fixed Assets module: schema step 2 (database campus_dynamics)
+-- Adds fa_record.details_json (structured detail of a record: transfer building/room,
+-- change-of-estimate old and new settings) and extends the immutability trigger to it.
+-- Idempotent: the column is only added when missing. Run with the mysql client.
+-- ---------------------------------------------------------------------------
+
+DROP PROCEDURE IF EXISTS fa_tmp_add_details_json;
+DELIMITER $$
+CREATE PROCEDURE fa_tmp_add_details_json()
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM information_schema.columns
+                  WHERE table_schema = DATABASE() AND table_name = 'fa_record' AND column_name = 'details_json') THEN
+    ALTER TABLE fa_record ADD COLUMN details_json TEXT NULL AFTER reason;
+  END IF;
+END$$
+DELIMITER ;
+CALL fa_tmp_add_details_json();
+DROP PROCEDURE fa_tmp_add_details_json;
+
+DROP TRIGGER IF EXISTS trg_fa_record_bu;
+DELIMITER $$
+CREATE TRIGGER trg_fa_record_bu BEFORE UPDATE ON fa_record FOR EACH ROW
+BEGIN
+  -- Only the reversal links (dep_active, reversed_by_record_id) may change.
+  IF NEW.asset_id <> OLD.asset_id OR NEW.record_type <> OLD.record_type
+     OR NEW.record_date <> OLD.record_date OR NEW.value_before <> OLD.value_before
+     OR NEW.value_after <> OLD.value_after OR NEW.change_amount <> OLD.change_amount
+     OR NOT (NEW.period_to <=> OLD.period_to) OR NOT (NEW.period_from <=> OLD.period_from)
+     OR NEW.value_class <> OLD.value_class OR NEW.recorded_by <> OLD.recorded_by
+     OR NEW.recorded_at <> OLD.recorded_at OR NOT (NEW.details_json <=> OLD.details_json)
+     OR NOT (NEW.reason <=> OLD.reason) OR NOT (NEW.reference <=> OLD.reference)
+     OR NOT (NEW.approval_ref <=> OLD.approval_ref) OR NOT (NEW.proceeds <=> OLD.proceeds) THEN
+    SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'fa_record values cannot be changed: post a reversal instead';
+  END IF;
+END$$
+DELIMITER ;
+
+-- Capitalisation threshold warning default (decision Q5): UGX 500,000. Warning only, never a block.
+UPDATE fa_settings SET setting_value = '500000', updated_by = 'phase2-decision', updated_at = NOW()
+ WHERE setting_key = 'cap_threshold_default' AND setting_value = '0';
+```
+
+### A.3 Schema step 3
+
+```sql
+-- ---------------------------------------------------------------------------
+-- Fixed Assets module: schema step 3 (database campus_dynamics)
+-- client_op_id CHAR(36) -> VARCHAR(40). MySql.Data reads every CHAR(36) column as a GUID
+-- and throws on any value that is not one (batch actions add a per-asset suffix), which
+-- made the asset unreadable. Unique keys are kept. Idempotent.
+-- ---------------------------------------------------------------------------
+ALTER TABLE fa_record MODIFY client_op_id VARCHAR(40) NULL;
+ALTER TABLE fa_depreciation_run MODIFY client_op_id VARCHAR(40) NULL;
+```
+
+## Appendix B: seed categories SQL (as applied)
 
 ```sql
 -- ---------------------------------------------------------------------------
@@ -1274,7 +1403,7 @@ JOIN (
 ) s ON s.pc = p.code AND p.parent_id = 0;
 ```
 
-## Appendix C: menu, slugs, role and grants SQL (tested)
+## Appendix C: menu, slugs, role and grants SQL (as applied)
 
 ```sql
 -- ---------------------------------------------------------------------------
