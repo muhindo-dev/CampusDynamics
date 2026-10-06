@@ -48,6 +48,7 @@ public static class HrExport
         public List<Col> Cols = new List<Col>();
         public List<object[]> Rows = new List<object[]>();
         public string Title;     // optional; defaults to the report title
+        public string Scope;     // optional; replaces the report's filter line on this sheet
         public Sheet(string name) { Name = name; }
         public Sheet Add(string header) { Cols.Add(new Col(header)); return this; }
         public Sheet Add(string header, Kind kind) { Cols.Add(new Col(header, kind)); return this; }
@@ -279,7 +280,7 @@ public static class HrExport
         TextRow(x, 1, University, X_TITLE, 22);
         TextRow(x, 2, r.Office, X_OFFICE, 16);
         TextRow(x, 3, title, X_REPORT, 20);
-        TextRow(x, 4, r.ScopeLine, X_META, 15);
+        TextRow(x, 4, string.IsNullOrEmpty(sh.Scope) ? r.ScopeLine : sh.Scope, X_META, 15);
         TextRow(x, 5, r.GeneratedLine, X_META, 15);
 
         x.Append("<row r=\"" + HEADER_ROW + "\" ht=\"22\" customHeight=\"1\">");
@@ -332,7 +333,7 @@ public static class HrExport
             {
                 if (sh.Cols[c].Total)
                     NumCell(x, c, rowNo, sums[c], sh.Cols[c].Kind == Kind.Decimal ? X_TOT_DEC : X_TOT_NUM);
-                else if (!labelled) { Cell(x, c, rowNo, "Total (" + sh.Rows.Count + " rows)", X_TOT_LABEL); labelled = true; }
+                else if (!labelled) { Cell(x, c, rowNo, "Total (" + sh.Rows.Count + (sh.Rows.Count == 1 ? " row)" : " rows)"), X_TOT_LABEL); labelled = true; }
                 else Cell(x, c, rowNo, "", X_TOT_BLANK);
             }
             x.Append("</row>");

@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Configuration;
 using System.Data;
+using System.Globalization;
 using System.IO;
 using System.Text;
 using System.Web;
@@ -10,8 +11,13 @@ using System.Web.UI;
 using System.Web.UI.WebControls;
 using System.Web.Security;
 using MySql.Data.MySqlClient;
-using DevExpress.Web;
 
+/// <summary>
+/// Employees: directory, profile (Details, Contracts, Leave, Payroll), add and edit, photo,
+/// one "Reset login" action and the staff register export. Contract columns use each
+/// employee's current contract, hr_current_contract_id(empID). "Active" means that contract
+/// is VALID and has not passed its end date.
+/// </summary>
 public partial class COOPERP_NewScreens_HREmployees : System.Web.UI.Page
 {
     protected string QsSort
@@ -21,17 +27,8 @@ public partial class COOPERP_NewScreens_HREmployees : System.Web.UI.Page
             string sort = (Request.QueryString["sort"] ?? string.Empty).Trim().ToLower();
             switch (sort)
             {
-                case "name":
-                case "code":
-                case "phone":
-                case "type":
-                case "dept":
-                case "supervisor":
-                case "station":
-                case "status":
-                case "pay":
-                case "contractstart":
-                case "contractend":
+                case "name": case "code": case "type": case "dept": case "job":
+                case "status": case "pay": case "contractend":
                     return sort;
                 default:
                     return string.Empty;
@@ -41,16 +38,31 @@ public partial class COOPERP_NewScreens_HREmployees : System.Web.UI.Page
 
     protected string QsSortDir
     {
+        get { return string.Equals(Request.QueryString["dir"], "DESC", StringComparison.OrdinalIgnoreCase) ? "DESC" : "ASC"; }
+    }
+
+    /// <summary>Status filter: ACTIVE, NOVALID, DUP or empty (older links: VALID, NONE).</summary>
+    private string QsStatus
+    {
         get
         {
-            return string.Equals(Request.QueryString["dir"], "DESC", StringComparison.OrdinalIgnoreCase) ? "DESC" : "ASC";
+            string s = (Request.QueryString["status"] ?? "").Trim().ToUpperInvariant();
+            if (s == "VALID") return "ACTIVE";
+            if (s == "NONE") return "NOVALID";
+            return (s == "ACTIVE" || s == "NOVALID" || s == "DUP") ? s : "";
         }
     }
+
+    private int QsPage { get { int p; return int.TryParse(Request.QueryString["page"], out p) && p > 0 ? p : 1; } }
 
     private string ConnStr
     {
         get { return ConfigurationManager.ConnectionStrings["vacConnectionString"].ConnectionString; }
     }
+
+    private const string ActiveSql = "(c.contractStatus = 'VALID' AND (c.contractEnd IS NULL OR c.contractEnd >= CURDATE()))";
+    private const string DupCodesSql =
+        "SELECT EMP_CODE FROM (SELECT EMP_CODE FROM hrm_employee WHERE EMP_CODE IS NOT NULL AND EMP_CODE NOT IN ('','-') GROUP BY EMP_CODE HAVING COUNT(*) > 1) dup";
 
     private TextBox txtNewName { get { return txtEmpName; } }
     private TextBox txtNewEmail { get { return txtEmpEmail; } }
@@ -87,7 +99,6 @@ public partial class COOPERP_NewScreens_HREmployees : System.Web.UI.Page
 
     protected void Page_Init(object sender, EventArgs e)
     {
-        // Handle AJAX actions
         string action = Request.QueryString["ajax"];
         if (string.IsNullOrEmpty(action))
             action = Request.QueryString["action"];
@@ -95,13 +106,13 @@ public partial class COOPERP_NewScreens_HREmployees : System.Web.UI.Page
         if (!string.IsNullOrEmpty(action))
         {
             // These handlers run before SidebarMaster's login check: HR access is required here
-            // (they include password resets and an export with pay data).
+            // (they include login resets and an export with pay data).
             bool isExport = string.Equals(action, "export_employees", StringComparison.OrdinalIgnoreCase);
             if (!HrAccess.RequireHr(!isExport)) return;
 
             if (isExport)
             {
-                WriteEmployeesExportCsv();
+                SendStaffRegister();
                 return;
             }
 
@@ -112,19 +123,23 @@ public partial class COOPERP_NewScreens_HREmployees : System.Web.UI.Page
 
     protected void Page_Load(object sender, EventArgs e)
     {
+        if (!HrAccess.RequireHr(false)) return;
+
+        // Lists the add/edit dialog posts back against: rebuilt on every request.
+        LoadFormLists();
         if (!IsPostBack)
         {
             LoadFilterDropdowns();
             ApplyFiltersFromQueryString();
-            LoadStats();
         }
+        LoadStats();
         BindEmployeeGrid();
     }
 
     private void ApplyFiltersFromQueryString()
     {
         txtSearch.Text = (Request.QueryString["q"] ?? string.Empty).Trim();
-        SetSelectedValue(ddlFilterStatus, Request.QueryString["status"]);
+        SetSelectedValue(ddlFilterStatus, QsStatus);
         SetSelectedValue(ddlFilterType, Request.QueryString["type"]);
         SetSelectedValue(ddlFilterDept, Request.QueryString["dept"]);
         SetSelectedValue(ddlFilterStation, Request.QueryString["station"]);
@@ -135,47 +150,22 @@ public partial class COOPERP_NewScreens_HREmployees : System.Web.UI.Page
     {
         if (control == null || string.IsNullOrEmpty(value)) return;
         ListItem item = control.Items.FindByValue(value);
-        if (item != null)
-            control.SelectedValue = value;
+        if (item != null) control.SelectedValue = value;
     }
 
-    #region Grid Binding
+    #region Directory
 
-    private void BindEmployeeGrid()
+    /// <summary>FROM/JOIN/WHERE shared by the directory and the staff register.</summary>
+    private string DirectoryFrom(List<MySqlParameter> parms, string search, string dept, string station, string empType, string status)
     {
-        string search = txtSearch.Text.Trim();
-        string dept = ddlFilterDept.SelectedValue;
-        string station = ddlFilterStation.SelectedValue;
-        string empType = ddlFilterType.SelectedValue;
-        string status = ddlFilterStatus.SelectedValue;
-
-        StringBuilder sql = new StringBuilder();
-        sql.Append(@"SELECT e.empID, e.EMP_CODE, e.emp_name, e.emp_email, e.emp_phone, e.emp_birthdate,
-            e.emp_qualifications, e.emp_nationality, e.EmpType, e.marital_status, e.address,
-            e.religion, e.tin, e.nssf_no, e.gender, e.max_education,
-            e.bankID, e.bankAccount, e.tribe, e.spouse_name, e.no_children,
-            e.contact_person, e.relation, e.phone_contacts, e.current_residence,
-            e.father_name, e.mother_name, e.referee_1, e.referee_2,
-            e.medical_background, e.schooling_info, e.employment_info,
-            e.usernames, e.Entry_Year, e.Entry_Satation,
-            d.dept_name, st.station_name,
-            c.contractStatus, c.contractStart, c.contractEnd,
-            ps.scale_name, IFNULL(ps.basicpay, c.fixedamount) AS basicpay,
-            j.jobname,
-            mm.CreationDate AS AccountCreated
+        StringBuilder sql = new StringBuilder(@"
         FROM hrm_employee e
-        LEFT JOIN hrm_emp_contracts c ON c.empID = e.empID AND c.ID = (
-            SELECT MAX(c2.ID) FROM hrm_emp_contracts c2 WHERE c2.empID = e.empID
-        )
+        LEFT JOIN hrm_emp_contracts c ON c.ID = hr_current_contract_id(e.empID)
         LEFT JOIN hrm_departments d ON d.ID = c.departmentID
         LEFT JOIN hrm_stations st ON st.ID = e.Entry_Satation
         LEFT JOIN hrm_payscales ps ON ps.ID = c.payscale
         LEFT JOIN hrm_jobs j ON j.ID = c.jobID
-        LEFT JOIN my_aspnet_users mu ON mu.name = e.usernames
-        LEFT JOIN my_aspnet_membership mm ON mm.userId = mu.id
         WHERE 1=1 ");
-
-        List<MySqlParameter> parms = new List<MySqlParameter>();
 
         if (!string.IsNullOrEmpty(search))
         {
@@ -197,269 +187,206 @@ public partial class COOPERP_NewScreens_HREmployees : System.Web.UI.Page
             sql.Append(" AND e.EmpType = @empType ");
             parms.Add(new MySqlParameter("@empType", empType));
         }
-        if (!string.IsNullOrEmpty(status))
-        {
-            sql.Append(" AND c.contractStatus = @status ");
-            parms.Add(new MySqlParameter("@status", status));
-        }
+        if (status == "ACTIVE") sql.Append(" AND " + ActiveSql + " ");
+        else if (status == "NOVALID") sql.Append(" AND NOT IFNULL(" + ActiveSql + ", 0) ");
+        else if (status == "DUP") sql.Append(" AND e.EMP_CODE IN (" + DupCodesSql + ") ");
+        return sql.ToString();
+    }
 
-        sql.Append(" ORDER BY " + GetOrderByClause() + " ");
+    private void BindEmployeeGrid()
+    {
+        List<MySqlParameter> parms = new List<MySqlParameter>();
+        string from = DirectoryFrom(parms, txtSearch.Text.Trim(), ddlFilterDept.SelectedValue, ddlFilterStation.SelectedValue,
+            ddlFilterType.SelectedValue, ddlFilterStatus.SelectedValue);
 
         int pageSize = 50;
         int.TryParse(ddlPageSize.SelectedValue, out pageSize);
         if (pageSize <= 0) pageSize = 50;
-        sql.Append(" LIMIT " + pageSize.ToString() + " ");
 
-        DataTable dt = ExecuteQuery(sql.ToString(), parms.ToArray());
+        int total = 0;
+        DataTable cnt = ExecuteQuery("SELECT COUNT(*) " + from, CloneParams(parms));
+        if (cnt.Rows.Count > 0) total = Convert.ToInt32(cnt.Rows[0][0]);
+        int totalPages = Math.Max(1, (int)Math.Ceiling(total / (double)pageSize));
+        int page = Math.Min(QsPage, totalPages);
+        int offset = (page - 1) * pageSize;
 
-        // Detect duplicate EMP_CODEs across all employees (not just current page)
-        System.Collections.Generic.HashSet<string> duplicateCodes =
-            new System.Collections.Generic.HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        DataTable dt = ExecuteQuery(@"SELECT e.empID, e.EMP_CODE, e.emp_name, e.emp_email, e.emp_phone, e.EmpType,
+                d.dept_name, st.station_name, c.ID AS contractID, c.contractStatus, c.contractStart, c.contractEnd,
+                ps.scale_name, IFNULL(ps.basicpay, c.fixedamount) AS basicpay, j.jobname " + from +
+            " ORDER BY " + GetOrderByClause() + " LIMIT " + pageSize + " OFFSET " + offset, CloneParams(parms));
+
+        HashSet<string> duplicateCodes = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         try
         {
-            DataTable dtDups = ExecuteQuery(
-                @"SELECT EMP_CODE FROM hrm_employee
-                  WHERE EMP_CODE IS NOT NULL AND EMP_CODE <> '' AND EMP_CODE <> '-'
-                  GROUP BY EMP_CODE HAVING COUNT(*) > 1");
-            foreach (DataRow dr in dtDups.Rows)
-                duplicateCodes.Add(dr["EMP_CODE"].ToString());
+            foreach (DataRow dr in ExecuteQuery(DupCodesSql).Rows) duplicateCodes.Add(dr["EMP_CODE"].ToString());
         }
-        catch { /* non-critical — ignore */ }
+        catch (Exception ex) { System.Diagnostics.Trace.TraceWarning("HREmployees duplicates: " + ex.Message); }
 
         StringBuilder body = new StringBuilder();
-        int sn = 1;
-
         foreach (DataRow r in dt.Rows)
         {
             string empID = SafeVal(r["empID"]);
-            string empCode = SafeVal(r["EMP_CODE"]);
-            string empName = SafeVal(r["emp_name"]);
-            string email = SafeVal(r["emp_email"]);
-            string phone = SafeVal(r["emp_phone"]);
-            string typeBadge = string.IsNullOrEmpty(SafeVal(r["EmpType"])) ? "" : string.Format("<span class='hr-badge {0}'>{1}</span>", SafeVal(r["EmpType"]).Contains("Acad") ? "hr-badge--academic" : "hr-badge--admin", HttpUtility.HtmlEncode(SafeVal(r["EmpType"])));
+            string empCode = Clean(r["EMP_CODE"]);
+            string sub = JoinNonEmpty(UsableEmail(r["emp_email"]), UsablePhone(r["emp_phone"]));
+            bool isDup = empCode != "" && duplicateCodes.Contains(empCode);
 
-            body.Append("<tr>");
-            body.AppendFormat("<td class='ct-col-num'>{0}</td>", sn++);
-            body.AppendFormat("<td><div class='emp-cell'><img class='emp-thumb' src='{0}' alt='' onerror=\"this.onerror=null;this.src='../staffimages/default.jpg'\" onclick=\"openLightbox('{0}','{1}')\" /><div class='emp-info'><div class='emp-name'>{1}</div><div class='emp-sub'>{2}</div></div></div></td>", GetPhotoUrl(empCode), HttpUtility.HtmlEncode(empName), HttpUtility.HtmlEncode(email));
-            bool isDupCode = !string.IsNullOrEmpty(empCode) && duplicateCodes.Contains(empCode);
-            string dupFlag = isDupCode
-                ? "<span class='emp-dup-flag' title='Duplicate staff code — multiple employees share this code'>&#9873; DUPE</span>"
-                : "";
-            body.AppendFormat("<td><span class='emp-code'>{0}</span>{1}</td>",
-                HttpUtility.HtmlEncode(empCode), dupFlag);
-            body.AppendFormat("<td>{0}<div class='emp-sub'>{1}</div></td>", HttpUtility.HtmlEncode(phone), HttpUtility.HtmlEncode(SafeVal(r["station_name"])));
-            body.AppendFormat("<td>{0}</td>", typeBadge);
-            body.AppendFormat("<td>{0}</td>", HttpUtility.HtmlEncode(SafeVal(r["dept_name"])));
-            body.AppendFormat("<td>{0}</td>", HttpUtility.HtmlEncode(SafeVal(r["jobname"])));
-            body.AppendFormat("<td class='ct-col-pay'>{0}<div class='emp-scale'>{1}</div></td>", FormatAmount(r["basicpay"]), HttpUtility.HtmlEncode(SafeVal(r["scale_name"])));
-            body.AppendFormat("<td>{0}</td>", GetStatusBadge(r["contractStatus"]));
-            body.AppendFormat("<td style='white-space:nowrap;font-size:12px;color:#555;'>{0}</td>", FormatDate(r["contractStart"]));
-            body.AppendFormat("<td style='white-space:nowrap;font-size:12px;color:#555;'>{0}</td>", FormatDate(r["contractEnd"]));
-            body.AppendFormat("<td class='ct-col-actions'>{0}</td>", GetActionButtonsHtml(r["empID"], r["emp_name"], r["usernames"], r["emp_email"], r["EMP_CODE"]));
+            body.Append("<tr class='is-click' onclick=\"openEmployeeProfile(").Append(empID).Append(")\">");
+            body.Append("<td><strong>").Append(Enc(r["emp_name"])).Append("</strong><span class='hr-sub'>").Append(Enc(sub)).Append("</span></td>");
+            body.Append("<td style='white-space:nowrap'>").Append(Enc(empCode))
+                .Append(isDup ? " <span class='hr-badge hr-badge--warn' title='Another employee has the same staff number'>Duplicate</span>" : "").Append("</td>");
+            body.Append("<td>").Append(Enc(r["EmpType"])).Append("</td>");
+            body.Append("<td>").Append(Enc(r["dept_name"])).Append("</td>");
+            body.Append("<td>").Append(Enc(r["jobname"])).Append("</td>");
+            body.Append("<td>").Append(ContractBadge(r["contractID"], r["contractStatus"], r["contractEnd"]))
+                .Append(r["contractEnd"] != DBNull.Value ? "<span class='hr-sub'>Ends " + FormatDate(r["contractEnd"]) + "</span>" : "").Append("</td>");
+            body.Append("<td class='hr-num'>").Append(FormatAmount(r["basicpay"])).Append("</td>");
+            body.Append("<td class='hr-right'><button type='button' class='hr-btn hr-btn--secondary hr-btn--sm' onclick=\"event.stopPropagation();openEmployeeProfile(")
+                .Append(empID).Append(")\">Open</button></td>");
             body.Append("</tr>");
         }
 
         if (body.Length == 0)
-            body.Append("<tr><td colspan='12' class='ct-empty-state'>No employees found.</td></tr>");
+            body.Append("<tr><td colspan='8' class='hr-empty'>No employees match these filters.</td></tr>");
 
         litGridBody.Text = body.ToString();
-        litPagerInfo.Text = string.Format("Showing {0} employee(s)", dt.Rows.Count);
-        litPager.Text = string.Empty;
+        litPagerInfo.Text = total == 0 ? "No records" :
+            string.Format("{0} to {1} of {2}", offset + 1, Math.Min(offset + pageSize, total), total.ToString("N0"));
+        litPager.Text = BuildPager(page, totalPages);
+    }
+
+    private string BuildPager(int page, int totalPages)
+    {
+        if (totalPages <= 1) return "";
+        StringBuilder sb = new StringBuilder("<div class='hr-pager'>");
+        sb.AppendFormat("<span>Page {0} of {1}</span>", page, totalPages);
+        sb.Append(PagerButton("Previous", page - 1, page > 1));
+        sb.Append(PagerButton("Next", page + 1, page < totalPages));
+        sb.Append("</div>");
+        return sb.ToString();
+    }
+
+    private static string PagerButton(string label, int target, bool enabled)
+    {
+        if (!enabled) return "<button type='button' disabled='disabled'>" + label + "</button>";
+        return "<button type='button' onclick='goPage(" + target + ")'>" + label + "</button>";
+    }
+
+    /// <summary>A sortable column heading; the active column shows its direction.</summary>
+    protected string SortHead(string key, string label)
+    {
+        string current = QsSort == "" ? "name" : QsSort;
+        string arrow = "";
+        if (current == key)
+            arrow = QsSortDir == "ASC"
+                ? "<svg viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='3'><polyline points='18 15 12 9 6 15'/></svg>"
+                : "<svg viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='3'><polyline points='6 9 12 15 18 9'/></svg>";
+        return "<a class='em-sort' onclick=\"doSort('" + key + "')\">" + HttpUtility.HtmlEncode(label) + arrow + "</a>";
     }
 
     private string GetOrderByClause()
     {
         switch (QsSort)
         {
-            case "code":
-                return "e.EMP_CODE " + QsSortDir;
-            case "phone":
-                return "e.emp_phone " + QsSortDir;
-            case "type":
-                return "e.EmpType " + QsSortDir + ", e.emp_name ASC";
-            case "dept":
-                return "d.dept_name " + QsSortDir + ", e.emp_name ASC";
-            case "supervisor":
-                return "j.jobname " + QsSortDir + ", e.emp_name ASC";
-            case "station":
-                return "st.station_name " + QsSortDir + ", e.emp_name ASC";
-            case "status":
-                return "c.contractStatus " + QsSortDir + ", e.emp_name ASC";
-            case "pay":
-                return "IFNULL(ps.basicpay, c.fixedamount) " + QsSortDir + ", e.emp_name ASC";
-            case "contractstart":
-                return "c.contractStart " + QsSortDir + ", e.emp_name ASC";
-            case "contractend":
-                return "c.contractEnd " + QsSortDir + ", e.emp_name ASC";
-            case "name":
-            case "":
-            default:
-                return "e.emp_name " + QsSortDir;
+            case "code":        return "e.EMP_CODE " + QsSortDir;
+            case "type":        return "e.EmpType " + QsSortDir + ", e.emp_name ASC";
+            case "dept":        return "d.dept_name " + QsSortDir + ", e.emp_name ASC";
+            case "job":         return "j.jobname " + QsSortDir + ", e.emp_name ASC";
+            case "status":      return "c.contractStatus " + QsSortDir + ", e.emp_name ASC";
+            case "pay":         return "IFNULL(ps.basicpay, c.fixedamount) " + QsSortDir + ", e.emp_name ASC";
+            case "contractend": return "c.contractEnd " + QsSortDir + ", e.emp_name ASC";
+            default:            return "e.emp_name " + QsSortDir;
         }
     }
 
+    /// <summary>KPIs that filter the list: All, Active, No valid contract, Duplicate records.</summary>
     private void LoadStats()
     {
         DataTable dt = ExecuteQuery(@"SELECT
                 COUNT(*) AS total_cnt,
-                SUM(CASE WHEN IFNULL(EmpType,'') LIKE '%Acad%' THEN 1 ELSE 0 END) AS academic_cnt,
-                SUM(CASE WHEN IFNULL(EmpType,'') NOT LIKE '%Acad%' THEN 1 ELSE 0 END) AS admin_cnt,
-                SUM(CASE WHEN UPPER(IFNULL(c.contractStatus,'')) = 'VALID' THEN 1 ELSE 0 END) AS active_cnt,
-                SUM(CASE WHEN IFNULL(c.contractStatus,'') = '' OR UPPER(IFNULL(c.contractStatus,'')) <> 'VALID' THEN 1 ELSE 0 END) AS inactive_cnt
+                SUM(CASE WHEN " + ActiveSql + @" THEN 1 ELSE 0 END) AS active_cnt,
+                SUM(CASE WHEN e.EMP_CODE IN (" + DupCodesSql + @") THEN 1 ELSE 0 END) AS dup_cnt
             FROM hrm_employee e
-            LEFT JOIN hrm_emp_contracts c ON c.empID = e.empID AND c.ID = (
-                SELECT MAX(c2.ID) FROM hrm_emp_contracts c2 WHERE c2.empID = e.empID
-            )");
-
+            LEFT JOIN hrm_emp_contracts c ON c.ID = hr_current_contract_id(e.empID)");
         if (dt.Rows.Count == 0) return;
         DataRow r = dt.Rows[0];
-        litStatTotal.Text = SafeVal(r["total_cnt"]);
-        litStatAcademic.Text = SafeVal(r["academic_cnt"]);
-        litStatAdmin.Text = SafeVal(r["admin_cnt"]);
-        litStatActive.Text = SafeVal(r["active_cnt"]);
-        litStatInactive.Text = SafeVal(r["inactive_cnt"]);
+        long total = ToLong(r["total_cnt"]), active = ToLong(r["active_cnt"]), dup = ToLong(r["dup_cnt"]);
+
+        string current = ddlFilterStatus.SelectedValue;
+        StringBuilder sb = new StringBuilder("<div class='hr-kpis'>");
+        Kpi(sb, "All staff", total, "", current, "Employee records");
+        Kpi(sb, "Active", active, "ACTIVE", current, "With a valid contract");
+        Kpi(sb, "No valid contract", total - active, "NOVALID", current, "Ended or none recorded");
+        Kpi(sb, "Duplicate records", dup, "DUP", current, "Shared staff numbers");
+        sb.Append("</div>");
+        litKpis.Text = sb.ToString();
+    }
+
+    private static void Kpi(StringBuilder sb, string label, long value, string status, string current, string sub)
+    {
+        sb.Append("<a class='hr-kpi").Append(current == status ? " em-kpi--on" : "").Append("' href='HREmployees.aspx")
+          .Append(status == "" ? "" : "?status=" + status).Append("'>")
+          .Append("<div class='hr-kpi__label'>").Append(HttpUtility.HtmlEncode(label)).Append("</div>")
+          .Append("<div class='hr-kpi__value").Append(status == "DUP" && value > 0 ? " em-kpi__value--warn" : "").Append("'>").Append(value.ToString("N0")).Append("</div>")
+          .Append("<div class='hr-kpi__sub'>").Append(HttpUtility.HtmlEncode(sub)).Append("</div></a>");
     }
 
     #endregion
 
-    #region Filter Dropdowns
+    #region Lists
 
     private void LoadFilterDropdowns()
     {
-        // Departments
-        DataTable dtDepts = ExecuteQuery("SELECT ID, dept_name FROM hrm_departments ORDER BY dept_name");
+        DataTable dtDepts = ExecuteQuery("SELECT ID, dept_name FROM hrm_departments WHERE dept_name IS NOT NULL AND dept_name <> '' ORDER BY dept_name");
         ddlFilterDept.Items.Clear();
-        ddlFilterDept.Items.Add(new ListItem("All Departments", ""));
+        ddlFilterDept.Items.Add(new ListItem("All departments", ""));
         foreach (DataRow r in dtDepts.Rows)
-        {
-            ddlFilterDept.Items.Add(new ListItem(r["dept_name"].ToString(), r["ID"].ToString()));
-        }
+            ddlFilterDept.Items.Add(new ListItem(HrExport.Clean(r["dept_name"].ToString()), r["ID"].ToString()));
 
-        // Stations (for filter + add form)
         DataTable dtStations = ExecuteQuery("SELECT ID, station_name FROM hrm_stations ORDER BY station_name");
         ddlFilterStation.Items.Clear();
-        ddlFilterStation.Items.Add(new ListItem("All Stations", ""));
-        ddlNewStation.Items.Clear();
-        ddlNewStation.Items.Add(new ListItem("-- Select Station --", ""));
+        ddlFilterStation.Items.Add(new ListItem("All stations", ""));
         foreach (DataRow r in dtStations.Rows)
-        {
             ddlFilterStation.Items.Add(new ListItem(r["station_name"].ToString(), r["ID"].ToString()));
+
+        DataTable dtTypes = ExecuteQuery("SELECT DISTINCT EmpType FROM hrm_employee WHERE EmpType IS NOT NULL AND EmpType <> '' ORDER BY EmpType");
+        ddlFilterType.Items.Clear();
+        ddlFilterType.Items.Add(new ListItem("All categories", ""));
+        foreach (DataRow r in dtTypes.Rows)
+            ddlFilterType.Items.Add(new ListItem(r["EmpType"].ToString(), r["EmpType"].ToString()));
+    }
+
+    /// <summary>Station and bank lists of the add/edit dialog, and the supervisor/reviewer picker options.</summary>
+    private void LoadFormLists()
+    {
+        string keepStation = Request.Form[ddlNewStation.UniqueID];
+        string keepBank = Request.Form[ddlNewBank.UniqueID];
+
+        DataTable dtStations = ExecuteQuery("SELECT ID, station_name FROM hrm_stations ORDER BY station_name");
+        ddlNewStation.Items.Clear();
+        ddlNewStation.Items.Add(new ListItem("Select station", ""));
+        foreach (DataRow r in dtStations.Rows)
             ddlNewStation.Items.Add(new ListItem(r["station_name"].ToString(), r["ID"].ToString()));
-        }
-        // Pre-select MASAKA if exists
         ListItem masaka = ddlNewStation.Items.FindByText("MASAKA");
         if (masaka != null) ddlNewStation.SelectedValue = masaka.Value;
+        SetSelectedValue(ddlNewStation, keepStation);
 
-        // Banks (for add form)
         DataTable dtBanks = ExecuteQuery("SELECT bank_id, bank_name FROM banks ORDER BY bank_name");
         ddlNewBank.Items.Clear();
-        ddlNewBank.Items.Add(new ListItem("-- Select Bank --", "0"));
+        ddlNewBank.Items.Add(new ListItem("Select bank", "0"));
         foreach (DataRow r in dtBanks.Rows)
-        {
             ddlNewBank.Items.Add(new ListItem(r["bank_name"].ToString(), r["bank_id"].ToString()));
+        SetSelectedValue(ddlNewBank, keepBank);
+
+        if (!IsPostBack) txtNewEntryYear.Text = DateTime.Now.Year.ToString();
+
+        StringBuilder sb = new StringBuilder("<option value=\"\">None</option>");
+        foreach (DataRow r in ExecuteQuery("SELECT empID, emp_name, EMP_CODE FROM hrm_employee ORDER BY emp_name").Rows)
+        {
+            string code = Clean(r["EMP_CODE"]);
+            sb.Append("<option value=\"").Append(r["empID"]).Append("\">")
+              .Append(Enc(SafeVal(r["emp_name"]) + (code == "" ? "" : " (" + code + ")"))).Append("</option>");
         }
-
-        // Default entry year
-        txtNewEntryYear.Text = DateTime.Now.Year.ToString();
-    }
-
-    protected void ddlFilter_Changed(object sender, EventArgs e)
-    {
-        BindEmployeeGrid();
-    }
-
-    protected void btnSearch_Click(object sender, EventArgs e)
-    {
-        BindEmployeeGrid();
-    }
-
-    protected void btnReset_Click(object sender, EventArgs e)
-    {
-        txtSearch.Text = "";
-        ddlFilterDept.SelectedIndex = 0;
-        ddlFilterStation.SelectedIndex = 0;
-        ddlFilterType.SelectedIndex = 0;
-        ddlFilterStatus.SelectedIndex = 0;
-        BindEmployeeGrid();
-    }
-
-    #endregion
-
-    #region Grid Editing
-
-    protected void gvEmployees_RowUpdating(object sender, DevExpress.Web.Data.ASPxDataUpdatingEventArgs e)
-    {
-        int empID = Convert.ToInt32(e.Keys["empID"]);
-        string sql = @"UPDATE hrm_employee SET 
-            emp_name = @name, emp_email = @email, emp_phone = @phone, emp_birthdate = @dob,
-            emp_qualifications = @qual, emp_nationality = @nat, EmpType = @empType,
-            marital_status = @marital, address = @addr, religion = @religion,
-            tin = @tin, nssf_no = @nssf, gender = @gender, max_education = @maxEdu,
-            tribe = @tribe, current_residence = @residence,
-            bankID = @bankID, bankAccount = @bankAcct,
-            spouse_name = @spouse, no_children = @nChildren,
-            father_name = @father, mother_name = @mother,
-            contact_person = @contactPerson, relation = @relation, phone_contacts = @contactPhone,
-            referee_1 = @ref1, referee_2 = @ref2,
-            medical_background = @medical, schooling_info = @schooling, employment_info = @employment,
-            usernames = @uname, Entry_Year = @entryYear, Entry_Satation = @entryStation
-            WHERE empID = @empID";
-
-        int bankVal = 0;
-        if (e.NewValues["bankID"] != null) int.TryParse(e.NewValues["bankID"].ToString(), out bankVal);
-        int nChild = 0;
-        if (e.NewValues["no_children"] != null) int.TryParse(e.NewValues["no_children"].ToString(), out nChild);
-        int entryYr = DateTime.Now.Year;
-        if (e.NewValues["Entry_Year"] != null) int.TryParse(e.NewValues["Entry_Year"].ToString(), out entryYr);
-
-        ExecuteNonQuery(sql,
-            new MySqlParameter("@name", SafeVal(e.NewValues["emp_name"])),
-            new MySqlParameter("@email", SafeVal(e.NewValues["emp_email"])),
-            new MySqlParameter("@phone", SafeVal(e.NewValues["emp_phone"])),
-            new MySqlParameter("@dob", e.NewValues["emp_birthdate"] != null ? (object)Convert.ToDateTime(e.NewValues["emp_birthdate"]) : DBNull.Value),
-            new MySqlParameter("@qual", SafeVal(e.NewValues["emp_qualifications"])),
-            new MySqlParameter("@nat", SafeVal(e.NewValues["emp_nationality"])),
-            new MySqlParameter("@empType", SafeVal(e.NewValues["EmpType"])),
-            new MySqlParameter("@marital", SafeVal(e.NewValues["marital_status"])),
-            new MySqlParameter("@addr", SafeVal(e.NewValues["address"])),
-            new MySqlParameter("@religion", SafeVal(e.NewValues["religion"])),
-            new MySqlParameter("@tin", SafeVal(e.NewValues["tin"])),
-            new MySqlParameter("@nssf", SafeVal(e.NewValues["nssf_no"])),
-            new MySqlParameter("@gender", SafeVal(e.NewValues["gender"])),
-            new MySqlParameter("@maxEdu", SafeVal(e.NewValues["max_education"])),
-            new MySqlParameter("@tribe", SafeVal(e.NewValues["tribe"])),
-            new MySqlParameter("@residence", SafeVal(e.NewValues["current_residence"])),
-            new MySqlParameter("@bankID", bankVal),
-            new MySqlParameter("@bankAcct", SafeVal(e.NewValues["bankAccount"])),
-            new MySqlParameter("@spouse", SafeVal(e.NewValues["spouse_name"])),
-            new MySqlParameter("@nChildren", nChild),
-            new MySqlParameter("@father", SafeVal(e.NewValues["father_name"])),
-            new MySqlParameter("@mother", SafeVal(e.NewValues["mother_name"])),
-            new MySqlParameter("@contactPerson", SafeVal(e.NewValues["contact_person"])),
-            new MySqlParameter("@relation", SafeVal(e.NewValues["relation"])),
-            new MySqlParameter("@contactPhone", SafeVal(e.NewValues["phone_contacts"])),
-            new MySqlParameter("@ref1", SafeVal(e.NewValues["referee_1"])),
-            new MySqlParameter("@ref2", SafeVal(e.NewValues["referee_2"])),
-            new MySqlParameter("@medical", SafeVal(e.NewValues["medical_background"])),
-            new MySqlParameter("@schooling", SafeVal(e.NewValues["schooling_info"])),
-            new MySqlParameter("@employment", SafeVal(e.NewValues["employment_info"])),
-            new MySqlParameter("@uname", SafeVal(e.NewValues["usernames"])),
-            new MySqlParameter("@entryYear", entryYr),
-            new MySqlParameter("@entryStation", SafeVal(e.NewValues["Entry_Satation"])),
-            new MySqlParameter("@empID", empID)
-        );
-
-        e.Cancel = true;
-        BindEmployeeGrid();
-    }
-
-    protected void gvEmployees_RowDeleting(object sender, DevExpress.Web.Data.ASPxDataDeletingEventArgs e)
-    {
-        int empID = Convert.ToInt32(e.Keys["empID"]);
-        ExecuteNonQuery("DELETE FROM hrm_employee WHERE empID = @id", new MySqlParameter("@id", empID));
-
-        e.Cancel = true;
-        BindEmployeeGrid();
+        litPeopleOptions.Text = sb.ToString();
     }
 
     #endregion
@@ -474,12 +401,10 @@ public partial class COOPERP_NewScreens_HREmployees : System.Web.UI.Page
 
         if (string.IsNullOrEmpty(name) || string.IsNullOrEmpty(email) || string.IsNullOrEmpty(phone))
         {
-            ScriptManager.RegisterStartupScript(this, GetType(), "addErr",
-                "document.getElementById('addEmpResult').innerHTML='<span style=\"color:red;\">Name, Email and Phone are required.</span>';document.getElementById('addEmployeeModal').style.display='flex';", true);
+            FormError("Enter the full name, email and phone number.");
             return;
         }
 
-        // Generate EMP_CODE
         string empCode = GenerateEmpCode();
 
         DateTime dob;
@@ -522,78 +447,77 @@ public partial class COOPERP_NewScreens_HREmployees : System.Web.UI.Page
              @toBeAppraised, @appraisalCycle,
              @year, @station)";
 
-        ExecuteNonQuery(sql,
-            new MySqlParameter("@code", empCode),
-            new MySqlParameter("@name", name),
-            new MySqlParameter("@email", email),
-            new MySqlParameter("@phone", phone),
-            new MySqlParameter("@dob", hasDOB ? (object)dob : DBNull.Value),
-            new MySqlParameter("@gender", ddlNewGender.SelectedValue),
-            new MySqlParameter("@qual", txtNewQualifications.Text.Trim()),
-            new MySqlParameter("@maxEdu", ddlNewEducation.SelectedValue),
-            new MySqlParameter("@nat", ddlNewNationality.SelectedValue),
-            new MySqlParameter("@empType", ddlNewType.SelectedValue),
-            new MySqlParameter("@marital", ddlNewMarital.SelectedValue),
-            new MySqlParameter("@addr", txtNewAddress.Text.Trim()),
-            new MySqlParameter("@residence", txtNewResidence.Text.Trim()),
-            new MySqlParameter("@religion", txtNewReligion.Text.Trim()),
-            new MySqlParameter("@tribe", txtNewTribe.Text.Trim()),
-            new MySqlParameter("@nin", txtNIN.Text.Trim()),
-            new MySqlParameter("@tin", txtNewTIN.Text.Trim()),
-            new MySqlParameter("@nssf", txtNewNSSF.Text.Trim()),
-            new MySqlParameter("@bankID", bankId),
-            new MySqlParameter("@bankAcct", txtNewBankAccount.Text.Trim()),
-            new MySqlParameter("@spouse", txtNewSpouse.Text.Trim()),
-            new MySqlParameter("@nChildren", nChildren),
-            new MySqlParameter("@father", txtNewFather.Text.Trim()),
-            new MySqlParameter("@mother", txtNewMother.Text.Trim()),
-            new MySqlParameter("@contactPerson", txtNewContactPerson.Text.Trim()),
-            new MySqlParameter("@relation", txtNewRelation.Text.Trim()),
-            new MySqlParameter("@contactPhone", txtNewContactPhone.Text.Trim()),
-            new MySqlParameter("@ref1", txtNewReferee1.Text.Trim()),
-            new MySqlParameter("@ref2", txtNewReferee2.Text.Trim()),
-            new MySqlParameter("@medical", txtNewMedical.Text.Trim()),
-            new MySqlParameter("@schooling", txtNewSchooling.Text.Trim()),
-            new MySqlParameter("@employment", txtNewEmployment.Text.Trim()),
-            new MySqlParameter("@supervisorID", supervisorId > 0 ? (object)supervisorId : DBNull.Value),
-            new MySqlParameter("@reviewerID",   reviewerId   > 0 ? (object)reviewerId   : DBNull.Value),
-            new MySqlParameter("@empStatus",    ddlEmpStatus.SelectedValue),
-            new MySqlParameter("@dateJoined",   hasDateJoined   ? (object)dateJoined   : DBNull.Value),
-            new MySqlParameter("@probationEnd", hasProbationEnd ? (object)probationEnd : DBNull.Value),
-            new MySqlParameter("@toBeAppraised",toBeAppraised),
-            new MySqlParameter("@appraisalCycle", ddlAppraisalCycle.SelectedValue),
-            new MySqlParameter("@year", entryYear),
-            new MySqlParameter("@station", ddlNewStation.SelectedValue)
-        );
+        try
+        {
+            ExecuteNonQuery(sql,
+                new MySqlParameter("@code", empCode),
+                new MySqlParameter("@name", name),
+                new MySqlParameter("@email", email),
+                new MySqlParameter("@phone", phone),
+                new MySqlParameter("@dob", hasDOB ? (object)dob : DBNull.Value),
+                new MySqlParameter("@gender", ddlNewGender.SelectedValue),
+                new MySqlParameter("@qual", txtNewQualifications.Text.Trim()),
+                new MySqlParameter("@maxEdu", ddlNewEducation.SelectedValue),
+                new MySqlParameter("@nat", ddlNewNationality.SelectedValue),
+                new MySqlParameter("@empType", ddlNewType.SelectedValue),
+                new MySqlParameter("@marital", ddlNewMarital.SelectedValue),
+                new MySqlParameter("@addr", txtNewAddress.Text.Trim()),
+                new MySqlParameter("@residence", txtNewResidence.Text.Trim()),
+                new MySqlParameter("@religion", txtNewReligion.Text.Trim()),
+                new MySqlParameter("@tribe", txtNewTribe.Text.Trim()),
+                new MySqlParameter("@nin", txtNIN.Text.Trim()),
+                new MySqlParameter("@tin", txtNewTIN.Text.Trim()),
+                new MySqlParameter("@nssf", txtNewNSSF.Text.Trim()),
+                new MySqlParameter("@bankID", bankId),
+                new MySqlParameter("@bankAcct", txtNewBankAccount.Text.Trim()),
+                new MySqlParameter("@spouse", txtNewSpouse.Text.Trim()),
+                new MySqlParameter("@nChildren", nChildren),
+                new MySqlParameter("@father", txtNewFather.Text.Trim()),
+                new MySqlParameter("@mother", txtNewMother.Text.Trim()),
+                new MySqlParameter("@contactPerson", txtNewContactPerson.Text.Trim()),
+                new MySqlParameter("@relation", txtNewRelation.Text.Trim()),
+                new MySqlParameter("@contactPhone", txtNewContactPhone.Text.Trim()),
+                new MySqlParameter("@ref1", txtNewReferee1.Text.Trim()),
+                new MySqlParameter("@ref2", txtNewReferee2.Text.Trim()),
+                new MySqlParameter("@medical", txtNewMedical.Text.Trim()),
+                new MySqlParameter("@schooling", txtNewSchooling.Text.Trim()),
+                new MySqlParameter("@employment", txtNewEmployment.Text.Trim()),
+                new MySqlParameter("@supervisorID", supervisorId > 0 ? (object)supervisorId : DBNull.Value),
+                new MySqlParameter("@reviewerID",   reviewerId   > 0 ? (object)reviewerId   : DBNull.Value),
+                new MySqlParameter("@empStatus",    ddlEmpStatus.SelectedValue),
+                new MySqlParameter("@dateJoined",   hasDateJoined   ? (object)dateJoined   : DBNull.Value),
+                new MySqlParameter("@probationEnd", hasProbationEnd ? (object)probationEnd : DBNull.Value),
+                new MySqlParameter("@toBeAppraised",toBeAppraised),
+                new MySqlParameter("@appraisalCycle", ddlAppraisalCycle.SelectedValue),
+                new MySqlParameter("@year", entryYear),
+                new MySqlParameter("@station", ddlNewStation.SelectedValue)
+            );
+        }
+        catch (Exception ex)
+        {
+            System.Diagnostics.Trace.TraceError("HREmployees add: " + ex);
+            FormError("The employee could not be saved. Check the dates and numbers, then try again.");
+            return;
+        }
 
-        // Clear form
-        txtNewName.Text = "";
-        txtNewEmail.Text = "";
-        txtNewPhone.Text = "";
-        txtNewDOB.Text = "";
-        txtNewQualifications.Text = "";
-        txtNewTIN.Text = "";
-        txtNewNSSF.Text = "";
-        txtNewAddress.Text = "";
+        ClearForm();
+        BindEmployeeGrid();
+        LoadStats();
+        Toast(true, "Employee " + name + " added with staff number " + empCode + ".");
+    }
+
+    private void ClearForm()
+    {
+        foreach (TextBox t in new TextBox[] { txtNewName, txtNewEmail, txtNewPhone, txtNewDOB, txtNewQualifications, txtNewTIN,
+                     txtNewNSSF, txtNewAddress, txtNewReligion, txtNewTribe, txtNewBankAccount, txtNewSpouse, txtNewFather,
+                     txtNewMother, txtNewContactPerson, txtNewRelation, txtNewContactPhone, txtNewMedical, txtNewSchooling,
+                     txtNewEmployment, txtNIN, txtDateJoined, txtProbationEnd })
+            t.Text = "";
         txtNewResidence.Text = "UGANDA";
-        txtNewReligion.Text = "";
-        txtNewTribe.Text = "";
-        txtNewBankAccount.Text = "";
-        txtNewSpouse.Text = "";
         txtNewChildren.Text = "0";
-        txtNewFather.Text = "";
-        txtNewMother.Text = "";
-        txtNewContactPerson.Text = "";
-        txtNewRelation.Text = "";
-        txtNewContactPhone.Text = "";
         txtNewReferee1.Text = "-";
         txtNewReferee2.Text = "-";
-        txtNewMedical.Text = "";
-        txtNewSchooling.Text = "";
-        txtNewEmployment.Text = "";
         txtNewEntryYear.Text = DateTime.Now.Year.ToString();
-
-        BindEmployeeGrid();
     }
 
     protected void btnEditEmployee_Click(object sender, EventArgs e)
@@ -607,9 +531,12 @@ public partial class COOPERP_NewScreens_HREmployees : System.Web.UI.Page
         string phone = txtNewPhone.Text.Trim();
 
         if (string.IsNullOrEmpty(name) || string.IsNullOrEmpty(email) || string.IsNullOrEmpty(phone))
+        {
+            FormError("Enter the full name, email and phone number.");
             return;
+        }
 
-        // EMP_CODE — only update if the user unlocked and changed it
+        // EMP_CODE: only update if the user unlocked and changed it
         string newCode  = txtEmpCodeDisplay.Text.Trim();
         string origCode = hfOriginalEmpCode.Value.Trim();
         bool codeChanged = !string.IsNullOrEmpty(newCode) &&
@@ -622,13 +549,7 @@ public partial class COOPERP_NewScreens_HREmployees : System.Web.UI.Page
                 new MySqlParameter("@id", empID));
             if (dtDup.Rows.Count > 0)
             {
-                string safeCode = HttpUtility.JavaScriptStringEncode(newCode);
-                ScriptManager.RegisterStartupScript(this, GetType(), "codeConflict",
-                    "document.getElementById('empFormModal').style.display='flex';" +
-                    "var r=document.getElementById('empFormResult');" +
-                    "r.innerHTML='<span style=\"color:#c62828;\">Staff code \\u201c" + safeCode +
-                    "\\u201d is already assigned to another employee. Please choose a unique code.</span>';" +
-                    "r.className='hr-result hr-result--err';", true);
+                FormError("Staff number " + newCode + " already belongs to another employee. Choose a different one.");
                 return;
             }
         }
@@ -654,46 +575,19 @@ public partial class COOPERP_NewScreens_HREmployees : System.Web.UI.Page
 
         string codeClause = codeChanged ? " EMP_CODE = @newCode," : "";
         string sql = @"UPDATE hrm_employee SET" + codeClause + @"
-                emp_name = @name,
-                emp_email = @email,
-                emp_phone = @phone,
-                emp_birthdate = @dob,
-                gender = @gender,
-                emp_qualifications = @qual,
-                max_education = @maxEdu,
-                emp_nationality = @nat,
-                EmpType = @empType,
-                marital_status = @marital,
-                address = @addr,
-                current_residence = @residence,
-                religion = @religion,
-                tribe = @tribe,
-                nin = @nin,
-                tin = @tin,
-                nssf_no = @nssf,
-                bankID = @bankID,
-                bankAccount = @bankAcct,
-                spouse_name = @spouse,
-                no_children = @nChildren,
-                father_name = @father,
-                mother_name = @mother,
-                contact_person = @contactPerson,
-                relation = @relation,
-                phone_contacts = @contactPhone,
-                referee_1 = @ref1,
-                referee_2 = @ref2,
-                medical_background = @medical,
-                schooling_info = @schooling,
-                employment_info = @employment,
-                supervisorID = @supervisorID,
-                reviewer_id = @reviewerID,
-                employment_status = @empStatus,
-                date_joined = @dateJoined,
-                probation_end_date = @probationEnd,
-                to_be_appraised = @toBeAppraised,
-                appraisal_cycle = @appraisalCycle,
-                Entry_Year = @year,
-                Entry_Satation = @station
+                emp_name = @name, emp_email = @email, emp_phone = @phone, emp_birthdate = @dob,
+                gender = @gender, emp_qualifications = @qual, max_education = @maxEdu,
+                emp_nationality = @nat, EmpType = @empType, marital_status = @marital,
+                address = @addr, current_residence = @residence, religion = @religion, tribe = @tribe,
+                nin = @nin, tin = @tin, nssf_no = @nssf, bankID = @bankID, bankAccount = @bankAcct,
+                spouse_name = @spouse, no_children = @nChildren, father_name = @father, mother_name = @mother,
+                contact_person = @contactPerson, relation = @relation, phone_contacts = @contactPhone,
+                referee_1 = @ref1, referee_2 = @ref2,
+                medical_background = @medical, schooling_info = @schooling, employment_info = @employment,
+                supervisorID = @supervisorID, reviewer_id = @reviewerID, employment_status = @empStatus,
+                date_joined = @dateJoined, probation_end_date = @probationEnd,
+                to_be_appraised = @toBeAppraised, appraisal_cycle = @appraisalCycle,
+                Entry_Year = @year, Entry_Satation = @station
             WHERE empID = @id";
 
         List<MySqlParameter> editParams = new List<MySqlParameter>();
@@ -741,9 +635,18 @@ public partial class COOPERP_NewScreens_HREmployees : System.Web.UI.Page
             new MySqlParameter("@station", ddlNewStation.SelectedValue),
             new MySqlParameter("@id", empID)
         });
-        ExecuteNonQuery(sql, editParams.ToArray());
+
+        try { ExecuteNonQuery(sql, editParams.ToArray()); }
+        catch (Exception ex)
+        {
+            System.Diagnostics.Trace.TraceError("HREmployees edit: " + ex);
+            FormError("The changes could not be saved. Check the dates and numbers, then try again.");
+            return;
+        }
 
         BindEmployeeGrid();
+        LoadStats();
+        Toast(true, "Changes to " + name + " saved.");
     }
 
     protected void btnDeleteEmployee_Click(object sender, EventArgs e)
@@ -752,11 +655,11 @@ public partial class COOPERP_NewScreens_HREmployees : System.Web.UI.Page
         if (!int.TryParse(hdnDeleteEmpID.Value, out empID) || empID <= 0)
             return;
 
-        // Load the employee's login username + name (to remove the linked account, guard, and message).
+        // The employee's login username and name (to remove the linked account, guard, and message).
         DataTable dt = ExecuteQuery(
             "SELECT IFNULL(usernames,'') AS u, IFNULL(emp_name,'') AS n FROM hrm_employee WHERE empID=@id LIMIT 1",
             new MySqlParameter("@id", empID));
-        if (dt.Rows.Count == 0) { DeleteResult(false, "Employee not found (it may already have been deleted)."); BindEmployeeGrid(); return; }
+        if (dt.Rows.Count == 0) { Toast(false, "This employee was not found. The record may already have been deleted."); BindEmployeeGrid(); return; }
         string uname = dt.Rows[0]["u"].ToString().Trim();
         string ename = dt.Rows[0]["n"].ToString().Trim();
 
@@ -764,16 +667,16 @@ public partial class COOPERP_NewScreens_HREmployees : System.Web.UI.Page
         string me = (Session["username"] as string ?? "").Trim();
         if (!string.IsNullOrEmpty(uname) && !string.IsNullOrEmpty(me)
             && string.Equals(uname, me, StringComparison.OrdinalIgnoreCase))
-        { DeleteResult(false, "You cannot delete your own account."); return; }
+        { Toast(false, "You cannot delete your own account."); return; }
 
-        // Guard 2: block deleting a sitting department head (would orphan that department's HOD scope/dashboard).
+        // Guard 2: block deleting a sitting department head (would orphan that department's HOD scope).
         DataTable heads = ExecuteQuery(
             "SELECT IFNULL(dept_name,CONCAT('#',ID)) AS dn FROM hrm_departments WHERE dept_headID=@id LIMIT 1",
             new MySqlParameter("@id", empID));
         if (heads.Rows.Count > 0)
         {
-            DeleteResult(false, "Cannot delete: this employee is the Head of Department \"" + heads.Rows[0]["dn"].ToString()
-                + "\". Reassign the department head first, then delete.");
+            Toast(false, ename + " is Head of Department of " + heads.Rows[0]["dn"].ToString()
+                + ". Assign another head first, then delete.");
             return;
         }
 
@@ -791,23 +694,27 @@ public partial class COOPERP_NewScreens_HREmployees : System.Web.UI.Page
             }
         }
 
-        // Remove the employee record.
         int empRows = ExecuteNonQuery("DELETE FROM hrm_employee WHERE empID = @id", new MySqlParameter("@id", empID));
 
         BindEmployeeGrid();
+        LoadStats();
         if (empRows > 0)
-            DeleteResult(true, "Deleted \"" + ename + "\""
-                + (loginRows > 0 ? " and their login account." : ((string.IsNullOrEmpty(uname) || uname == "-") ? " (no login account was linked)." : ".")));
+            Toast(true, "Deleted " + ename + (loginRows > 0 ? " and their login." : "."));
         else
-            DeleteResult(false, "No employee record was deleted.");
+            Toast(false, "No employee record was deleted.");
     }
 
-    // Surfaces a success/error banner after the delete postback.
-    private void DeleteResult(bool ok, string message)
+    private void Toast(bool ok, string message)
     {
-        string safe = HttpUtility.JavaScriptStringEncode(message ?? "");
-        ScriptManager.RegisterStartupScript(this, GetType(), "hrDelToast",
-            "if(window.hrDeleteToast){hrDeleteToast(" + (ok ? "true" : "false") + ",'" + safe + "');}", true);
+        ScriptManager.RegisterStartupScript(this, GetType(), "hrToast",
+            "showToast('" + HttpUtility.JavaScriptStringEncode(HrExport.Clean(message ?? "")) + "'," + (ok ? "false" : "true") + ");", true);
+    }
+
+    /// <summary>Reopen the add/edit dialog with a plain error line after a failed postback.</summary>
+    private void FormError(string message)
+    {
+        ScriptManager.RegisterStartupScript(this, GetType(), "empFormErr",
+            "reopenEmpForm('" + HttpUtility.JavaScriptStringEncode(message) + "');", true);
     }
 
     private string GenerateEmpCode()
@@ -823,106 +730,93 @@ public partial class COOPERP_NewScreens_HREmployees : System.Web.UI.Page
             string lastCode = dt.Rows[0]["EMP_CODE"].ToString();
             string numPart = lastCode.Substring(lastCode.LastIndexOf('/') + 1);
             int parsed;
-            if (int.TryParse(numPart, out parsed))
-            {
-                nextNum = parsed + 1;
-            }
+            if (int.TryParse(numPart, out parsed)) nextNum = parsed + 1;
         }
         return yearPrefix + nextNum.ToString("D4");
     }
 
     #endregion
 
-    #region Employee Profile Loader
+    #region Profile (Details, Contracts, Leave, Payroll)
 
-    protected void btnLoadProfile_Click(object sender, EventArgs e)
-    {
-        // Legacy server-side profile popup is no longer used by the current page markup.
-        // Profile loading is handled by the current client-side UI.
-        return;
-    }
-
-    private string BuildBioDataHtml(DataRow emp)
+    private string BuildDetailsHtml(DataRow emp)
     {
         StringBuilder sb = new StringBuilder();
+        sb.Append(Group("Personal"));
+        sb.Append("<dl class='hr-dl'>");
+        AddItem(sb, "Full name", emp["emp_name"]);
+        AddItem(sb, "Staff number", emp["EMP_CODE"]);
+        AddItem(sb, "Date of birth", emp["emp_birthdate"] != DBNull.Value ? FormatDate(emp["emp_birthdate"]) : "");
+        AddItem(sb, "Gender", emp["gender"]);
+        AddItem(sb, "Nationality", Title(emp["emp_nationality"]));
+        AddItem(sb, "National ID number", emp["nin"]);
+        AddItem(sb, "Marital status", Title(emp["marital_status"]));
+        AddItem(sb, "Religion", emp["religion"]);
+        AddItem(sb, "Tribe", emp["tribe"]);
+        AddItem(sb, "Email", emp["emp_email"]);
+        AddItem(sb, "Phone", emp["emp_phone"]);
+        AddItem(sb, "Residence", emp["current_residence"]);
+        AddItem(sb, "Address", emp["address"]);
+        sb.Append("</dl>");
 
-        // Section: Personal Details
-        sb.Append("<div style='font-size:10px;text-transform:uppercase;letter-spacing:.5px;color:#174DA4;font-weight:700;padding:6px 10px 3px;border-bottom:1px solid #e8e8e8;'>Personal Details</div>");
-        sb.Append("<div class='ep-bio-grid'>");
-        AddBioItem(sb, "Full Name", emp["emp_name"]);
-        AddBioItem(sb, "Staff Code", emp["EMP_CODE"]);
-        AddBioItem(sb, "Date of Birth", emp["emp_birthdate"] != DBNull.Value ? Convert.ToDateTime(emp["emp_birthdate"]).ToString("dd MMM yyyy") : "");
-        AddBioItem(sb, "Gender", emp["gender"]);
-        AddBioItem(sb, "Nationality", emp["emp_nationality"]);
-        AddBioItem(sb, "Religion", emp["religion"]);
-        AddBioItem(sb, "Tribe", emp["tribe"]);
-        AddBioItem(sb, "Marital Status", emp["marital_status"]);
-        AddBioItem(sb, "Current Residence", emp["current_residence"]);
-        AddBioItem(sb, "Address", emp["address"]);
-        AddBioItem(sb, "Email", emp["emp_email"]);
-        AddBioItem(sb, "Phone", emp["emp_phone"]);
-        sb.Append("</div>");
+        sb.Append(Group("Employment"));
+        sb.Append("<dl class='hr-dl'>");
+        AddItem(sb, "Category", emp["EmpType"]);
+        AddItem(sb, "Position", emp["jobname"]);
+        AddItem(sb, "Department", emp["dept_name"]);
+        AddItem(sb, "Station", emp["station_name"]);
+        AddItem(sb, "Entry year", emp["Entry_Year"]);
+        AddItem(sb, "Date joined", emp["date_joined"] != DBNull.Value ? FormatDate(emp["date_joined"]) : "");
+        AddItem(sb, "Employment status", Title(emp["employment_status"]));
+        AddItem(sb, "Supervisor", emp["sup_name"]);
+        AddItem(sb, "Reviewer", emp["rev_name"]);
+        AddItem(sb, "Highest education", emp["max_education"]);
+        AddItem(sb, "Qualifications", emp["emp_qualifications"]);
+        AddItem(sb, "Login username", emp["usernames"]);
+        sb.Append("</dl>");
 
-        // Section: Employment Details
-        sb.Append("<div style='font-size:10px;text-transform:uppercase;letter-spacing:.5px;color:#174DA4;font-weight:700;padding:6px 10px 3px;border-bottom:1px solid #e8e8e8;margin-top:4px;'>Employment Details</div>");
-        sb.Append("<div class='ep-bio-grid'>");
-        AddBioItem(sb, "Employee Type", emp["EmpType"]);
-        AddBioItem(sb, "Education Level", emp["max_education"]);
-        AddBioItem(sb, "Qualifications", emp["emp_qualifications"]);
-        AddBioItem(sb, "Entry Year", emp["Entry_Year"]);
-        AddBioItem(sb, "Station", emp["station_name"]);
-        AddBioItem(sb, "Job Title", emp["jobname"]);
-        AddBioItem(sb, "User Name", emp["usernames"]);
-        sb.Append("</div>");
+        sb.Append(Group("Pay and statutory"));
+        sb.Append("<dl class='hr-dl'>");
+        AddItem(sb, "Bank", ResolveBankName(emp["bankID"]));
+        AddItem(sb, "Bank account", emp["bankAccount"]);
+        AddItem(sb, "TIN", emp["tin"]);
+        AddItem(sb, "NSSF number", emp["nssf_no"]);
+        AddItem(sb, "Pay scale", emp["scale_name"]);
+        AddItem(sb, "Basic pay (UGX)", emp["basicpay"] != DBNull.Value ? FormatAmount(emp["basicpay"]) : "");
+        sb.Append("</dl>");
 
-        // Section: Financial Details
-        string bankName = ResolveBankName(emp["bankID"]);
-        sb.Append("<div style='font-size:10px;text-transform:uppercase;letter-spacing:.5px;color:#174DA4;font-weight:700;padding:6px 10px 3px;border-bottom:1px solid #e8e8e8;margin-top:4px;'>Financial Details</div>");
-        sb.Append("<div class='ep-bio-grid'>");
-        AddBioItem(sb, "Bank", bankName);
-        AddBioItem(sb, "Bank Account", emp["bankAccount"]);
-        AddBioItem(sb, "TIN", emp["tin"]);
-        AddBioItem(sb, "NSSF No", emp["nssf_no"]);
-        AddBioItem(sb, "Pay Scale", emp["scale_name"]);
-        AddBioItem(sb, "Basic Pay", emp["basicpay"] != DBNull.Value ? Convert.ToDecimal(emp["basicpay"]).ToString("N0") : "");
-        sb.Append("</div>");
+        sb.Append(Group("Family and emergency contact"));
+        sb.Append("<dl class='hr-dl'>");
+        AddItem(sb, "Spouse", emp["spouse_name"]);
+        AddItem(sb, "Children", emp["no_children"]);
+        AddItem(sb, "Father", emp["father_name"]);
+        AddItem(sb, "Mother", emp["mother_name"]);
+        AddItem(sb, "Emergency contact", emp["contact_person"]);
+        AddItem(sb, "Relationship", emp["relation"]);
+        AddItem(sb, "Contact phone", emp["phone_contacts"]);
+        AddItem(sb, "Referee 1", emp["referee_1"]);
+        AddItem(sb, "Referee 2", emp["referee_2"]);
+        sb.Append("</dl>");
 
-        // Section: Family  
-        sb.Append("<div style='font-size:10px;text-transform:uppercase;letter-spacing:.5px;color:#174DA4;font-weight:700;padding:6px 10px 3px;border-bottom:1px solid #e8e8e8;margin-top:4px;'>Family</div>");
-        sb.Append("<div class='ep-bio-grid'>");
-        AddBioItem(sb, "Spouse Name", emp["spouse_name"]);
-        AddBioItem(sb, "No. of Children", emp["no_children"]);
-        AddBioItem(sb, "Father's Name", emp["father_name"]);
-        AddBioItem(sb, "Mother's Name", emp["mother_name"]);
-        sb.Append("</div>");
-
-        // Section: Additional Info (memo fields)
-        string schooling = SafeVal(emp["schooling_info"]);
-        string employment = SafeVal(emp["employment_info"]);
-        string medical = SafeVal(emp["medical_background"]);
-        if (!string.IsNullOrEmpty(schooling) || !string.IsNullOrEmpty(employment) || !string.IsNullOrEmpty(medical))
+        string schooling = Clean(emp["schooling_info"]), employment = Clean(emp["employment_info"]), medical = Clean(emp["medical_background"]);
+        if (schooling != "" || employment != "" || medical != "")
         {
-            sb.Append("<div style='font-size:10px;text-transform:uppercase;letter-spacing:.5px;color:#174DA4;font-weight:700;padding:6px 10px 3px;border-bottom:1px solid #e8e8e8;margin-top:4px;'>Additional Information</div>");
-            sb.Append("<div style='padding:8px 12px;'>");
-            if (!string.IsNullOrEmpty(schooling))
-            {
-                sb.Append("<div style='margin-bottom:10px;'><div class='ep-bio-label'>Academic / Prof. Training</div>");
-                sb.AppendFormat("<div style='font-size:12px;color:#333;white-space:pre-wrap;'>{0}</div></div>", HttpUtility.HtmlEncode(schooling));
-            }
-            if (!string.IsNullOrEmpty(employment))
-            {
-                sb.Append("<div style='margin-bottom:10px;'><div class='ep-bio-label'>Employment History</div>");
-                sb.AppendFormat("<div style='font-size:12px;color:#333;white-space:pre-wrap;'>{0}</div></div>", HttpUtility.HtmlEncode(employment));
-            }
-            if (!string.IsNullOrEmpty(medical))
-            {
-                sb.Append("<div style='margin-bottom:10px;'><div class='ep-bio-label'>Medical Background</div>");
-                sb.AppendFormat("<div style='font-size:12px;color:#333;white-space:pre-wrap;'>{0}</div></div>", HttpUtility.HtmlEncode(medical));
-            }
-            sb.Append("</div>");
+            sb.Append(Group("Background"));
+            sb.Append("<dl class='hr-dl hr-dl--2'>");
+            if (schooling != "") AddItem(sb, "Training", schooling);
+            if (employment != "") AddItem(sb, "Employment history", employment);
+            if (medical != "") AddItem(sb, "Medical", medical);
+            sb.Append("</dl>");
         }
 
+        sb.Append(Group("Qualifications on record"));
+        sb.Append(BuildQualificationsHtml(SafeVal(emp["EMP_CODE"])));
         return sb.ToString();
+    }
+
+    private static string Group(string title)
+    {
+        return "<div class='em-group'>" + HttpUtility.HtmlEncode(title) + "</div>";
     }
 
     private string ResolveBankName(object bankID)
@@ -935,17 +829,18 @@ public partial class COOPERP_NewScreens_HREmployees : System.Web.UI.Page
         return bankID.ToString();
     }
 
-    private void AddBioItem(StringBuilder sb, string label, object value)
+    private static void AddItem(StringBuilder sb, string label, object value)
     {
-        string val = (value != null && value != DBNull.Value && value.ToString().Trim().Length > 0) ? HttpUtility.HtmlEncode(value.ToString()) : "<span style='color:#bbb;'>&mdash;</span>";
-        sb.AppendFormat("<div class='ep-bio-item'><div class='ep-bio-label'>{0}</div><div class='ep-bio-value'>{1}</div></div>",
-            HttpUtility.HtmlEncode(label), val);
+        string v = Clean(value);
+        sb.Append("<div><dt>").Append(HttpUtility.HtmlEncode(label)).Append("</dt><dd")
+          .Append(v == "" ? " class='hr-muted'>Not recorded" : ">" + Enc(v).Replace("\r\n", "<br/>").Replace("\n", "<br/>"))
+          .Append("</dd></div>");
     }
 
     private string BuildContractsHtml(int empID)
     {
         DataTable dt = ExecuteQuery(@"
-            SELECT c.ID, c.contractStart, c.contractEnd, c.contractStatus, c.comments,
+            SELECT c.ID, c.contractStart, c.contractEnd, c.contractStatus, c.contract_type, c.comments,
                    c.fixedamount, j.jobname, d.dept_name, ps.scale_name, ps.basicpay
             FROM hrm_emp_contracts c
             LEFT JOIN hrm_jobs j ON j.ID = c.jobID
@@ -955,66 +850,58 @@ public partial class COOPERP_NewScreens_HREmployees : System.Web.UI.Page
             new MySqlParameter("@id", empID));
 
         if (dt.Rows.Count == 0)
-            return "<div style='padding:20px;text-align:center;color:#888;font-size:12px;'>No contracts found.</div>";
+            return "<div class='hr-empty'>No contracts recorded. <a href='HRContracts.aspx?status=NONE'>Add one in Contracts</a>.</div>";
 
-        StringBuilder sb = new StringBuilder();
-        sb.Append("<table class='ep-data-table'><thead><tr>");
-        sb.Append("<th>Start</th><th>End</th><th>Job</th><th>Department</th><th>Scale</th><th>Basic Pay</th><th>Status</th><th>Comments</th>");
+        StringBuilder sb = new StringBuilder("<div class='hr-table-wrap'><table class='hr-table'><thead><tr>");
+        sb.Append("<th>Start</th><th>End</th><th>Position</th><th>Department</th><th>Pay scale</th><th class='hr-num'>Basic pay (UGX)</th><th>Status</th>");
         sb.Append("</tr></thead><tbody>");
-
         foreach (DataRow r in dt.Rows)
         {
             sb.Append("<tr>");
-            sb.AppendFormat("<td>{0}</td>", FormatDate(r["contractStart"]));
-            sb.AppendFormat("<td>{0}</td>", FormatDate(r["contractEnd"]));
-            sb.AppendFormat("<td>{0}</td>", HttpUtility.HtmlEncode(r["jobname"].ToString()));
-            sb.AppendFormat("<td>{0}</td>", HttpUtility.HtmlEncode(r["dept_name"].ToString()));
-            sb.AppendFormat("<td>{0}</td>", HttpUtility.HtmlEncode(r["scale_name"].ToString()));
-            sb.AppendFormat("<td class='text-right'>{0}</td>", FormatAmount(r["basicpay"] != DBNull.Value ? r["basicpay"] : r["fixedamount"]));
-            sb.AppendFormat("<td>{0}</td>", GetStatusBadge(r["contractStatus"]));
-            sb.AppendFormat("<td>{0}</td>", HttpUtility.HtmlEncode(r["comments"].ToString()));
+            sb.AppendFormat("<td style='white-space:nowrap'>{0}</td>", FormatDate(r["contractStart"]));
+            sb.AppendFormat("<td style='white-space:nowrap'>{0}</td>", FormatDate(r["contractEnd"]));
+            sb.AppendFormat("<td>{0}</td>", Enc(r["jobname"]));
+            sb.AppendFormat("<td>{0}</td>", Enc(r["dept_name"]));
+            sb.AppendFormat("<td>{0}</td>", Enc(r["scale_name"]));
+            sb.AppendFormat("<td class='hr-num'>{0}</td>", FormatAmount(r["basicpay"] != DBNull.Value ? r["basicpay"] : r["fixedamount"]));
+            sb.AppendFormat("<td>{0}</td>", ContractBadge(r["ID"], r["contractStatus"], r["contractEnd"]));
             sb.Append("</tr>");
         }
-
-        sb.Append("</tbody></table>");
+        sb.Append("</tbody></table></div>");
         return sb.ToString();
     }
 
     private string BuildQualificationsHtml(string empCode)
     {
         DataTable dt = ExecuteQuery(@"
-            SELECT qualif, institution, period_start, period_end, award_class 
+            SELECT qualif, institution, period_start, period_end, award_class
             FROM hrm_qualifications WHERE empcode = @code ORDER BY period_end DESC",
             new MySqlParameter("@code", empCode));
 
         if (dt.Rows.Count == 0)
-            return "<div style='padding:20px;text-align:center;color:#888;font-size:12px;'>No qualifications recorded.</div>";
+            return "<div class='hr-muted' style='padding:4px 0'>None recorded.</div>";
 
-        StringBuilder sb = new StringBuilder();
-        sb.Append("<table class='ep-data-table'><thead><tr>");
-        sb.Append("<th>Qualification</th><th>Institution</th><th>From</th><th>To</th><th>Classification</th>");
+        StringBuilder sb = new StringBuilder("<div class='hr-table-wrap'><table class='hr-table'><thead><tr>");
+        sb.Append("<th>Qualification</th><th>Institution</th><th>From</th><th>To</th><th>Class</th>");
         sb.Append("</tr></thead><tbody>");
-
         foreach (DataRow r in dt.Rows)
         {
             sb.Append("<tr>");
-            sb.AppendFormat("<td><strong>{0}</strong></td>", HttpUtility.HtmlEncode(r["qualif"].ToString()));
-            sb.AppendFormat("<td>{0}</td>", HttpUtility.HtmlEncode(r["institution"].ToString()));
-            sb.AppendFormat("<td>{0}</td>", FormatDate(r["period_start"]));
-            sb.AppendFormat("<td>{0}</td>", FormatDate(r["period_end"]));
-            sb.AppendFormat("<td>{0}</td>", HttpUtility.HtmlEncode(r["award_class"].ToString()));
+            sb.AppendFormat("<td>{0}</td>", Enc(r["qualif"]));
+            sb.AppendFormat("<td>{0}</td>", Enc(r["institution"]));
+            sb.AppendFormat("<td style='white-space:nowrap'>{0}</td>", FormatDate(r["period_start"]));
+            sb.AppendFormat("<td style='white-space:nowrap'>{0}</td>", FormatDate(r["period_end"]));
+            sb.AppendFormat("<td>{0}</td>", Enc(r["award_class"]));
             sb.Append("</tr>");
         }
-
-        sb.Append("</tbody></table>");
+        sb.Append("</tbody></table></div>");
         return sb.ToString();
     }
 
     private string BuildLeaveHtml(int empID)
     {
         DataTable dtAlloc = ExecuteQuery(@"
-            SELECT al.leave_year, al.default_days,
-                COALESCE(SUM(lt.no_days),0) AS taken_days
+            SELECT al.leave_year, al.default_days, COALESCE(SUM(lt.no_days),0) AS taken_days
             FROM hrm_annual_leave al
             LEFT JOIN hrm_leave_taken lt ON lt.leaveID = al.ID
             WHERE al.empID = @id
@@ -1023,31 +910,25 @@ public partial class COOPERP_NewScreens_HREmployees : System.Web.UI.Page
             new MySqlParameter("@id", empID));
 
         if (dtAlloc.Rows.Count == 0)
-            return "<div style='padding:20px;text-align:center;color:#888;font-size:12px;'>No leave records found.</div>";
+            return "<div class='hr-empty'>No leave allocated or taken.</div>";
 
-        StringBuilder sb = new StringBuilder();
-        sb.Append("<table class='ep-data-table'><thead><tr>");
-        sb.Append("<th>Year</th><th class='text-center'>Allocated</th><th class='text-center'>Taken</th><th class='text-center'>Remaining</th>");
+        StringBuilder sb = new StringBuilder(Group("Balances"));
+        sb.Append("<div class='hr-table-wrap'><table class='hr-table'><thead><tr>");
+        sb.Append("<th>Year</th><th class='hr-num'>Allocated</th><th class='hr-num'>Taken</th><th class='hr-num'>Remaining</th>");
         sb.Append("</tr></thead><tbody>");
-
         foreach (DataRow r in dtAlloc.Rows)
         {
             int allocated = Convert.ToInt32(r["default_days"]);
             int taken = Convert.ToInt32(r["taken_days"]);
-            int remaining = allocated - taken;
-            string color = remaining <= 0 ? "color:#dc3545;font-weight:600;" : remaining <= 5 ? "color:#ffc107;font-weight:600;" : "color:#28a745;font-weight:600;";
-
             sb.Append("<tr>");
-            sb.AppendFormat("<td><strong>{0}</strong></td>", r["leave_year"]);
-            sb.AppendFormat("<td class='text-center'>{0}</td>", allocated);
-            sb.AppendFormat("<td class='text-center'>{0}</td>", taken);
-            sb.AppendFormat("<td class='text-center' style='{0}'>{1}</td>", color, remaining);
+            sb.AppendFormat("<td>{0}</td>", Enc(r["leave_year"]));
+            sb.AppendFormat("<td class='hr-num'>{0}</td>", allocated);
+            sb.AppendFormat("<td class='hr-num'>{0}</td>", taken);
+            sb.AppendFormat("<td class='hr-num'><strong>{0}</strong></td>", allocated - taken);
             sb.Append("</tr>");
         }
+        sb.Append("</tbody></table></div>");
 
-        sb.Append("</tbody></table>");
-
-        // Leave details
         DataTable dtDetails = ExecuteQuery(@"
             SELECT lt.startDate, lt.endDate, lt.no_days, al.leave_year
             FROM hrm_leave_taken lt
@@ -1058,30 +939,28 @@ public partial class COOPERP_NewScreens_HREmployees : System.Web.UI.Page
 
         if (dtDetails.Rows.Count > 0)
         {
-            sb.Append("<div style='margin-top:12px;'><strong style='font-size:11px;color:#555;'>Recent Leave Taken</strong></div>");
-            sb.Append("<table class='ep-data-table' style='margin-top:6px;'><thead><tr>");
-            sb.Append("<th>Start Date</th><th>End Date</th><th class='text-center'>Days</th><th>Year</th>");
+            sb.Append(Group("Leave taken"));
+            sb.Append("<div class='hr-table-wrap'><table class='hr-table'><thead><tr>");
+            sb.Append("<th>First day</th><th>Last day</th><th class='hr-num'>Days</th><th>Year</th>");
             sb.Append("</tr></thead><tbody>");
-
             foreach (DataRow r in dtDetails.Rows)
             {
                 sb.Append("<tr>");
                 sb.AppendFormat("<td>{0}</td>", FormatDate(r["startDate"]));
                 sb.AppendFormat("<td>{0}</td>", FormatDate(r["endDate"]));
-                sb.AppendFormat("<td class='text-center'>{0}</td>", r["no_days"]);
-                sb.AppendFormat("<td>{0}</td>", r["leave_year"]);
+                sb.AppendFormat("<td class='hr-num'>{0}</td>", Enc(r["no_days"]));
+                sb.AppendFormat("<td>{0}</td>", Enc(r["leave_year"]));
                 sb.Append("</tr>");
             }
-            sb.Append("</tbody></table>");
+            sb.Append("</tbody></table></div>");
         }
-
         return sb.ToString();
     }
 
     private string BuildPayrollHtml(int empID)
     {
         DataTable dt = ExecuteQuery(@"
-            SELECT p.payroll_title, p.payroll_month, p.payroll_year, p.payroll_date,
+            SELECT p.payroll_title, p.payroll_month, p.payroll_year,
                    pd.basic_pay, pd.paye, pd.nssf, pd.total_allowances, pd.total_deductions,
                    pd.gross_pay, pd.net_pay
             FROM hrm_payroll_details pd
@@ -1092,100 +971,66 @@ public partial class COOPERP_NewScreens_HREmployees : System.Web.UI.Page
             new MySqlParameter("@id", empID));
 
         if (dt.Rows.Count == 0)
-            return "<div style='padding:20px;text-align:center;color:#888;font-size:12px;'>No payroll records found.</div>";
+            return "<div class='hr-empty'>No payroll records.</div>";
 
-        StringBuilder sb = new StringBuilder();
-        sb.Append("<table class='ep-data-table'><thead><tr>");
-        sb.Append("<th>Period</th><th class='text-right'>Basic Pay</th><th class='text-right'>Allowances</th>");
-        sb.Append("<th class='text-right'>Gross Pay</th><th class='text-right'>PAYE</th><th class='text-right'>NSSF</th>");
-        sb.Append("<th class='text-right'>Deductions</th><th class='text-right'>Net Pay</th>");
+        StringBuilder sb = new StringBuilder("<p class='hr-hint' style='margin:0 0 8px'>Amounts in UGX.</p><div class='hr-table-wrap'><table class='hr-table'><thead><tr>");
+        sb.Append("<th>Period</th><th class='hr-num'>Basic pay</th><th class='hr-num'>Allowances</th>");
+        sb.Append("<th class='hr-num'>Gross pay</th><th class='hr-num'>PAYE</th><th class='hr-num'>NSSF</th>");
+        sb.Append("<th class='hr-num'>Deductions</th><th class='hr-num'>Net pay</th>");
         sb.Append("</tr></thead><tbody>");
-
         foreach (DataRow r in dt.Rows)
         {
             sb.Append("<tr>");
-            sb.AppendFormat("<td><strong>{0}/{1}</strong><br/><span style='font-size:9px;color:#888;'>{2}</span></td>",
-                r["payroll_month"], r["payroll_year"], HttpUtility.HtmlEncode(r["payroll_title"].ToString()));
-            sb.AppendFormat("<td class='text-right'>{0}</td>", FormatAmount(r["basic_pay"]));
-            sb.AppendFormat("<td class='text-right'>{0}</td>", FormatAmount(r["total_allowances"]));
-            sb.AppendFormat("<td class='text-right' style='font-weight:600;'>{0}</td>", FormatAmount(r["gross_pay"]));
-            sb.AppendFormat("<td class='text-right' style='color:#dc3545;'>{0}</td>", FormatAmount(r["paye"]));
-            sb.AppendFormat("<td class='text-right' style='color:#dc3545;'>{0}</td>", FormatAmount(r["nssf"]));
-            sb.AppendFormat("<td class='text-right' style='color:#dc3545;'>{0}</td>", FormatAmount(r["total_deductions"]));
-            sb.AppendFormat("<td class='text-right' style='font-weight:700;color:#174DA4;'>{0}</td>", FormatAmount(r["net_pay"]));
+            sb.AppendFormat("<td style='white-space:nowrap'>{0}<span class='hr-sub'>{1}</span></td>",
+                PeriodLabel(r["payroll_month"], r["payroll_year"]), Enc(r["payroll_title"]));
+            sb.AppendFormat("<td class='hr-num'>{0}</td>", FormatAmount(r["basic_pay"]));
+            sb.AppendFormat("<td class='hr-num'>{0}</td>", FormatAmount(r["total_allowances"]));
+            sb.AppendFormat("<td class='hr-num'>{0}</td>", FormatAmount(r["gross_pay"]));
+            sb.AppendFormat("<td class='hr-num'>{0}</td>", FormatAmount(r["paye"]));
+            sb.AppendFormat("<td class='hr-num'>{0}</td>", FormatAmount(r["nssf"]));
+            sb.AppendFormat("<td class='hr-num'>{0}</td>", FormatAmount(r["total_deductions"]));
+            sb.AppendFormat("<td class='hr-num'><strong>{0}</strong></td>", FormatAmount(r["net_pay"]));
             sb.Append("</tr>");
         }
-
-        sb.Append("</tbody></table>");
+        sb.Append("</tbody></table></div>");
         return sb.ToString();
     }
 
-    private string BuildEmergencyHtml(DataRow emp)
+    private static string PeriodLabel(object month, object year)
     {
-        StringBuilder sb = new StringBuilder();
-
-        // Emergency Contact
-        sb.Append("<div style='font-size:10px;text-transform:uppercase;letter-spacing:.5px;color:#174DA4;font-weight:700;padding:6px 10px 3px;border-bottom:1px solid #e8e8e8;'>Emergency Contact</div>");
-        sb.Append("<div class='ep-bio-grid' style='grid-template-columns:repeat(2,1fr);'>");
-        AddBioItem(sb, "Contact Person", emp["contact_person"]);
-        AddBioItem(sb, "Relationship", emp["relation"]);
-        AddBioItem(sb, "Contact Phone", emp["phone_contacts"]);
-        sb.Append("</div>");
-
-        // Referees
-        sb.Append("<div style='font-size:10px;text-transform:uppercase;letter-spacing:.5px;color:#174DA4;font-weight:700;padding:6px 10px 3px;border-bottom:1px solid #e8e8e8;margin-top:4px;'>Referees</div>");
-        sb.Append("<div class='ep-bio-grid' style='grid-template-columns:repeat(2,1fr);'>");
-        AddBioItem(sb, "Referee 1", emp["referee_1"]);
-        AddBioItem(sb, "Referee 2", emp["referee_2"]);
-        sb.Append("</div>");
-
-        return sb.ToString();
+        int m;
+        string y = SafeVal(year);
+        if (int.TryParse(SafeVal(month), out m) && m >= 1 && m <= 12)
+            return new DateTime(2000, m, 1).ToString("MMMM", CultureInfo.InvariantCulture) + " " + y;
+        return Enc(SafeVal(month) + " " + y);
     }
 
     #endregion
 
-    #region AJAX Handler
+    #region AJAX
 
     private void HandleAjaxAction(string action)
     {
-        Response.ContentType = "application/json";
         Response.Clear();
-
+        Response.ContentType = "application/json";
         try
         {
             switch (action)
             {
-                case "search_emp":
-                    WriteEmployeeSearchResults();
-                    break;
-                case "get_emp":
-                    WriteEmployeeDetails();
-                    break;
-                case "get_profile":
-                    WriteEmployeeProfile();
-                    break;
-                case "getStats":
-                    WriteStats();
-                    break;
-                case "reset_pwd":
-                    WriteResetPwdAjax();
-                    break;
-                case "fix_login":
-                    WriteFixLoginAjax();
-                    break;
-                case "set_photo":
-                    WriteSetPhotoAjax();
-                    break;
-                default:
-                    WriteJson(new Dictionary<string, object> { { "error", "Unknown action" } });
-                    break;
+                case "search_emp":  WriteEmployeeSearchResults(); break;
+                case "get_emp":     WriteEmployeeDetails(); break;
+                case "get_profile": WriteEmployeeProfile(); break;
+                case "fix_login":   WriteFixLoginAjax(); break;
+                case "set_photo":   WriteSetPhotoAjax(); break;
+                default:            WriteJson(new Dictionary<string, object> { { "error", "Unknown action." } }); break;
             }
         }
         catch (Exception ex)
         {
-            WriteJson(new Dictionary<string, object> { { "error", ex.Message } });
+            System.Diagnostics.Trace.TraceError("HREmployees " + action + ": " + ex);
+            Response.Clear();
+            WriteJson(new Dictionary<string, object> { { "error", "The request could not be completed. Try again, and contact MIS if it keeps happening." } });
         }
-
         Response.End();
     }
 
@@ -1193,21 +1038,17 @@ public partial class COOPERP_NewScreens_HREmployees : System.Web.UI.Page
     {
         string q = (Request.QueryString["q"] ?? string.Empty).Trim();
         List<Dictionary<string, object>> results = new List<Dictionary<string, object>>();
-
         if (!string.IsNullOrEmpty(q))
         {
             DataTable dt = ExecuteQuery(@"
                 SELECT e.empID, e.EMP_CODE, e.emp_name, IFNULL(j.jobname, '') AS emp_position
                 FROM hrm_employee e
-                LEFT JOIN hrm_emp_contracts c ON c.empID = e.empID AND c.ID = (
-                    SELECT MAX(c2.ID) FROM hrm_emp_contracts c2 WHERE c2.empID = e.empID
-                )
+                LEFT JOIN hrm_emp_contracts c ON c.ID = hr_current_contract_id(e.empID)
                 LEFT JOIN hrm_jobs j ON j.ID = c.jobID
                 WHERE e.emp_name LIKE @q OR e.EMP_CODE LIKE @q OR e.emp_email LIKE @q OR e.emp_phone LIKE @q
                 ORDER BY e.emp_name ASC
                 LIMIT 20",
                 new MySqlParameter("@q", "%" + q + "%"));
-
             foreach (DataRow row in dt.Rows)
             {
                 results.Add(new Dictionary<string, object>
@@ -1219,7 +1060,6 @@ public partial class COOPERP_NewScreens_HREmployees : System.Web.UI.Page
                 });
             }
         }
-
         WriteJson(new Dictionary<string, object> { { "results", results } });
     }
 
@@ -1228,23 +1068,14 @@ public partial class COOPERP_NewScreens_HREmployees : System.Web.UI.Page
         int empID;
         if (!int.TryParse(Request.QueryString["id"], out empID) || empID <= 0)
         {
-            WriteJson(new Dictionary<string, object> { { "error", "Invalid employee id." } });
+            WriteJson(new Dictionary<string, object> { { "error", "Choose an employee." } });
             return;
         }
 
-        DataTable dt = ExecuteQuery(@"
-            SELECT e.*,
-                   IFNULL(sup.emp_name,'')  AS sup_name,  IFNULL(sup.EMP_CODE,'')  AS sup_code,
-                   IFNULL(rev.emp_name,'')  AS rev_name,  IFNULL(rev.EMP_CODE,'')  AS rev_code
-            FROM hrm_employee e
-            LEFT JOIN hrm_employee sup ON sup.empID = e.supervisorID
-            LEFT JOIN hrm_employee rev ON rev.empID = e.reviewer_id
-            WHERE e.empID = @id",
-            new MySqlParameter("@id", empID));
-
+        DataTable dt = ExecuteQuery(@"SELECT e.* FROM hrm_employee e WHERE e.empID = @id", new MySqlParameter("@id", empID));
         if (dt.Rows.Count == 0)
         {
-            WriteJson(new Dictionary<string, object> { { "error", "Employee not found." } });
+            WriteJson(new Dictionary<string, object> { { "error", "This employee was not found." } });
             return;
         }
 
@@ -1287,16 +1118,12 @@ public partial class COOPERP_NewScreens_HREmployees : System.Web.UI.Page
             { "schooling_info", SafeVal(row["schooling_info"]) },
             { "employment_info", SafeVal(row["employment_info"]) },
             { "supervisorID",      SafeVal(row["supervisorID"]) },
-            { "supervisor_name",   SafeVal(row["sup_name"]) },
-            { "supervisor_code",   SafeVal(row["sup_code"]) },
             { "employment_status", SafeVal(row["employment_status"]) },
             { "date_joined",       ToIsoDate(row["date_joined"]) },
             { "probation_end_date",ToIsoDate(row["probation_end_date"]) },
             { "to_be_appraised",   SafeVal(row["to_be_appraised"]) },
             { "appraisal_cycle",   SafeVal(row["appraisal_cycle"]) },
-            { "reviewer_id",       SafeVal(row["reviewer_id"]) },
-            { "reviewer_name",     SafeVal(row["rev_name"]) },
-            { "reviewer_code",     SafeVal(row["rev_code"]) }
+            { "reviewer_id",       SafeVal(row["reviewer_id"]) }
         });
     }
 
@@ -1305,47 +1132,54 @@ public partial class COOPERP_NewScreens_HREmployees : System.Web.UI.Page
         int empID;
         if (!int.TryParse(Request.QueryString["id"], out empID) || empID <= 0)
         {
-            WriteJson(new Dictionary<string, object> { { "error", "Invalid employee id." } });
+            WriteJson(new Dictionary<string, object> { { "error", "Choose an employee." } });
             return;
         }
 
         DataTable dtEmp = ExecuteQuery(@"
-            SELECT e.*, d.dept_name, st.station_name, c.contractStatus, c.contractStart, c.contractEnd,
-                ps.scale_name, IFNULL(ps.basicpay, c.fixedamount) AS basicpay, j.jobname
+            SELECT e.*, d.dept_name, st.station_name, c.ID AS contractID, c.contractStatus, c.contractStart, c.contractEnd,
+                   ps.scale_name, IFNULL(ps.basicpay, c.fixedamount) AS basicpay, j.jobname,
+                   sup.emp_name AS sup_name, rev.emp_name AS rev_name
             FROM hrm_employee e
-            LEFT JOIN hrm_emp_contracts c ON c.empID = e.empID AND c.ID = (SELECT MAX(c2.ID) FROM hrm_emp_contracts c2 WHERE c2.empID = e.empID)
+            LEFT JOIN hrm_emp_contracts c ON c.ID = hr_current_contract_id(e.empID)
             LEFT JOIN hrm_departments d ON d.ID = c.departmentID
             LEFT JOIN hrm_stations st ON st.ID = e.Entry_Satation
             LEFT JOIN hrm_payscales ps ON ps.ID = c.payscale
             LEFT JOIN hrm_jobs j ON j.ID = c.jobID
+            LEFT JOIN hrm_employee sup ON sup.empID = e.supervisorID
+            LEFT JOIN hrm_employee rev ON rev.empID = e.reviewer_id
             WHERE e.empID = @id",
             new MySqlParameter("@id", empID));
 
         if (dtEmp.Rows.Count == 0)
         {
-            WriteJson(new Dictionary<string, object> { { "error", "Employee not found." } });
+            WriteJson(new Dictionary<string, object> { { "error", "This employee was not found." } });
             return;
         }
 
         DataRow emp = dtEmp.Rows[0];
         string empCode = SafeVal(emp["EMP_CODE"]);
+        string login = Clean(emp["usernames"]);
 
         WriteJson(new Dictionary<string, object>
         {
-            { "name", SafeVal(emp["emp_name"]) },
-            { "code", empCode },
+            { "id", empID },
+            { "name", HrExport.Clean(SafeVal(emp["emp_name"])) },
+            { "code", Clean(emp["EMP_CODE"]) },
+            { "email", Clean(emp["emp_email"]) },
+            { "login", login },
             { "photo", GetPhotoUrl(empCode) },
-            { "statusBadge", GetStatusBadge(emp["contractStatus"]) },
-            { "type", SafeVal(emp["EmpType"]) },
-            { "dept", SafeVal(emp["dept_name"]) },
-            { "station", SafeVal(emp["station_name"]) },
-            { "pay", emp["basicpay"] != DBNull.Value ? "UGX " + Convert.ToDecimal(emp["basicpay"]).ToString("N0") : "N/A" },
-            { "bioHtml", BuildBioDataHtml(emp) },
+            { "statusBadge", ContractBadge(emp["contractID"], emp["contractStatus"], emp["contractEnd"]) },
+            { "type", Clean(emp["EmpType"]) },
+            { "dept", Clean(emp["dept_name"]) },
+            { "job", Clean(emp["jobname"]) },
+            { "station", Clean(emp["station_name"]) },
+            { "pay", emp["basicpay"] != DBNull.Value ? FormatAmount(emp["basicpay"]) : "" },
+            { "contractEnd", emp["contractEnd"] != DBNull.Value ? FormatDate(emp["contractEnd"]) : "" },
+            { "detailsHtml", BuildDetailsHtml(emp) },
             { "contractsHtml", BuildContractsHtml(empID) },
-            { "qualificationsHtml", BuildQualificationsHtml(empCode) },
             { "leaveHtml", BuildLeaveHtml(empID) },
-            { "payrollHtml", BuildPayrollHtml(empID) },
-            { "emergencyHtml", BuildEmergencyHtml(emp) }
+            { "payrollHtml", BuildPayrollHtml(empID) }
         });
     }
 
@@ -1356,288 +1190,68 @@ public partial class COOPERP_NewScreens_HREmployees : System.Web.UI.Page
         Response.Write(serializer.Serialize(data));
     }
 
-    private void WriteStats()
-    {
-        DataTable dt = ExecuteQuery(@"
-            SELECT 
-                COUNT(*) AS total,
-                SUM(CASE WHEN e.EmpType='Academic' THEN 1 ELSE 0 END) AS academic,
-                SUM(CASE WHEN e.EmpType='Administrative' THEN 1 ELSE 0 END) AS admin,
-                SUM(CASE WHEN c.contractStatus='VALID' THEN 1 ELSE 0 END) AS active_contracts
-            FROM hrm_employee e
-            LEFT JOIN hrm_emp_contracts c ON c.empID = e.empID AND c.ID = (SELECT MAX(c2.ID) FROM hrm_emp_contracts c2 WHERE c2.empID = e.empID)");
+    #endregion
 
-        DataRow r = dt.Rows[0];
-        Response.Write(string.Format("{{\"total\":{0},\"academic\":{1},\"admin\":{2},\"active\":{3}}}",
-            r["total"], r["academic"], r["admin"], r["active_contracts"]));
-    }
+    #region Staff register export
 
-    private void WriteEmployeesExportCsv()
+    private void SendStaffRegister()
     {
-        string search = (Request.QueryString["q"] ?? string.Empty).Trim();
-        string dept = (Request.QueryString["dept"] ?? string.Empty).Trim();
+        string search  = (Request.QueryString["q"] ?? string.Empty).Trim();
+        string dept    = (Request.QueryString["dept"] ?? string.Empty).Trim();
         string station = (Request.QueryString["station"] ?? string.Empty).Trim();
         string empType = (Request.QueryString["type"] ?? string.Empty).Trim();
-        string status = (Request.QueryString["status"] ?? string.Empty).Trim();
+        string status  = QsStatus;
+        string fmt     = string.Equals(Request.QueryString["fmt"], "csv", StringComparison.OrdinalIgnoreCase) ? "csv" : "xlsx";
 
-        StringBuilder sql = new StringBuilder();
-        sql.Append(@"SELECT
-            e.empID,
-            e.EMP_CODE,
-            e.emp_name,
-            e.emp_email,
-            e.emp_phone,
-            e.EmpType,
-            IFNULL(d.dept_name, '') AS department,
-            IFNULL(st.station_name, '') AS station,
-            IFNULL(j.jobname, '') AS job_title,
-            IFNULL(c.contractStatus, '') AS contract_status,
-            c.contractStart,
-            c.contractEnd,
-            IFNULL(ps.scale_name, '') AS pay_scale,
-            IFNULL(ps.basicpay, c.fixedamount) AS basic_pay,
-            IFNULL(c.fixedamount, 0) AS contract_fixed_amount,
-            IFNULL(c.ID, 0) AS contract_id
-        FROM hrm_employee e
-        LEFT JOIN hrm_emp_contracts c ON c.empID = e.empID AND c.ID = (
-            SELECT MAX(c2.ID) FROM hrm_emp_contracts c2 WHERE c2.empID = e.empID
-        )
-        LEFT JOIN hrm_departments d ON d.ID = c.departmentID
-        LEFT JOIN hrm_stations st ON st.ID = e.Entry_Satation
-        LEFT JOIN hrm_payscales ps ON ps.ID = c.payscale
-        LEFT JOIN hrm_jobs j ON j.ID = c.jobID
-        WHERE 1=1 ");
+        HrExport.Report r = new HrExport.Report("Staff register", "staff-register");
+        r.PreparedBy = HrAccess.Username();
+        r.AddScope("Status", status == "ACTIVE" ? "Active (valid contract)" : status == "NOVALID" ? "No valid contract" : status == "DUP" ? "Duplicate staff numbers" : "");
+        r.AddScope("Category", empType);
+        if (dept != "") r.AddScope("Department", Lookup("SELECT dept_name FROM hrm_departments WHERE ID=@id", dept));
+        if (station != "") r.AddScope("Station", Lookup("SELECT station_name FROM hrm_stations WHERE ID=@id", station));
+        r.AddScope("Search", search);
+
+        HrExport.Sheet sh = r.NewSheet("Staff");
+        sh.Add("Staff No").Add("Name").Add("Category").Add("Department").Add("Position").Add("Email").Add("Phone")
+          .Add("Contract status").Add("Contract start", HrExport.Kind.Date).Add("Contract end", HrExport.Kind.Date)
+          .Add("Pay scale").Add("Basic pay (UGX)", HrExport.Kind.Money, true);
 
         List<MySqlParameter> parms = new List<MySqlParameter>();
-        if (!string.IsNullOrEmpty(search))
-        {
-            sql.Append(" AND (e.emp_name LIKE @search OR e.EMP_CODE LIKE @search OR e.emp_email LIKE @search OR e.emp_phone LIKE @search OR e.usernames LIKE @search) ");
-            parms.Add(new MySqlParameter("@search", "%" + search + "%"));
-        }
-        if (!string.IsNullOrEmpty(dept))
-        {
-            sql.Append(" AND c.departmentID = @dept ");
-            parms.Add(new MySqlParameter("@dept", dept));
-        }
-        if (!string.IsNullOrEmpty(station))
-        {
-            sql.Append(" AND e.Entry_Satation = @station ");
-            parms.Add(new MySqlParameter("@station", station));
-        }
-        if (!string.IsNullOrEmpty(empType))
-        {
-            sql.Append(" AND e.EmpType = @empType ");
-            parms.Add(new MySqlParameter("@empType", empType));
-        }
-        if (!string.IsNullOrEmpty(status))
-        {
-            if (string.Equals(status, "NONE", StringComparison.OrdinalIgnoreCase))
-                sql.Append(" AND (IFNULL(c.contractStatus,'') = '' OR UPPER(IFNULL(c.contractStatus,'')) <> 'VALID') ");
-            else
-            {
-                sql.Append(" AND c.contractStatus = @status ");
-                parms.Add(new MySqlParameter("@status", status));
-            }
-        }
-
-        sql.Append(" ORDER BY " + GetOrderByClause() + " ");
-
-        DataTable dt = ExecuteQuery(sql.ToString(), parms.ToArray());
-
-        StringBuilder csv = new StringBuilder();
-        csv.AppendLine("Employee ID,Staff Code,Employee Name,Email,Phone,Employee Type,Department,Station,Job Title,Contract Status,Contract Start,Contract End,Pay Scale,Basic Pay,Contract Fixed Amount,Contract ID");
+        string from = DirectoryFrom(parms, search, dept, station, empType, status);
+        DataTable dt = ExecuteQuery(@"SELECT e.EMP_CODE, e.emp_name, e.EmpType, e.emp_email, e.emp_phone,
+                d.dept_name, j.jobname, c.ID AS contractID, c.contractStatus, c.contractStart, c.contractEnd,
+                ps.scale_name, IFNULL(ps.basicpay, c.fixedamount) AS basicpay " + from + " ORDER BY " + GetOrderByClause(), parms.ToArray());
 
         foreach (DataRow row in dt.Rows)
         {
-            csv.Append(EscapeCsv(SafeVal(row["empID"]))).Append(',')
-               .Append(EscapeCsv(SafeVal(row["EMP_CODE"]))).Append(',')
-               .Append(EscapeCsv(SafeVal(row["emp_name"]))).Append(',')
-               .Append(EscapeCsv(SafeVal(row["emp_email"]))).Append(',')
-               .Append(EscapeCsv(SafeVal(row["emp_phone"]))).Append(',')
-               .Append(EscapeCsv(SafeVal(row["EmpType"]))).Append(',')
-               .Append(EscapeCsv(SafeVal(row["department"]))).Append(',')
-               .Append(EscapeCsv(SafeVal(row["station"]))).Append(',')
-               .Append(EscapeCsv(SafeVal(row["job_title"]))).Append(',')
-               .Append(EscapeCsv(SafeVal(row["contract_status"]))).Append(',')
-               .Append(EscapeCsv(FormatDateCsv(row["contractStart"]))).Append(',')
-               .Append(EscapeCsv(FormatDateCsv(row["contractEnd"]))).Append(',')
-               .Append(EscapeCsv(SafeVal(row["pay_scale"]))).Append(',')
-               .Append(EscapeCsv(FormatAmountCsv(row["basic_pay"]))).Append(',')
-               .Append(EscapeCsv(FormatAmountCsv(row["contract_fixed_amount"]))).Append(',')
-               .Append(EscapeCsv(SafeVal(row["contract_id"])))
-               .AppendLine();
+            bool has = row["contractID"] != DBNull.Value;
+            sh.Row(Clean(row["EMP_CODE"]), Clean(row["emp_name"]), Clean(row["EmpType"]), Clean(row["dept_name"]), Clean(row["jobname"]),
+                UsableEmail(row["emp_email"]), UsablePhone(row["emp_phone"]),
+                ContractWords(row["contractID"], row["contractStatus"], row["contractEnd"]),
+                has ? row["contractStart"] : null, has ? row["contractEnd"] : null,
+                has ? (row["scale_name"] == DBNull.Value ? "Fixed amount" : Clean(row["scale_name"])) : "",
+                has ? row["basicpay"] : null);
         }
 
-        string fileName = "employees_contracts_" + DateTime.Now.ToString("yyyyMMdd_HHmm") + ".csv";
-        Response.Clear();
-        Response.ContentType = "text/csv; charset=utf-8";
-        Response.AddHeader("Content-Disposition", "attachment; filename=" + fileName);
-        Response.Write("\uFEFF");
-        Response.Write(csv.ToString());
+        if (fmt == "csv") HrExport.SendCsv(Response, r, 0);
+        else HrExport.SendXlsx(Response, r);
         Response.End();
     }
 
-    private string EscapeCsv(string value)
+    private string Lookup(string sql, string id)
     {
-        if (value == null) value = string.Empty;
-        string clean = value.Replace("\r", " ").Replace("\n", " ");
-        if (clean.IndexOf('"') >= 0 || clean.IndexOf(',') >= 0)
-            return "\"" + clean.Replace("\"", "\"\"") + "\"";
-        return clean;
+        DataTable dt = ExecuteQuery(sql, new MySqlParameter("@id", id));
+        return dt.Rows.Count > 0 ? SafeVal(dt.Rows[0][0]) : id;
     }
 
-    private string FormatAmountCsv(object val)
-    {
-        if (val == null || val == DBNull.Value) return string.Empty;
-        decimal d;
-        if (decimal.TryParse(val.ToString(), out d)) return d.ToString("0.##");
-        return val.ToString();
-    }
+    #endregion
 
-    private string FormatDateCsv(object val)
-    {
-        if (val == null || val == DBNull.Value) return string.Empty;
-        DateTime dt;
-        return DateTime.TryParse(val.ToString(), out dt) ? dt.ToString("yyyy-MM-dd") : val.ToString();
-    }
-
-    private void WriteResetPwdAjax()
-    {
-        int empID;
-        if (!int.TryParse(Request.QueryString["id"], out empID) || empID <= 0)
-        {
-            WriteJson(new Dictionary<string, object> { { "error", "Invalid employee id." } });
-            return;
-        }
-
-        try
-        {
-            DataTable dt = ExecuteQuery("SELECT emp_name, usernames, emp_email, emp_phone FROM hrm_employee WHERE empID = @id", new MySqlParameter("@id", empID));
-            if (dt.Rows.Count == 0)
-            {
-                WriteJson(new Dictionary<string, object> { { "error", "Employee record not found." } });
-                return;
-            }
-
-            DataRow emp = dt.Rows[0];
-            string empName      = SafeVal(emp["emp_name"]);
-            string storedUname  = NormalizeLoginValue(emp["usernames"]);
-            string email        = NormalizeLoginValue(emp["emp_email"]);
-            string phone        = NormalizeLoginValue(emp["emp_phone"]);
-            string manualPassword = SafeVal(Request["new_password"]).Trim();
-
-            // ── Save username submitted by operator back to hrm_employee ──
-            string submittedUsername = SafeVal(Request["new_username"]).Trim();
-            bool usernameWritten = false;
-            string savedUsername = storedUname;
-
-            if (!string.IsNullOrEmpty(submittedUsername) &&
-                !string.Equals(submittedUsername, storedUname, StringComparison.OrdinalIgnoreCase))
-            {
-                ExecuteNonQuery(
-                    "UPDATE hrm_employee SET usernames = @u WHERE empID = @id",
-                    new MySqlParameter("@u", submittedUsername),
-                    new MySqlParameter("@id", empID));
-                savedUsername = submittedUsername;
-                usernameWritten = true;
-            }
-
-            // Effective username for membership lookup: submitted → stored → email → phone
-            string username = !string.IsNullOrEmpty(submittedUsername) ? submittedUsername : storedUname;
-            if (string.IsNullOrEmpty(username))
-            {
-                if (!string.IsNullOrEmpty(email)) username = email;
-                else if (!string.IsNullOrEmpty(phone)) username = phone;
-            }
-
-            if (string.IsNullOrEmpty(username))
-            {
-                WriteJson(new Dictionary<string, object> { { "error", "Please enter a system username for this employee." } });
-                return;
-            }
-
-            // Try to find existing membership account
-            MembershipUser user;
-            MembershipProvider provider;
-            bool provisioned = false;
-            if (!TryResolveMembershipUser(username, email, out user, out provider))
-            {
-                string provisionError;
-                string provisionedUsername;
-                bool autoCreated = AutoProvisionMembershipAccount(empName, username, email, out provisionedUsername, out provisionError);
-                if (!autoCreated)
-                {
-                    WriteJson(new Dictionary<string, object> { { "error", "No membership account found and auto-provision failed: " + provisionError } });
-                    return;
-                }
-
-                if (!TryResolveMembershipUser(provisionedUsername, email, out user, out provider))
-                {
-                    if (!TryResolveMembershipUser(username, email, out user, out provider))
-                    {
-                        WriteJson(new Dictionary<string, object> { { "error", "Account was provisioned but could not be resolved by membership provider. Please retry in a few seconds." } });
-                        return;
-                    }
-                }
-
-                provisioned = true;
-            }
-
-            // Account exists — unlock if needed, then reset
-            if (user.IsLockedOut)
-                provider.UnlockUser(user.UserName);
-
-            string generatedPassword = provider.ResetPassword(user.UserName, null);
-            if (string.IsNullOrEmpty(generatedPassword))
-            {
-                WriteJson(new Dictionary<string, object> { { "error", "Password reset returned an empty temporary password. Please retry." } });
-                return;
-            }
-
-            string finalPassword = generatedPassword;
-            bool customApplied = false;
-
-            if (!string.IsNullOrEmpty(manualPassword))
-            {
-                if (manualPassword.Length < 6)
-                {
-                    WriteJson(new Dictionary<string, object> { { "error", "Typed password is too short. Use at least 6 characters." } });
-                    return;
-                }
-
-                bool changed = provider.ChangePassword(user.UserName, generatedPassword, manualPassword);
-                if (!changed)
-                {
-                    WriteJson(new Dictionary<string, object> { { "error", "Unable to set the typed password. Please use a stronger password or leave blank to auto-generate." } });
-                    return;
-                }
-
-                finalPassword = manualPassword;
-                customApplied = true;
-            }
-
-            WriteJson(new Dictionary<string, object>
-            {
-                { "success",          true },
-                { "temp_password",    finalPassword },
-                { "username",         user.UserName },
-                { "provisioned",      provisioned },
-                { "custom_applied",   customApplied },
-                { "username_written", usernameWritten },
-                { "saved_username",   savedUsername }
-            });
-        }
-        catch (Exception ex)
-        {
-            WriteJson(new Dictionary<string, object> { { "error", ex.Message } });
-        }
-    }
+    #region Reset login
 
     /// <summary>
-    /// The same lookup the eportal staff screens perform, so this tool can prove a repair worked
-    /// instead of hoping. Kept deliberately in step with App_Code/Portal/StaffLookup.cs in the
-    /// portal application: login as stored, then the local part of an email, then the work email,
-    /// and EMP_CODE last because it is not unique.
+    /// The same lookup the eportal staff screens perform, so this tool can prove a repair worked.
+    /// Kept in step with App_Code/Portal/StaffLookup.cs in the portal application: login as stored,
+    /// then the local part of an email, then the work email, and EMP_CODE last because it is not unique.
     /// </summary>
     private int ResolveStaffByLogin(string login, out string note)
     {
@@ -1652,7 +1266,7 @@ public partial class COOPERP_NewScreens_HREmployees : System.Web.UI.Page
                 "SELECT empID FROM hrm_employee WHERE UPPER(TRIM(IFNULL(usernames,''))) = UPPER(@u) " +
                 "AND TRIM(IFNULL(usernames,'')) NOT IN ('','-') ORDER BY empID LIMIT 1",
                 new MySqlParameter("@u", full));
-            if (dt.Rows.Count > 0) { note = "Matched on usernames."; return Convert.ToInt32(dt.Rows[0][0]); }
+            if (dt.Rows.Count > 0) { note = "Matched on the username."; return Convert.ToInt32(dt.Rows[0][0]); }
 
             if (local != "")
             {
@@ -1660,14 +1274,14 @@ public partial class COOPERP_NewScreens_HREmployees : System.Web.UI.Page
                     "SELECT empID FROM hrm_employee WHERE UPPER(TRIM(IFNULL(usernames,''))) = UPPER(@u) " +
                     "AND TRIM(IFNULL(usernames,'')) NOT IN ('','-') ORDER BY empID LIMIT 1",
                     new MySqlParameter("@u", local));
-                if (dt.Rows.Count > 0) { note = "Matched on usernames using the email local part."; return Convert.ToInt32(dt.Rows[0][0]); }
+                if (dt.Rows.Count > 0) { note = "Matched on the username before the @."; return Convert.ToInt32(dt.Rows[0][0]); }
             }
 
             dt = ExecuteQuery(
                 "SELECT empID FROM hrm_employee WHERE UPPER(TRIM(IFNULL(emp_email,''))) = UPPER(@u) " +
                 "AND TRIM(IFNULL(emp_email,'')) NOT IN ('','-') ORDER BY empID LIMIT 1",
                 new MySqlParameter("@u", full));
-            if (dt.Rows.Count > 0) { note = "Matched on emp_email."; return Convert.ToInt32(dt.Rows[0][0]); }
+            if (dt.Rows.Count > 0) { note = "Matched on the email address."; return Convert.ToInt32(dt.Rows[0][0]); }
 
             foreach (string key in new string[] { full, local })
             {
@@ -1681,18 +1295,23 @@ public partial class COOPERP_NewScreens_HREmployees : System.Web.UI.Page
                     dt = ExecuteQuery(
                         "SELECT empID FROM hrm_employee WHERE UPPER(TRIM(IFNULL(EMP_CODE,''))) = UPPER(@u) LIMIT 1",
                         new MySqlParameter("@u", key));
-                    if (dt.Rows.Count > 0) { note = "Matched on staff code."; return Convert.ToInt32(dt.Rows[0][0]); }
+                    if (dt.Rows.Count > 0) { note = "Matched on the staff number."; return Convert.ToInt32(dt.Rows[0][0]); }
                 }
                 else if (n > 1)
                 {
-                    note = "The staff code '" + key + "' is shared by " + n + " employees, so it cannot identify one person.";
+                    note = "Staff number " + key + " is shared by " + n + " employees, so it cannot identify one person.";
                     return 0;
                 }
             }
         }
-        catch (Exception ex) { note = "Lookup failed: " + ex.Message; return 0; }
+        catch (Exception ex)
+        {
+            System.Diagnostics.Trace.TraceWarning("HREmployees lookup: " + ex.Message);
+            note = "The staff lookup could not be checked.";
+            return 0;
+        }
 
-        note = "No employee record carries the username '" + full + "'" + (local == "" ? "" : " or '" + local + "'") + ".";
+        note = "No employee record carries the username " + full + (local == "" ? "" : " or " + local) + ".";
         return 0;
     }
 
@@ -1711,160 +1330,136 @@ public partial class COOPERP_NewScreens_HREmployees : System.Web.UI.Page
         catch { return ""; }
     }
 
+    /// <summary>
+    /// Reset login: username from the email (else the existing username, else the staff number),
+    /// account created or repaired in both sign-in stores (eadmin and the staff portal), approved,
+    /// unlocked, one new password set in both and proved with ValidateUser, roles carried over.
+    /// </summary>
     private void WriteFixLoginAjax()
     {
         int empID;
         if (!int.TryParse(Request.QueryString["id"], out empID) || empID <= 0)
         {
-            WriteJson(new Dictionary<string, object> { { "error", "Invalid employee id." } });
+            WriteJson(new Dictionary<string, object> { { "error", "Choose an employee." } });
             return;
         }
 
         try
         {
             DataTable dt = ExecuteQuery(
-                "SELECT emp_name, usernames, emp_email FROM hrm_employee WHERE empID = @id LIMIT 1",
+                "SELECT emp_name, usernames, emp_email, EMP_CODE FROM hrm_employee WHERE empID = @id LIMIT 1",
                 new MySqlParameter("@id", empID));
-
             if (dt.Rows.Count == 0)
             {
-                WriteJson(new Dictionary<string, object> { { "error", "Employee record not found." } });
+                WriteJson(new Dictionary<string, object> { { "error", "This employee was not found." } });
                 return;
             }
 
             DataRow emp = dt.Rows[0];
-            string empName = SafeVal(emp["emp_name"]);
             string existingUsername = NormalizeLoginValue(emp["usernames"]);
             string email = NormalizeLoginValue(emp["emp_email"]);
+            string empCode = NormalizeLoginValue(emp["EMP_CODE"]);
             string manualPassword = SafeVal(Request["new_password"]).Trim();
 
             List<string> log = new List<string>();
             bool usernameWritten = false;
 
-            // Username is always the full email address
+            // Username is the full email address when there is one.
             string targetUsername = !string.IsNullOrEmpty(email) ? email : existingUsername;
             if (!string.IsNullOrEmpty(email))
-                log.Add("Username set to email address '" + email + "'.");
+                log.Add("Username taken from the email address " + email + ".");
 
-            // No email and no username: the staff code. The eadmin sign-in resolves a staff
-            // code through hrm_employee, so it is a username the person can actually use, and
-            // it is the one identifier every employee record carries. Refusing here is what
-            // left the 113 employees without an email unable to get an account at all.
-            string empCode = "";
-            try
-            {
-                DataTable dc = ExecuteQuery("SELECT EMP_CODE FROM hrm_employee WHERE empID=@id", new MySqlParameter("@id", empID));
-                if (dc.Rows.Count > 0) empCode = NormalizeLoginValue(dc.Rows[0]["EMP_CODE"]);
-            }
-            catch { }
+            // No email and no username: the staff number. The eadmin sign-in resolves a staff
+            // number through hrm_employee, so it is a username the person can actually use.
             if (string.IsNullOrEmpty(targetUsername) && !string.IsNullOrEmpty(empCode))
             {
                 targetUsername = empCode;
-                log.Add("No email or username on record, so the staff code '" + empCode + "' is used as the username.");
+                log.Add("No email or username on record, so the staff number " + empCode + " is the username.");
             }
 
             if (string.IsNullOrEmpty(targetUsername))
             {
-                WriteJson(new Dictionary<string, object> { { "error", "Cannot derive a username: the employee has no email, no username and no staff code. Add an email to the employee record, then fix the login." } });
+                WriteJson(new Dictionary<string, object> { { "error", "This employee has no email, username or staff number. Add an email to the record, then reset the login." } });
                 return;
             }
 
-            // Write username to hrm_employee.usernames if missing or different
             if (!string.Equals(existingUsername, targetUsername, StringComparison.OrdinalIgnoreCase))
             {
                 ExecuteNonQuery(
                     "UPDATE hrm_employee SET usernames = @u WHERE empID = @id",
                     new MySqlParameter("@u", targetUsername),
                     new MySqlParameter("@id", empID));
-                log.Add("Updated hrm_employee.usernames to '" + targetUsername + "'.");
+                log.Add("Employee record updated with username " + targetUsername + ".");
                 usernameWritten = true;
             }
             else
             {
-                log.Add("Username already set to '" + targetUsername + "' — no change needed.");
+                log.Add("Username " + targetUsername + " already on the employee record.");
             }
 
-            // ── Make the account right in BOTH places a member of staff signs in ──────
-            //
-            // eadmin signs in through the default provider (campus_dynamics). The staff side of
-            // the portal signs in through MySQLMembershipProviderAdmin (campus_dynamics_portal).
-            // The old repair searched both, stopped at the FIRST account it found, repaired that
-            // one and reported "Login fix complete". For 119 employees the first one was the
-            // portal account, so eadmin was never touched and still had no account for them:
-            // the fix succeeded, and the person still could not sign in.
-            //
-            // Each store is now checked and repaired on its own, both get the same password, and
-            // the result is proved by an actual ValidateUser against each, which is exactly what
-            // the two sign-in screens call.
+            // eadmin signs in through the default provider (campus_dynamics); the staff side of the
+            // portal through MySQLMembershipProviderAdmin (campus_dynamics_portal). Each store is
+            // checked and repaired on its own, both get the same password, and each is proved with
+            // ValidateUser, which is what the two sign-in screens call.
             string finalPassword = !string.IsNullOrEmpty(manualPassword) ? manualPassword : GenerateStrongPassword();
             if (finalPassword.Length < 6)
             {
-                WriteJson(new Dictionary<string, object> { { "error", "Password too short. Use at least 6 characters." }, { "log", log } });
+                WriteJson(new Dictionary<string, object> { { "error", "Use a password of at least 6 characters, or leave it blank to generate one." }, { "log", log } });
                 return;
             }
             bool customApplied = !string.IsNullOrEmpty(manualPassword);
-            log.Add(customApplied ? "Password set to the value given." : "Password generated.");
+            log.Add(customApplied ? "Password set to the one entered." : "Password generated.");
 
-            var alts = new List<string>();
+            List<string> alts = new List<string>();
             if (!string.IsNullOrEmpty(existingUsername)) alts.Add(existingUsername);
             if (!string.IsNullOrEmpty(email)) alts.Add(email);
             if (!string.IsNullOrEmpty(empCode)) alts.Add(empCode);
 
             bool provisioned = false;
             MembershipUser user = null;
-            var stores = new List<KeyValuePair<string, string>>
+            List<KeyValuePair<string, string>> stores = new List<KeyValuePair<string, string>>
             {
                 new KeyValuePair<string, string>("eadmin", null),
-                new KeyValuePair<string, string>("portal", "MySQLMembershipProviderAdmin")
+                new KeyValuePair<string, string>("Staff portal", "MySQLMembershipProviderAdmin")
             };
-            foreach (var st in stores)
+            foreach (KeyValuePair<string, string> st in stores)
             {
                 MembershipProvider p = st.Value == null ? Membership.Provider : Membership.Providers[st.Value];
-                if (p == null) { log.Add(st.Key + ": provider not configured, skipped."); continue; }
+                if (p == null) { log.Add(st.Key + ": not configured on this server, skipped."); continue; }
                 string err; bool created;
                 MembershipUser u = EnsureLogin(p, StoreConn(p), targetUsername, email, alts, finalPassword, st.Key, log, out created, out err);
                 if (u == null)
                 {
-                    WriteJson(new Dictionary<string, object> { { "error", st.Key + " account could not be fixed: " + err }, { "log", log } });
+                    WriteJson(new Dictionary<string, object> { { "error", "The " + st.Key + " login could not be reset: " + err + "." }, { "log", log } });
                     return;
                 }
                 provisioned |= created;
                 if (st.Value == null) user = u;
+            }
+            if (user == null)
+            {
+                WriteJson(new Dictionary<string, object> { { "error", "The eadmin login could not be reset." }, { "log", log } });
+                return;
             }
 
             // Roles live against the username. A login that was renamed leaves its role behind
             // under the old name, and a login with no role signs in to an empty menu.
             FixRoles(targetUsername, alts, log);
 
-            // ── Does the account now actually resolve to this employee? ──────────────
-            //
-            // Fixing the login is only half the job. The staff screens in eportal look the
-            // signed-in user up in hrm_employee before showing anything, and if that lookup
-            // fails the member of staff is told "Lecturer profile not found." even though
-            // their password works perfectly. That is the state Baguma James was in: a valid
-            // account, a correct username, and no way to reach his own mark requests.
-            //
-            // So the repair now ends by performing the SAME lookup the portal performs, and
-            // reports what it found. If it cannot resolve, it says exactly why — which is far
-            // more use than an administrator resetting the password again and again.
+            // The staff screens in eportal look the signed-in user up in hrm_employee before
+            // showing anything. Perform the same lookup and report what it found.
             string resolveNote;
             int resolvedEmp = ResolveStaffByLogin(user.UserName, out resolveNote);
             bool profileOk = resolvedEmp == empID;
-
             if (profileOk)
-                log.Add("Verified: signing in as '" + user.UserName + "' resolves to this employee record. " + resolveNote);
+                log.Add("Checked: signing in as " + user.UserName + " opens this employee's record. " + resolveNote);
             else if (resolvedEmp > 0)
-                log.Add("WARNING: '" + user.UserName + "' resolves to a DIFFERENT employee (empID " + resolvedEmp +
-                        "). " + resolveNote + " Staff screens would show that person's data.");
+                log.Add("Attention: " + user.UserName + " opens a different employee's record. " + resolveNote);
             else
-                log.Add("WARNING: staff screens will still not find this profile. " + resolveNote);
+                log.Add("Attention: the staff portal will not find this employee's record. " + resolveNote);
 
-            // A staff code shared with someone else cannot identify anyone. It no longer blocks
-            // the lookup now that the username is set, but it is worth saying out loud.
             string dupCode = SharedStaffCode(empID);
-            if (dupCode != "") log.Add("Note: staff code '" + dupCode + "' is shared with another employee.");
-
-            log.Add("Login fix complete.");
+            if (dupCode != "") log.Add("Attention: staff number " + dupCode + " is shared with another employee.");
 
             WriteJson(new Dictionary<string, object>
             {
@@ -1881,7 +1476,8 @@ public partial class COOPERP_NewScreens_HREmployees : System.Web.UI.Page
         }
         catch (Exception ex)
         {
-            WriteJson(new Dictionary<string, object> { { "error", ex.Message } });
+            System.Diagnostics.Trace.TraceError("HREmployees reset login: " + ex);
+            WriteJson(new Dictionary<string, object> { { "error", "The login could not be reset. Try again, and contact MIS if it keeps happening." } });
         }
     }
 
@@ -1894,13 +1490,9 @@ public partial class COOPERP_NewScreens_HREmployees : System.Web.UI.Page
 
     /// <summary>
     /// One store: find the account by its proper username, then by email, then by any older
-    /// name it was created under; rename a found account to the proper username; create it
-    /// through the provider if there is none; approve it; unlock it; set the password; and prove
-    /// it with ValidateUser. Returns null with the reason when it cannot.
-    ///
-    /// Creation goes through provider.CreateUser, not hand-written INSERTs. The provider owns the
-    /// password hash, the salt and the application id; rows written around it are rows it may
-    /// not recognise.
+    /// name it was created under; rename a found account to the proper username; create it if
+    /// there is none; approve it; unlock it; set the password; and prove it with ValidateUser.
+    /// Returns null with the reason when it cannot.
     /// </summary>
     private MembershipUser EnsureLogin(MembershipProvider p, string conn, string target, string email,
                                        List<string> alts, string password, string label, List<string> log,
@@ -1912,7 +1504,7 @@ public partial class COOPERP_NewScreens_HREmployees : System.Web.UI.Page
 
         if (u == null)
         {
-            var tries = new List<string>(alts);
+            List<string> tries = new List<string>(alts);
             if (!string.IsNullOrEmpty(email))
             {
                 try { string byMail = p.GetUserNameByEmail(email); if (!string.IsNullOrEmpty(byMail)) tries.Insert(0, byMail); } catch { }
@@ -1925,20 +1517,24 @@ public partial class COOPERP_NewScreens_HREmployees : System.Web.UI.Page
                 if (old == null) continue;
                 try
                 {
-                    using (var c = new MySqlConnection(conn))
+                    using (MySqlConnection c = new MySqlConnection(conn))
                     {
                         c.Open();
-                        using (var cmd = new MySqlCommand("UPDATE my_aspnet_users SET name=@n WHERE name=@o", c))
+                        using (MySqlCommand cmd = new MySqlCommand("UPDATE my_aspnet_users SET name=@n WHERE name=@o", c))
                         {
                             cmd.Parameters.AddWithValue("@n", target);
                             cmd.Parameters.AddWithValue("@o", old.UserName);
                             cmd.ExecuteNonQuery();
                         }
                     }
-                    log.Add(label + ": account found as '" + old.UserName + "', renamed to '" + target + "'.");
+                    log.Add(label + ": login found as " + old.UserName + ", renamed to " + target + ".");
                     u = p.GetUser(target, false);
                 }
-                catch (Exception ex) { log.Add(label + ": found '" + old.UserName + "' but could not rename it: " + ex.Message); }
+                catch (Exception ex)
+                {
+                    System.Diagnostics.Trace.TraceWarning("HREmployees rename login: " + ex.Message);
+                    log.Add(label + ": login found as " + old.UserName + " but it could not be renamed.");
+                }
                 break;
             }
         }
@@ -1946,67 +1542,71 @@ public partial class COOPERP_NewScreens_HREmployees : System.Web.UI.Page
         if (u == null)
         {
             // A users row with no membership row is invisible to the provider and blocks
-            // CreateUser with DuplicateUserName. It holds nothing usable, so it goes.
+            // creation with DuplicateUserName. It holds nothing usable, so it goes.
             try
             {
-                using (var c = new MySqlConnection(conn))
+                using (MySqlConnection c = new MySqlConnection(conn))
                 {
                     c.Open();
-                    using (var cmd = new MySqlCommand(
+                    using (MySqlCommand cmd = new MySqlCommand(
                         "DELETE u FROM my_aspnet_users u LEFT JOIN my_aspnet_membership m ON m.userId=u.id " +
                         "WHERE u.name=@n AND m.userId IS NULL", c))
                     {
                         cmd.Parameters.AddWithValue("@n", target);
-                        if (cmd.ExecuteNonQuery() > 0) log.Add(label + ": removed a broken half-account for '" + target + "'.");
+                        if (cmd.ExecuteNonQuery() > 0) log.Add(label + ": removed an incomplete login for " + target + ".");
                     }
                 }
             }
             catch { }
 
             // provider.CreateUser cannot work here: MySql.Web 6.6.7 inserts into my_aspnet_users
-            // positionally (VALUES(NULL, app, name, 0, date), no column list), and this table
-            // has gained user_verification_status, verified_email and user_type, so every call
-            // dies with "Column count doesn't match value count" and comes back as a bare
-            // ProviderError. That is why no account could be created from this screen. The two
-            // rows are written here with explicit columns instead, and the password is then set
-            // through the provider, so the hash and salt are still entirely the provider's.
+            // positionally and this table has extra columns, so every call fails. The two rows are
+            // written with explicit columns instead, and the password is then set through the
+            // provider, so the hash and salt are still entirely the provider's.
             try { CreateLoginRows(conn, target, email); }
-            catch (Exception ex) { error = "create failed: " + ex.Message; return null; }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Trace.TraceError("HREmployees create login: " + ex);
+                error = "the login could not be created"; return null;
+            }
             u = p.GetUser(target, false);
-            if (u == null) { error = "the account was written but the provider cannot see it"; return null; }
+            if (u == null) { error = "the login was written but cannot be read back"; return null; }
             created = true;
-            log.Add(label + ": no account existed, created '" + target + "'.");
+            log.Add(label + ": no login existed, created " + target + ".");
         }
-        else log.Add(label + ": account '" + u.UserName + "' exists.");
+        else log.Add(label + ": login " + u.UserName + " exists.");
 
         try
         {
-            if (!u.IsApproved) { u.IsApproved = true; p.UpdateUser(u); log.Add(label + ": account was not approved (sign-in is refused for that), now approved."); }
-            if (u.IsLockedOut) { p.UnlockUser(u.UserName); log.Add(label + ": account was locked, now unlocked."); }
+            if (!u.IsApproved) { u.IsApproved = true; p.UpdateUser(u); log.Add(label + ": login was not approved, now approved."); }
+            if (u.IsLockedOut) { p.UnlockUser(u.UserName); log.Add(label + ": login was locked, now unlocked."); }
             string tmp = p.ResetPassword(u.UserName, null);
             if (!p.ChangePassword(u.UserName, tmp, password)) { error = "the password could not be set"; return null; }
 
-            // Staff are LECTURER in both stores. The old repair wrote user_type 'user' and
-            // user_verification_status 1, which the enum stores as ALUMNI, onto staff accounts.
-            using (var c = new MySqlConnection(conn))
+            // Staff are LECTURER in both stores; older repairs wrote ALUMNI onto staff accounts.
+            using (MySqlConnection c = new MySqlConnection(conn))
             {
                 c.Open();
-                using (var cmd = new MySqlCommand(
+                using (MySqlCommand cmd = new MySqlCommand(
                     "UPDATE my_aspnet_users SET user_type='LECTURER', " +
                     "user_verification_status=CASE WHEN user_verification_status='ALUMNI' THEN NULL ELSE user_verification_status END " +
                     "WHERE name=@n AND (IFNULL(user_type,'') NOT IN ('LECTURER','STAFF') OR user_verification_status='ALUMNI')", c))
                 {
                     cmd.Parameters.AddWithValue("@n", target);
-                    if (cmd.ExecuteNonQuery() > 0) log.Add(label + ": account type corrected to staff (LECTURER).");
+                    if (cmd.ExecuteNonQuery() > 0) log.Add(label + ": account type corrected to staff.");
                 }
             }
         }
-        catch (Exception ex) { error = ex.Message; return null; }
+        catch (Exception ex)
+        {
+            System.Diagnostics.Trace.TraceError("HREmployees set password: " + ex);
+            error = "the password could not be set"; return null;
+        }
 
         bool ok = false;
         try { ok = p.ValidateUser(target, password); } catch { }
-        if (!ok) { error = "the account is set up but signing in with the new password still fails"; return null; }
-        log.Add(label + ": verified, signing in as '" + target + "' with the new password works.");
+        if (!ok) { error = "signing in with the new password still fails"; return null; }
+        log.Add(label + ": checked, signing in as " + target + " with the new password works.");
         return p.GetUser(target, false);
     }
 
@@ -2016,19 +1616,19 @@ public partial class COOPERP_NewScreens_HREmployees : System.Web.UI.Page
     /// </summary>
     private void CreateLoginRows(string conn, string name, string email)
     {
-        using (var c = new MySqlConnection(conn))
+        using (MySqlConnection c = new MySqlConnection(conn))
         {
             c.Open();
-            using (var tx = c.BeginTransaction())
+            using (MySqlTransaction tx = c.BeginTransaction())
             {
                 int appId = 1;
-                using (var cmd = new MySqlCommand("SELECT id FROM my_aspnet_applications WHERE name='/' LIMIT 1", c, tx))
+                using (MySqlCommand cmd = new MySqlCommand("SELECT id FROM my_aspnet_applications WHERE name='/' LIMIT 1", c, tx))
                 {
                     object o = cmd.ExecuteScalar();
                     if (o != null && o != DBNull.Value) appId = Convert.ToInt32(o);
                 }
                 long uid;
-                using (var cmd = new MySqlCommand(
+                using (MySqlCommand cmd = new MySqlCommand(
                     "INSERT INTO my_aspnet_users (applicationId, name, isAnonymous, lastActivityDate, user_type, verified_email) " +
                     "VALUES (@a, @n, 0, UTC_TIMESTAMP(), 'LECTURER', @e)", c, tx))
                 {
@@ -2040,7 +1640,7 @@ public partial class COOPERP_NewScreens_HREmployees : System.Web.UI.Page
                 }
                 byte[] key = new byte[16];
                 new System.Security.Cryptography.RNGCryptoServiceProvider().GetBytes(key);
-                using (var cmd = new MySqlCommand(
+                using (MySqlCommand cmd = new MySqlCommand(
                     "INSERT INTO my_aspnet_membership (userId, Email, Comment, Password, PasswordKey, PasswordFormat, " +
                     " IsApproved, LastActivityDate, LastLoginDate, LastPasswordChangedDate, CreationDate, IsLockedOut, " +
                     " LastLockedOutDate, FailedPasswordAttemptCount, FailedPasswordAttemptWindowStart, " +
@@ -2059,7 +1659,7 @@ public partial class COOPERP_NewScreens_HREmployees : System.Web.UI.Page
         }
     }
 
-    /// <summary>Carry roles from older names to the proper username; warn if there are none.</summary>
+    /// <summary>Carry roles from older names to the proper username; flag a login with none.</summary>
     private void FixRoles(string target, List<string> alts, List<string> log)
     {
         try
@@ -2071,7 +1671,7 @@ public partial class COOPERP_NewScreens_HREmployees : System.Web.UI.Page
                     "UPDATE sys_user_roles SET username=@t WHERE username=@o AND role_id NOT IN " +
                     "(SELECT role_id FROM (SELECT role_id FROM sys_user_roles WHERE username=@t) x)",
                     new MySqlParameter("@t", target), new MySqlParameter("@o", n));
-                if (moved > 0) log.Add("Moved " + moved + " role assignment(s) from the old name '" + n + "'.");
+                if (moved > 0) log.Add("Moved " + moved + (moved == 1 ? " role" : " roles") + " from the old username " + n + ".");
             }
             DataTable r = ExecuteQuery(
                 "SELECT GROUP_CONCAT(ro.role_name SEPARATOR ', ') roles FROM sys_user_roles ur JOIN sys_roles ro ON ro.id=ur.role_id " +
@@ -2079,515 +1679,14 @@ public partial class COOPERP_NewScreens_HREmployees : System.Web.UI.Page
                 new MySqlParameter("@t", target));
             string roles = r.Rows.Count > 0 ? SafeVal(r.Rows[0]["roles"]) : "";
             log.Add(string.IsNullOrEmpty(roles)
-                ? "WARNING: this login has no active role, so eadmin will open with an empty menu. Assign one in Access Control."
+                ? "Attention: this login has no active role, so eadmin opens with an empty menu. Assign one in Access Control."
                 : "Roles: " + roles + ".");
         }
-        catch (Exception ex) { log.Add("Roles could not be checked: " + ex.Message); }
-    }
-
-    private void WriteSetPhotoAjax()
-    {
-        int empID;
-        if (!int.TryParse(Request.QueryString["id"], out empID) || empID <= 0)
-        {
-            WriteJson(new Dictionary<string, object> { { "error", "Invalid employee id." } });
-            return;
-        }
-
-        try
-        {
-            DataTable dt = ExecuteQuery("SELECT EMP_CODE, emp_name FROM hrm_employee WHERE empID = @id LIMIT 1", new MySqlParameter("@id", empID));
-            if (dt.Rows.Count == 0)
-            {
-                WriteJson(new Dictionary<string, object> { { "error", "Employee record not found." } });
-                return;
-            }
-
-            string empCode = SafeVal(dt.Rows[0]["EMP_CODE"]).Trim();
-            if (string.IsNullOrEmpty(empCode))
-            {
-                WriteJson(new Dictionary<string, object> { { "error", "Employee code is missing for this record." } });
-                return;
-            }
-
-            HttpPostedFile postedFile = Request.Files["photoFile"];
-            if (postedFile == null || postedFile.ContentLength <= 0)
-            {
-                WriteJson(new Dictionary<string, object> { { "error", "Please select a photo to upload." } });
-                return;
-            }
-
-            if (postedFile.ContentLength > (5 * 1024 * 1024))
-            {
-                WriteJson(new Dictionary<string, object> { { "error", "Photo file is too large. Maximum allowed size is 5 MB." } });
-                return;
-            }
-
-            string ext = Path.GetExtension(postedFile.FileName ?? string.Empty).ToLowerInvariant();
-            if (ext != ".jpg" && ext != ".jpeg" && ext != ".png" && ext != ".bmp" && ext != ".gif")
-            {
-                WriteJson(new Dictionary<string, object> { { "error", "Only image files are allowed (jpg, jpeg, png, bmp, gif)." } });
-                return;
-            }
-
-            byte[] originalBytes;
-            using (var ms = new MemoryStream())
-            {
-                postedFile.InputStream.CopyTo(ms);
-                originalBytes = ms.ToArray();
-            }
-
-            imageManager im = new imageManager();
-            byte[] thumbBytes = im.MakeThumb(originalBytes);
-
-            string photosFolder = Server.MapPath("~/COOPERP/staffimages/");
-            if (!Directory.Exists(photosFolder))
-                Directory.CreateDirectory(photosFolder);
-
-            string fileStem = SanitizeStaffPhotoFileName(empCode);
-            string fileName = fileStem + ".jpg";
-            string savePath = Path.Combine(photosFolder, fileName);
-            File.WriteAllBytes(savePath, thumbBytes);
-
-            WriteJson(new Dictionary<string, object>
-            {
-                { "success", true },
-                { "message", "Photo updated successfully." },
-                { "photoUrl", ResolveUrl("~/COOPERP/staffimages/" + fileName) + "?v=" + DateTime.UtcNow.Ticks }
-            });
-        }
         catch (Exception ex)
         {
-            WriteJson(new Dictionary<string, object> { { "error", "Error updating photo: " + ex.Message } });
+            System.Diagnostics.Trace.TraceWarning("HREmployees roles: " + ex.Message);
+            log.Add("Roles could not be checked.");
         }
-    }
-
-    private bool AutoProvisionMembershipAccount(string empName, string username, string email, out string provisionedUsername, out string error)
-    {
-        provisionedUsername = string.Empty;
-        error = string.Empty;
-
-        string loginName = NormalizeLoginValue(username);
-        if (string.IsNullOrEmpty(loginName))
-        {
-            loginName = NormalizeLoginValue(email);
-        }
-        if (string.IsNullOrEmpty(loginName))
-        {
-            loginName = NormalizeLoginValue(empName);
-        }
-        if (string.IsNullOrEmpty(loginName))
-        {
-            error = "No valid username/email/name available for account creation.";
-            return false;
-        }
-
-        string resolvedEmail = NormalizeLoginValue(email);
-        if (string.IsNullOrEmpty(resolvedEmail) || !resolvedEmail.Contains("@"))
-        {
-            resolvedEmail = BuildFallbackEmail(loginName);
-        }
-
-        try
-        {
-            DataTable existingUser;
-            try
-            {
-                existingUser = ExecuteQuery(@"SELECT id, name FROM my_aspnet_users WHERE name = @name LIMIT 1",
-                    new MySqlParameter("@name", loginName));
-            }
-            catch (Exception ex)
-            {
-                error = "Lookup in my_aspnet_users failed: " + ex.Message;
-                return false;
-            }
-
-            int userId;
-            if (existingUser.Rows.Count > 0)
-            {
-                userId = Convert.ToInt32(existingUser.Rows[0]["id"]);
-                provisionedUsername = SafeVal(existingUser.Rows[0]["name"]);
-                if (string.IsNullOrEmpty(provisionedUsername))
-                    provisionedUsername = loginName;
-            }
-            else
-            {
-                int appId = ResolveApplicationId();
-                DateTime now = DateTime.UtcNow;
-
-                try
-                {
-                    ExecuteNonQuery(@"
-                        INSERT INTO my_aspnet_users
-                        (applicationId, name, isAnonymous, lastActivityDate, user_verification_status, verified_email, user_type)
-                        VALUES
-                        (@applicationId, @name, 0, @lastActivityDate, @verificationStatus, @verifiedEmail, @userType)",
-                        new MySqlParameter("@applicationId", appId),
-                        new MySqlParameter("@name", loginName),
-                        new MySqlParameter("@lastActivityDate", now),
-                        new MySqlParameter("@verificationStatus", 1),
-                        new MySqlParameter("@verifiedEmail", resolvedEmail),
-                        new MySqlParameter("@userType", "user"));
-                }
-                catch (Exception ex)
-                {
-                    error = "Insert into my_aspnet_users failed: " + ex.Message;
-                    return false;
-                }
-
-                DataTable inserted;
-                try
-                {
-                    inserted = ExecuteQuery(@"SELECT id, name FROM my_aspnet_users WHERE name = @name ORDER BY id DESC LIMIT 1",
-                        new MySqlParameter("@name", loginName));
-                }
-                catch (Exception ex)
-                {
-                    error = "Reload from my_aspnet_users failed: " + ex.Message;
-                    return false;
-                }
-
-                if (inserted.Rows.Count == 0)
-                {
-                    error = "Inserted user could not be reloaded from my_aspnet_users.";
-                    return false;
-                }
-
-                userId = Convert.ToInt32(inserted.Rows[0]["id"]);
-                provisionedUsername = SafeVal(inserted.Rows[0]["name"]);
-                if (string.IsNullOrEmpty(provisionedUsername))
-                    provisionedUsername = loginName;
-            }
-
-            string membershipError;
-            if (!EnsureMembershipRow(userId, resolvedEmail, out membershipError))
-            {
-                error = membershipError;
-                return false;
-            }
-
-            return true;
-        }
-        catch (Exception ex)
-        {
-            error = ex.Message;
-            return false;
-        }
-    }
-
-    private int ResolveApplicationId()
-    {
-        try
-        {
-            DataTable dt = ExecuteQuery(@"SELECT MIN(applicationId) AS appId FROM my_aspnet_users WHERE applicationId IS NOT NULL");
-            if (dt.Rows.Count > 0 && dt.Rows[0]["appId"] != DBNull.Value)
-            {
-                int appId;
-                if (int.TryParse(dt.Rows[0]["appId"].ToString(), out appId) && appId > 0)
-                    return appId;
-            }
-        }
-        catch
-        {
-        }
-
-        return 1;
-    }
-
-    private bool EnsureMembershipRow(int userId, string email, out string error)
-    {
-        error = string.Empty;
-
-        DataTable existing;
-        try
-        {
-            existing = ExecuteQuery("SELECT userId FROM my_aspnet_membership WHERE userId = @userId LIMIT 1",
-                new MySqlParameter("@userId", userId));
-        }
-        catch (Exception ex)
-        {
-            error = "Membership lookup failed: " + ex.Message;
-            return false;
-        }
-        if (existing.Rows.Count > 0) return true;
-
-        DataTable cols;
-        try
-        {
-            cols = ExecuteQuery(@"
-                SELECT COLUMN_NAME, DATA_TYPE, IS_NULLABLE, COLUMN_DEFAULT, EXTRA
-                FROM INFORMATION_SCHEMA.COLUMNS
-                WHERE TABLE_SCHEMA = DATABASE()
-                  AND TABLE_NAME = 'my_aspnet_membership'
-                ORDER BY ORDINAL_POSITION");
-        }
-        catch (Exception ex)
-        {
-            error = "Membership schema discovery failed: " + ex.Message;
-            return false;
-        }
-
-        if (cols.Rows.Count == 0)
-        {
-            error = "No columns found for my_aspnet_membership.";
-            return false;
-        }
-
-        DateTime now = DateTime.UtcNow;
-        List<string> insertCols = new List<string>();
-        List<MySqlParameter> insertParams = new List<MySqlParameter>();
-        int paramIndex = 0;
-
-        foreach (DataRow row in cols.Rows)
-        {
-            string colName = SafeVal(row["COLUMN_NAME"]);
-            string lower = colName.ToLowerInvariant();
-            string dataType = SafeVal(row["DATA_TYPE"]).ToLowerInvariant();
-            bool isNullable = string.Equals(SafeVal(row["IS_NULLABLE"]), "YES", StringComparison.OrdinalIgnoreCase);
-            bool hasDefault = row["COLUMN_DEFAULT"] != DBNull.Value;
-            string extra = SafeVal(row["EXTRA"]).ToLowerInvariant();
-
-            if (extra.Contains("auto_increment"))
-                continue;
-
-            object value = null;
-            bool include = false;
-
-            if (lower == "userid")
-            {
-                value = userId;
-                include = true;
-            }
-            else if (lower == "email" || lower == "loweredemail")
-            {
-                value = email;
-                include = true;
-            }
-            else if (lower == "isapproved")
-            {
-                value = 1;
-                include = true;
-            }
-            else if (lower == "islockedout")
-            {
-                value = 0;
-                include = true;
-            }
-            else if (lower == "passwordformat")
-            {
-                value = 0;
-                include = true;
-            }
-            else if (lower == "password")
-            {
-                value = "autoprovisioned";
-                include = true;
-            }
-            else if (lower == "isanonymous")
-            {
-                value = 0;
-                include = true;
-            }
-            else if (lower == "applicationid")
-            {
-                value = ResolveApplicationId();
-                include = true;
-            }
-            else if (lower == "passwordsalt" || lower == "passwordkey" || lower == "passwordquestion" || lower == "passwordanswer" || lower == "comment" || lower == "mobilepin")
-            {
-                value = string.Empty;
-                include = true;
-            }
-            else if (lower.Contains("date") || lower.Contains("windowstart"))
-            {
-                value = now;
-                include = true;
-            }
-            else if (lower.Contains("count"))
-            {
-                value = 0;
-                include = true;
-            }
-            else if (!isNullable && !hasDefault)
-            {
-                if (dataType.Contains("int") || dataType == "decimal" || dataType == "numeric" || dataType == "double" || dataType == "float" || dataType == "bit" || dataType == "boolean")
-                {
-                    value = 0;
-                }
-                else if (dataType.Contains("date") || dataType.Contains("time"))
-                {
-                    value = now;
-                }
-                else if (dataType.Contains("binary") || dataType.Contains("blob"))
-                {
-                    value = new byte[0];
-                }
-                else
-                {
-                    value = string.Empty;
-                }
-                include = true;
-            }
-
-            if (include)
-            {
-                string paramName = "@p" + paramIndex++;
-                insertCols.Add(colName);
-                insertParams.Add(new MySqlParameter(paramName, value));
-            }
-        }
-
-        if (insertCols.Count == 0)
-        {
-            error = "No insert columns resolved for my_aspnet_membership.";
-            return false;
-        }
-
-        string sql = "INSERT INTO my_aspnet_membership (" + string.Join(", ", insertCols.ToArray()) + ") VALUES (";
-        List<string> paramNames = new List<string>();
-        foreach (MySqlParameter p in insertParams)
-            paramNames.Add(p.ParameterName);
-        sql += string.Join(", ", paramNames.ToArray()) + ")";
-
-        try
-        {
-            ExecuteNonQuery(sql, insertParams.ToArray());
-            return true;
-        }
-        catch (Exception ex)
-        {
-            error = "Insert into my_aspnet_membership failed: " + ex.Message + " | SQL: " + sql;
-            return false;
-        }
-    }
-
-    #endregion
-
-    #region Password Change
-
-    protected void btnChangePassword_Click(object sender, EventArgs e)
-    {
-        int empID;
-        if (!int.TryParse(hdnPwdEmpID.Value, out empID)) return;
-
-        try
-        {
-            DataTable dt = ExecuteQuery("SELECT emp_name, usernames, emp_email, emp_phone FROM hrm_employee WHERE empID = @id", new MySqlParameter("@id", empID));
-            if (dt.Rows.Count == 0)
-            {
-                ShowPwdError("Employee record not found.");
-                return;
-            }
-
-            DataRow emp = dt.Rows[0];
-            string username = NormalizeLoginValue(emp["usernames"]);
-            string email = NormalizeLoginValue(emp["emp_email"]);
-            string phone = NormalizeLoginValue(emp["emp_phone"]);
-
-            if (string.IsNullOrEmpty(username))
-            {
-                if (!string.IsNullOrEmpty(email)) username = email;
-                else if (!string.IsNullOrEmpty(phone)) username = phone;
-            }
-
-            if (string.IsNullOrEmpty(username))
-            {
-                ShowPwdError("This employee has no username, email, or phone to create login credentials.");
-                return;
-            }
-
-            // Try to find existing membership account
-            MembershipUser user;
-            MembershipProvider provider;
-            if (!TryResolveMembershipUser(username, email, out user, out provider))
-            {
-                ShowPwdError("No membership account found for this employee. Please contact IT to create the account first, then retry this password reset.");
-                return;
-            }
-
-            // Account exists - proceed with reset
-            if (user.IsLockedOut)
-            {
-                provider.UnlockUser(user.UserName);
-            }
-
-            // Reset password and get the new temporary password
-            string generatedPassword = provider.ResetPassword(user.UserName, null);
-
-            if (string.IsNullOrEmpty(generatedPassword))
-            {
-                ShowPwdError("Password reset returned an empty temporary password. Please retry.");
-                return;
-            }
-
-            string script = string.Format(
-                "showResetPasswordResult('{0}','{1}',false);document.getElementById('changePwdModal').style.display='flex';",
-                JsEncode(generatedPassword),
-                JsEncode(user.UserName));
-            ScriptManager.RegisterStartupScript(this, GetType(), "pwdOk", script, true);
-        }
-        catch (Exception ex)
-        {
-            ShowPwdError(ex.Message);
-        }
-    }
-
-    private bool TryResolveMembershipUser(string username, string email, out MembershipUser user, out MembershipProvider selectedProvider)
-    {
-        user = null;
-        selectedProvider = null;
-
-        foreach (MembershipProvider provider in GetProvisioningProviders())
-        {
-            try
-            {
-                if (!string.IsNullOrEmpty(username))
-                    user = provider.GetUser(username, false);
-
-                if (user == null && !string.IsNullOrEmpty(email))
-                {
-                    string nameByEmail = provider.GetUserNameByEmail(email);
-                    if (!string.IsNullOrEmpty(nameByEmail))
-                        user = provider.GetUser(nameByEmail, false);
-                }
-
-                if (user != null)
-                {
-                    selectedProvider = provider;
-                    return true;
-                }
-            }
-            catch
-            {
-            }
-        }
-
-        return false;
-    }
-
-    private List<MembershipProvider> GetProvisioningProviders()
-    {
-        List<MembershipProvider> providers = new List<MembershipProvider>();
-
-        if (Membership.Provider != null)
-            providers.Add(Membership.Provider);
-
-        MembershipProvider adminProvider = Membership.Providers["MySQLMembershipProviderAdmin"];
-        if (adminProvider != null)
-        {
-            bool exists = false;
-            foreach (MembershipProvider p in providers)
-            {
-                if (string.Equals(p.Name, adminProvider.Name, StringComparison.OrdinalIgnoreCase))
-                {
-                    exists = true;
-                    break;
-                }
-            }
-            if (!exists) providers.Add(adminProvider);
-        }
-
-        return providers;
     }
 
     private string NormalizeLoginValue(object value)
@@ -2597,14 +1696,7 @@ public partial class COOPERP_NewScreens_HREmployees : System.Web.UI.Page
         return text;
     }
 
-    private string BuildFallbackEmail(string username)
-    {
-        string local = username.ToLower().Replace(" ", ".");
-        local = local.Replace("@", ".").Replace("..", ".");
-        return local + "@mru.local";
-    }
-
-    private string GenerateStrongPassword()
+    private static string GenerateStrongPassword()
     {
         const string upper = "ABCDEFGHJKLMNPQRSTUVWXYZ";
         const string lower = "abcdefghijkmnopqrstuvwxyz";
@@ -2622,139 +1714,208 @@ public partial class COOPERP_NewScreens_HREmployees : System.Web.UI.Page
         return sb.ToString();
     }
 
-    private string JsEncode(string value)
-    {
-        if (value == null) return string.Empty;
-        return value.Replace("\\", "\\\\").Replace("'", "\\'").Replace("\r", "").Replace("\n", "");
-    }
+    #endregion
 
-    private void ShowPwdError(string message)
+    #region Photo
+
+    private void WriteSetPhotoAjax()
     {
-        string msg = JsEncode(message);
-        string script = "document.getElementById('pwdResult').className='hr-result hr-result--err';" +
-                        "document.getElementById('pwdResult').innerHTML='" + msg + "';" +
-                        "document.getElementById('changePwdModal').style.display='flex';";
-        ScriptManager.RegisterStartupScript(this, GetType(), "pwdErr", script, true);
+        int empID;
+        if (!int.TryParse(Request.QueryString["id"], out empID) || empID <= 0)
+        {
+            WriteJson(new Dictionary<string, object> { { "error", "Choose an employee." } });
+            return;
+        }
+
+        try
+        {
+            DataTable dt = ExecuteQuery("SELECT EMP_CODE, emp_name FROM hrm_employee WHERE empID = @id LIMIT 1", new MySqlParameter("@id", empID));
+            if (dt.Rows.Count == 0)
+            {
+                WriteJson(new Dictionary<string, object> { { "error", "This employee was not found." } });
+                return;
+            }
+
+            string empCode = SafeVal(dt.Rows[0]["EMP_CODE"]).Trim();
+            if (string.IsNullOrEmpty(empCode))
+            {
+                WriteJson(new Dictionary<string, object> { { "error", "This employee has no staff number, so the photo cannot be saved." } });
+                return;
+            }
+
+            HttpPostedFile postedFile = Request.Files["photoFile"];
+            if (postedFile == null || postedFile.ContentLength <= 0)
+            {
+                WriteJson(new Dictionary<string, object> { { "error", "Choose a photo to upload." } });
+                return;
+            }
+            if (postedFile.ContentLength > (5 * 1024 * 1024))
+            {
+                WriteJson(new Dictionary<string, object> { { "error", "The photo is larger than 5 MB." } });
+                return;
+            }
+
+            string ext = Path.GetExtension(postedFile.FileName ?? string.Empty).ToLowerInvariant();
+            if (ext != ".jpg" && ext != ".jpeg" && ext != ".png" && ext != ".bmp" && ext != ".gif")
+            {
+                WriteJson(new Dictionary<string, object> { { "error", "Use a JPG, PNG, BMP or GIF image." } });
+                return;
+            }
+
+            byte[] originalBytes;
+            using (MemoryStream ms = new MemoryStream())
+            {
+                postedFile.InputStream.CopyTo(ms);
+                originalBytes = ms.ToArray();
+            }
+
+            imageManager im = new imageManager();
+            byte[] thumbBytes = im.MakeThumb(originalBytes);
+
+            string photosFolder = Server.MapPath("~/COOPERP/staffimages/");
+            if (!Directory.Exists(photosFolder))
+                Directory.CreateDirectory(photosFolder);
+
+            string fileName = SanitizeStaffPhotoFileName(empCode) + ".jpg";
+            File.WriteAllBytes(Path.Combine(photosFolder, fileName), thumbBytes);
+
+            WriteJson(new Dictionary<string, object>
+            {
+                { "success", true },
+                { "message", "Photo updated." },
+                { "photoUrl", ResolveUrl("~/COOPERP/staffimages/" + fileName) + "?v=" + DateTime.UtcNow.Ticks }
+            });
+        }
+        catch (Exception ex)
+        {
+            System.Diagnostics.Trace.TraceError("HREmployees photo: " + ex);
+            WriteJson(new Dictionary<string, object> { { "error", "The photo could not be saved. Try a different image." } });
+        }
     }
 
     #endregion
 
-    #region Helper Methods
+    #region Helpers
 
     protected string GetPhotoUrl(object empCode)
     {
         if (empCode == null || empCode == DBNull.Value) return "../staffimages/default.jpg";
-        string code = SanitizeStaffPhotoFileName(empCode.ToString());
-        return "../staffimages/" + code + ".jpg";
+        return "../staffimages/" + SanitizeStaffPhotoFileName(empCode.ToString()) + ".jpg";
     }
 
     private string SanitizeStaffPhotoFileName(string code)
     {
         string value = (code ?? string.Empty).Trim().Replace("/", "_").Replace("\\", "_");
         if (string.IsNullOrEmpty(value)) return "default";
-
         StringBuilder sb = new StringBuilder(value.Length);
-        for (int i = 0; i < value.Length; i++)
-        {
-            char c = value[i];
-            if (char.IsLetterOrDigit(c) || c == '_' || c == '-') sb.Append(c);
-            else sb.Append('_');
-        }
-
+        foreach (char c in value)
+            sb.Append(char.IsLetterOrDigit(c) || c == '_' || c == '-' ? c : '_');
         string normalized = sb.ToString().Trim('_');
         return string.IsNullOrEmpty(normalized) ? "default" : normalized;
     }
 
-    protected string GetStatusBadge(object status)
+    /// <summary>Current-contract status in words: Active, Ending, Past end date, Expired, Terminated, Resigned, No contract.</summary>
+    private static string ContractWords(object contractId, object status, object end)
     {
-        if (status == null || status == DBNull.Value) return "<span class='hr-badge hr-badge--admin'>No Contract</span>";
-        string s = status.ToString().ToUpper();
-        string cssClass = "hr-badge--admin";
-        if (s == "VALID") cssClass = "hr-badge--valid";
-        else if (s == "EXPIRED") cssClass = "hr-badge--expired";
-        else if (s == "TERMINATED") cssClass = "hr-badge--terminated";
-        else if (s == "RESIGNED") cssClass = "hr-badge--resigned";
-        return string.Format("<span class='hr-badge {0}'>{1}</span>", cssClass, HttpUtility.HtmlEncode(s));
+        if (contractId == null || contractId == DBNull.Value) return "No contract";
+        string s = SafeVal(status).ToUpperInvariant();
+        switch (s)
+        {
+            case "EXPIRED":    return "Expired";
+            case "TERMINATED": return "Terminated";
+            case "RESIGNED":   return "Resigned";
+        }
+        if (end == null || end == DBNull.Value) return "Active";
+        int days = (Convert.ToDateTime(end).Date - DateTime.Today).Days;
+        if (days < 0) return "Past end date";
+        if (days <= 90) return "Ending";
+        return "Active";
+    }
+
+    private static string ContractBadge(object contractId, object status, object end)
+    {
+        string w = ContractWords(contractId, status, end);
+        string kind;
+        switch (w)
+        {
+            case "Active":        kind = "ok"; break;
+            case "Ending":        kind = "warn"; break;
+            case "Past end date":
+            case "No contract":   kind = "bad"; break;
+            default:              kind = "neutral"; break;
+        }
+        return "<span class='hr-badge hr-badge--" + kind + "'>" + w + "</span>";
     }
 
     protected string FormatAmount(object val)
     {
-        if (val == null || val == DBNull.Value) return "&mdash;";
+        if (val == null || val == DBNull.Value) return "";
         decimal d;
-        if (decimal.TryParse(val.ToString(), out d))
-        {
-            return d.ToString("N0");
-        }
-        return val.ToString();
+        return decimal.TryParse(val.ToString(), out d) ? d.ToString("#,##0", CultureInfo.InvariantCulture) : Enc(val);
     }
 
-    protected string GetProfileClickScript(object empID)
+    private static string FormatDate(object val)
     {
-        return "openEmployeeProfile(" + empID + ")";
-    }
-
-    protected string GetEditClickScript(object empID)
-    {
-        return "openEditModal(" + empID + ")";
-    }
-
-    protected string GetActionButtonsHtml(object empID, object empNameObj, object usernameObj, object emailObj, object empCodeObj)
-    {
-        string id = empID.ToString();
-        string dotsSvg = "<svg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2'><circle cx='12' cy='5' r='1'></circle><circle cx='12' cy='12' r='1'></circle><circle cx='12' cy='19' r='1'></circle></svg>";
-        string viewSvg = "<svg xmlns='http://www.w3.org/2000/svg' width='14' height='14' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2'><path d='M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z'></path><circle cx='12' cy='12' r='3'></circle></svg>";
-        string editSvg = "<svg xmlns='http://www.w3.org/2000/svg' width='14' height='14' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2'><path d='M12 20h9'></path><path d='M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z'></path></svg>";
-        string pwdSvg = "<svg xmlns='http://www.w3.org/2000/svg' width='14' height='14' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2'><rect x='3' y='11' width='18' height='11' rx='2' ry='2'></rect><path d='M7 11V7a5 5 0 0 1 10 0v4'></path></svg>";
-        string photoSvg = "<svg xmlns='http://www.w3.org/2000/svg' width='14' height='14' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2'><path d='M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z'></path><circle cx='12' cy='13' r='4'></circle></svg>";
-
-        string empName = SafeVal(empNameObj).Replace("'", "\\'");
-        string username = SafeVal(usernameObj).Replace("'", "\\'");
-        string email = SafeVal(emailObj).Replace("'", "\\'");
-        string photoUrl = GetPhotoUrl(empCodeObj);
-        string photoUrlJs = HttpUtility.JavaScriptStringEncode(photoUrl);
-        string empNameJs = HttpUtility.JavaScriptStringEncode(SafeVal(empNameObj));
-        string emailJs = HttpUtility.JavaScriptStringEncode(SafeVal(emailObj));
-        if (username == "-") username = "";
-        if (email == "-") email = "";
-        string displayUsername = string.IsNullOrEmpty(username) ? email : username;
-        string fixSvg = "<svg xmlns='http://www.w3.org/2000/svg' width='14' height='14' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2'><path d='M9 12l2 2 4-4'/><circle cx='12' cy='12' r='10'/></svg>";
-        string trashSvg = "<svg xmlns='http://www.w3.org/2000/svg' width='14' height='14' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2'><polyline points='3 6 5 6 21 6'></polyline><path d='M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6'></path><path d='M10 11v6M14 11v6'></path><path d='M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2'></path></svg>";
-
-        return "<div class='cd-action-wrapper'>" +
-            "<button type='button' class='cd-action-trigger' onclick='toggleActionPopover(this, event)'>" + dotsSvg + "</button>" +
-            "<div class='cd-action-popover'>" +
-            "<ul class='cd-action-popover__menu'>" +
-            "<li class='cd-action-popover__item'><button type='button' class='cd-action-popover__btn cd-action-popover__btn--view' onclick='openEmployeeProfile(" + id + ")'>" + viewSvg + " View Profile</button></li>" +
-            "<li class='cd-action-popover__item'><button type='button' class='cd-action-popover__btn cd-action-popover__btn--edit' onclick='openEditModal(" + id + ")'>" + editSvg + " Edit</button></li>" +
-            "<li class='cd-action-popover__item'><button type='button' class='cd-action-popover__btn cd-action-popover__btn--success' onclick='openSetPhotoModal(" + id + ",\"" + empNameJs + "\",\"" + photoUrlJs + "\")'>" + photoSvg + " Set Photo</button></li>" +
-            "<li class='cd-action-popover__divider'></li>" +
-            "<li class='cd-action-popover__item'><button type='button' class='cd-action-popover__btn cd-action-popover__btn--password' onclick='openPasswordModal(" + id + "," + '"' + empName + '"' + "," + '"' + displayUsername + '"' + ")'>" + pwdSvg + " Change Password</button></li>" +
-            "<li class='cd-action-popover__item'><button type='button' class='cd-action-popover__btn cd-action-popover__btn--fix' onclick='openFixLoginModal(" + id + ",\"" + empNameJs + "\",\"" + emailJs + "\")'>" + fixSvg + " Fix Login</button></li>" +
-            "<li class='cd-action-popover__divider'></li>" +
-            "<li class='cd-action-popover__item'><button type='button' class='cd-action-popover__btn cd-action-popover__btn--danger' onclick='confirmDelete(" + id + ",\"" + empNameJs + "\")'>" + trashSvg + " Delete Account</button></li>" +
-            "</ul></div></div>";
-    }
-
-    private string FormatDate(object val)
-    {
-        if (val == null || val == DBNull.Value) return "&mdash;";
+        if (val == null || val == DBNull.Value) return "";
         DateTime dt;
-        if (DateTime.TryParse(val.ToString(), out dt))
-            return dt.ToString("dd MMM yyyy");
-        return val.ToString();
+        if (val is DateTime) dt = (DateTime)val;
+        else if (!DateTime.TryParse(val.ToString(), out dt)) return "";
+        if (dt.Year < 1900) return "";
+        return dt.ToString("d MMM yyyy", CultureInfo.InvariantCulture);
     }
 
-    private string SafeVal(object val)
+    private static string SafeVal(object val)
     {
         if (val == null || val == DBNull.Value) return "";
         return val.ToString();
     }
+
+    /// <summary>Trimmed text; the placeholders "-" and "0" that old records carry become blank.</summary>
+    private static string Clean(object val)
+    {
+        string s = HrExport.Clean(SafeVal(val));
+        return (s == "-" || s == "--" || s == "N/A" || s == "NA") ? "" : s;
+    }
+
+    private static string Enc(object val) { return HttpUtility.HtmlEncode(Clean(val)); }
+
+    private static string UsableEmail(object val) { string s = Clean(val); return s.IndexOf('@') > 0 ? s : ""; }
+
+    private static string UsablePhone(object val)
+    {
+        string s = Clean(val);
+        int digits = 0;
+        foreach (char ch in s) if (char.IsDigit(ch)) digits++;
+        return digits >= 9 ? s : "";
+    }
+
+    private static string Title(object val)
+    {
+        string s = Clean(val).Replace("_", " ");
+        if (s.Length == 0) return s;
+        return s.Substring(0, 1).ToUpperInvariant() + s.Substring(1).ToLowerInvariant();
+    }
+
+    private static string JoinNonEmpty(string a, string b)
+    {
+        if (a != "" && b != "") return a + ", " + b;
+        return a + b;
+    }
+
+    private static long ToLong(object v) { long n; return v != null && v != DBNull.Value && long.TryParse(v.ToString(), out n) ? n : 0; }
 
     private string ToIsoDate(object val)
     {
         if (val == null || val == DBNull.Value) return string.Empty;
         DateTime dt;
         return DateTime.TryParse(val.ToString(), out dt) ? dt.ToString("yyyy-MM-dd") : string.Empty;
+    }
+
+    private static MySqlParameter[] CloneParams(List<MySqlParameter> parms)
+    {
+        List<MySqlParameter> copy = new List<MySqlParameter>();
+        foreach (MySqlParameter p in parms) copy.Add(new MySqlParameter(p.ParameterName, p.Value));
+        return copy.ToArray();
     }
 
     #endregion
@@ -2769,15 +1930,8 @@ public partial class COOPERP_NewScreens_HREmployees : System.Web.UI.Page
             conn.Open();
             using (MySqlCommand cmd = new MySqlCommand(sql, conn))
             {
-                if (parms != null)
-                {
-                    foreach (MySqlParameter p in parms)
-                        cmd.Parameters.Add(p);
-                }
-                using (MySqlDataAdapter da = new MySqlDataAdapter(cmd))
-                {
-                    da.Fill(dt);
-                }
+                if (parms != null) foreach (MySqlParameter p in parms) cmd.Parameters.Add(p);
+                using (MySqlDataAdapter da = new MySqlDataAdapter(cmd)) da.Fill(dt);
             }
         }
         return dt;
@@ -2790,11 +1944,7 @@ public partial class COOPERP_NewScreens_HREmployees : System.Web.UI.Page
             conn.Open();
             using (MySqlCommand cmd = new MySqlCommand(sql, conn))
             {
-                if (parms != null)
-                {
-                    foreach (MySqlParameter p in parms)
-                        cmd.Parameters.Add(p);
-                }
+                if (parms != null) foreach (MySqlParameter p in parms) cmd.Parameters.Add(p);
                 return cmd.ExecuteNonQuery();
             }
         }

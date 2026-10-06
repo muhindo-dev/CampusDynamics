@@ -142,9 +142,18 @@ Three independent audits read every HR screen, its code-behind, exports and prin
 | Step | Work | Status |
 |---|---|---|
 | 0 | Security: anonymous HR endpoints | Done (394da96) |
-| 1 | Shared blocks: hr.css, HrAccess, HrExport, HrDocument | Done (394da96) |
-| 2 | People area: Overview, Employees, Contracts, Leave applications, Leave form, Leave balances | In progress |
-| 3 | Renewals: console, view, print | In progress |
-| 4 | Payroll area and settings, including bugs 1 to 8 | In progress |
-| 5 | Appraisal area, including bugs 12 to 15 | In progress |
-| 6 | Cross-check: em dashes, colours, glyphs, exports, prints, mobile | Pending |
+| 1 | Shared blocks: hr.css, hr.js, HrAccess, HrExport, HrDocument | Done (394da96, cf83447, a0acf6e) |
+| 2 | People area: Overview, Employees, Contracts, Leave applications, Leave form, Leave balances | Done |
+| 3 | Renewals: console, view, print | Done (cf83447) |
+| 4 | Payroll area and settings, bugs 1 to 8 | Done (4909f26) |
+| 5 | Appraisal area, bugs 12 to 15 | Done (a0acf6e) |
+| 6 | Cross-check: dashes, glyphs, gradients, shadows, radius, colours, browser dialogs, spelling; all 23 screens compile | Done (6 Oct 2026) |
+
+### Additional defects found and fixed during the work
+- Payroll: approve and lock wrote text into an integer column and always failed.
+- Contracts: creating or editing a contract with fixed amount 0 failed under strict mode; "Contract" and "Temporary" types were offered but rejected by the database.
+- Employees: the directory showed only the first 50 staff (no paging); editing a Support or Consultant employee changed them to Administrative.
+- Appraisal: lists now include four session-4 records whose staff record no longer exists ("Staff record not found").
+
+### Still open (section 5)
+Tax basis, leave balance integration, unused settings, letterhead address and phone.

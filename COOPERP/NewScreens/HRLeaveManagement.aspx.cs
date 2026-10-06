@@ -2,13 +2,18 @@ using System;
 using System.Collections.Generic;
 using System.Configuration;
 using System.Data;
+using System.Globalization;
 using System.Text;
 using System.Web;
-using System.Web.UI;
-using System.Web.UI.WebControls;
+using System.Web.Script.Serialization;
 using MySql.Data.MySqlClient;
-using DevExpress.Web;
 
+/// <summary>
+/// Leave balances: annual leave days allocated per employee and year (hrm_annual_leave) and the
+/// leave recorded against them (hrm_leave_taken). Filters are GET parameters; every change is a
+/// ?action= POST that returns JSON. The balance model itself is unchanged (pending HR's decision
+/// on linking granted applications to leave taken).
+/// </summary>
 public partial class COOPERP_NewScreens_HRLeaveManagement : System.Web.UI.Page
 {
     private string ConnStr
@@ -16,419 +21,403 @@ public partial class COOPERP_NewScreens_HRLeaveManagement : System.Web.UI.Page
         get { return ConfigurationManager.ConnectionStrings["vacConnectionString"].ConnectionString; }
     }
 
+    private int QsYear
+    {
+        get
+        {
+            int y;
+            return int.TryParse(Request.QueryString["year"], out y) && y > 2000 && y < 2100 ? y : DateTime.Now.Year;
+        }
+    }
+    private string QsDept { get { int d; return int.TryParse(Request.QueryString["dept"], out d) && d > 0 ? d.ToString() : ""; } }
+    private string QsSearch { get { return (Request.QueryString["q"] ?? "").Trim(); } }
+
+    protected string SearchValue = "";
+    protected int CurrentYear = DateTime.Now.Year;
+
+    // Current contract per employee, for the department column and filter.
+    private const string DeptJoin =
+        " LEFT JOIN hrm_emp_contracts c ON c.ID = hr_current_contract_id(e.empID)" +
+        " LEFT JOIN hrm_departments d ON d.ID = c.departmentID ";
+
     protected void Page_Load(object sender, EventArgs e)
     {
-        if (!IsPostBack)
+        string action = (Request.QueryString["action"] ?? "").Trim().ToLowerInvariant();
+        if (action != "")
         {
-            LoadYearDropdown();
-            LoadDepartmentDropdown();
-            LoadEmployeeDropdowns();
-            txtAllocYear.Text = DateTime.Now.Year.ToString();
+            if (!HrAccess.RequireHr(true)) return;
+            HandleAction(action);
+            return;
         }
-        litCurrentYear.Text = ddlLeaveYear.SelectedValue;
-        BindLeaveGrid();
-        BindLeaveHistoryGrid();
-        LoadStats();
+
+        if (!HrAccess.RequireHr(false)) return;
+
+        string export = (Request.QueryString["export"] ?? "").Trim().ToLowerInvariant();
+        if (export == "xlsx" || export == "csv") { SendExport(export); return; }
+
+        LoadPage();
     }
 
-    #region Data Loading
+    // ══════════════════════════════════════════════════════════════════
+    //  PAGE
+    // ══════════════════════════════════════════════════════════════════
 
-    private void LoadYearDropdown()
+    private void LoadPage()
     {
-        ddlLeaveYear.Items.Clear();
-        int currentYear = DateTime.Now.Year;
-        for (int y = currentYear + 1; y >= currentYear - 5; y--)
+        int year = QsYear;
+        SearchValue = QsSearch;
+        litYear.Text = year.ToString();
+        litYear2.Text = year.ToString();
+
+        try
         {
-            ddlLeaveYear.Items.Add(new ListItem(y.ToString(), y.ToString()));
+            StringBuilder years = new StringBuilder();
+            for (int y = DateTime.Now.Year + 1; y >= DateTime.Now.Year - 5; y--)
+                years.AppendFormat("<option value=\"{0}\"{1}>{0}</option>", y, y == year ? " selected=\"selected\"" : "");
+            litYearOptions.Text = years.ToString();
+
+            DataTable depts = Query("SELECT ID, dept_name FROM hrm_departments WHERE dept_name IS NOT NULL AND dept_name <> '' ORDER BY dept_name");
+            StringBuilder dsb = new StringBuilder("<option value=\"\">All departments</option>");
+            foreach (DataRow r in depts.Rows)
+                dsb.AppendFormat("<option value=\"{0}\"{1}>{2}</option>", r["ID"], r["ID"].ToString() == QsDept ? " selected=\"selected\"" : "", Enc(r["dept_name"]));
+            litDeptOptions.Text = dsb.ToString();
+
+            LoadStats(year);
+            BindBalances(year);
+            BindTaken(year);
+            LoadPickers();
         }
-        ddlLeaveYear.SelectedValue = currentYear.ToString();
+        catch (Exception ex)
+        {
+            System.Diagnostics.Trace.TraceError("HRLeaveManagement: " + ex);
+            litError.Text = "<div class='hr-notice hr-notice--bad'>Leave balances could not be loaded. Refresh the page, and contact MIS if it keeps happening.</div>";
+        }
+
+        litExport.Text = "<a class=\"hr-btn hr-btn--secondary hr-btn--sm\" href=\"" +
+            HttpUtility.HtmlAttributeEncode(FilterUrl("export=xlsx")) + "\">" + IconDownload + "Excel</a>";
     }
 
-    private void LoadDepartmentDropdown()
+    private void LoadStats(int year)
     {
-        DataTable dt = ExecuteQuery("SELECT ID, dept_name FROM hrm_departments ORDER BY dept_name");
-        ddlLeaveDept.Items.Clear();
-        ddlLeaveDept.Items.Add(new ListItem("All Departments", ""));
-        foreach (DataRow r in dt.Rows)
-        {
-            ddlLeaveDept.Items.Add(new ListItem(r["dept_name"].ToString(), r["ID"].ToString()));
-        }
-    }
-
-    private void LoadEmployeeDropdowns()
-    {
-        DataTable dt = ExecuteQuery("SELECT empID, CONCAT(emp_name, ' [', IFNULL(EMP_CODE,''), ']') AS display FROM hrm_employee ORDER BY emp_name");
-
-        ddlAllocEmployee.Items.Clear();
-        ddlAllocEmployee.Items.Add(new ListItem("-- Select Employee --", ""));
-        ddlRecordEmployee.Items.Clear();
-        ddlRecordEmployee.Items.Add(new ListItem("-- Select Employee --", ""));
-
-        foreach (DataRow r in dt.Rows)
-        {
-            string val = r["empID"].ToString();
-            string txt = r["display"].ToString();
-            ddlAllocEmployee.Items.Add(new ListItem(txt, val));
-            ddlRecordEmployee.Items.Add(new ListItem(txt, val));
-        }
-    }
-
-    private void LoadStats()
-    {
-        string year = ddlLeaveYear.SelectedValue;
-
-        DataTable dtStats = ExecuteQuery(@"
-            SELECT 
-                COUNT(DISTINCT al.empID) AS total_staff,
-                COALESCE(SUM(lt_sum.total_taken),0) AS total_days_taken,
-                (SELECT COUNT(*) FROM hrm_leave_taken lt2 
-                 JOIN hrm_annual_leave al2 ON al2.ID = lt2.leaveID
-                 WHERE al2.leave_year = @yr AND lt2.startDate <= CURDATE() AND lt2.endDate >= CURDATE()) AS on_leave,
-                SUM(CASE WHEN al.default_days <= COALESCE(lt_sum.total_taken,0) THEN 1 ELSE 0 END) AS exhausted
+        DataTable dt = Query(@"
+            SELECT COUNT(DISTINCT al.empID) AS total_staff,
+                   COALESCE(SUM(lt_sum.total_taken),0) AS total_days_taken,
+                   (SELECT COUNT(*) FROM hrm_leave_taken lt2
+                     JOIN hrm_annual_leave al2 ON al2.ID = lt2.leaveID
+                    WHERE al2.leave_year = @yr AND lt2.startDate <= CURDATE() AND lt2.endDate >= CURDATE()) AS on_leave,
+                   SUM(CASE WHEN al.default_days <= COALESCE(lt_sum.total_taken,0) THEN 1 ELSE 0 END) AS exhausted
             FROM hrm_annual_leave al
-            LEFT JOIN (
-                SELECT leaveID, SUM(no_days) AS total_taken FROM hrm_leave_taken GROUP BY leaveID
-            ) lt_sum ON lt_sum.leaveID = al.ID
+            LEFT JOIN (SELECT leaveID, SUM(no_days) AS total_taken FROM hrm_leave_taken GROUP BY leaveID) lt_sum ON lt_sum.leaveID = al.ID
             WHERE al.leave_year = @yr",
-            new MySqlParameter("@yr", year));
-
-        if (dtStats.Rows.Count > 0)
-        {
-            DataRow r = dtStats.Rows[0];
-            litTotalStaff.Text = r["total_staff"].ToString();
-            litTotalDaysTaken.Text = r["total_days_taken"].ToString();
-            litOnLeave.Text = r["on_leave"].ToString();
-            litExhausted.Text = r["exhausted"].ToString();
-        }
+            new MySqlParameter("@yr", year.ToString()));
+        if (dt.Rows.Count == 0) return;
+        DataRow r = dt.Rows[0];
+        litTotalStaff.Text = N(r["total_staff"]);
+        litOnLeave.Text = N(r["on_leave"]);
+        litTotalDaysTaken.Text = N(r["total_days_taken"]);
+        litExhausted.Text = N(r["exhausted"]);
     }
 
-    #endregion
-
-    #region Leave Allocation Grid
-
-    private void BindLeaveGrid()
+    private DataTable BalancesTable(int year)
     {
-        string year = ddlLeaveYear.SelectedValue;
-        string search = txtLeaveSearch.Text.Trim();
-        string dept = ddlLeaveDept.SelectedValue;
-
-        StringBuilder sql = new StringBuilder();
-        sql.Append(@"SELECT al.ID AS leaveAllocID, al.leave_year, al.default_days,
-            e.empID, e.EMP_CODE, e.emp_name,
-            d.dept_name,
-            COALESCE(lt_sum.total_taken, 0) AS taken_days,
-            (al.default_days - COALESCE(lt_sum.total_taken, 0)) AS remaining
-        FROM hrm_annual_leave al
-        JOIN hrm_employee e ON e.empID = al.empID
-        LEFT JOIN (
-            SELECT leaveID, SUM(no_days) AS total_taken FROM hrm_leave_taken GROUP BY leaveID
-        ) lt_sum ON lt_sum.leaveID = al.ID
-        LEFT JOIN hrm_emp_contracts c ON c.empID = e.empID AND c.ID = (SELECT MAX(c2.ID) FROM hrm_emp_contracts c2 WHERE c2.empID = e.empID)
-        LEFT JOIN hrm_departments d ON d.ID = c.departmentID
-        WHERE al.leave_year = @yr ");
-
-        List<MySqlParameter> parms = new List<MySqlParameter>();
-        parms.Add(new MySqlParameter("@yr", year));
-
-        if (!string.IsNullOrEmpty(search))
+        StringBuilder sql = new StringBuilder(@"
+            SELECT al.ID AS allocID, al.leave_year, al.default_days,
+                   e.empID, e.EMP_CODE, e.emp_name, d.dept_name,
+                   COALESCE(lt_sum.total_taken, 0) AS taken_days,
+                   (al.default_days - COALESCE(lt_sum.total_taken, 0)) AS remaining
+            FROM hrm_annual_leave al
+            JOIN hrm_employee e ON e.empID = al.empID
+            LEFT JOIN (SELECT leaveID, SUM(no_days) AS total_taken FROM hrm_leave_taken GROUP BY leaveID) lt_sum ON lt_sum.leaveID = al.ID"
+            + DeptJoin + " WHERE al.leave_year = @yr ");
+        List<MySqlParameter> p = new List<MySqlParameter>();
+        p.Add(new MySqlParameter("@yr", year.ToString()));
+        if (QsSearch != "")
         {
-            sql.Append(" AND (e.emp_name LIKE @search OR e.EMP_CODE LIKE @search) ");
-            parms.Add(new MySqlParameter("@search", "%" + search + "%"));
+            sql.Append(" AND (e.emp_name LIKE @q OR e.EMP_CODE LIKE @q) ");
+            p.Add(new MySqlParameter("@q", "%" + QsSearch + "%"));
         }
-        if (!string.IsNullOrEmpty(dept))
+        if (QsDept != "")
         {
             sql.Append(" AND c.departmentID = @dept ");
-            parms.Add(new MySqlParameter("@dept", dept));
+            p.Add(new MySqlParameter("@dept", QsDept));
         }
-
-        sql.Append(" ORDER BY e.emp_name ");
-
-        DataTable dt = ExecuteQuery(sql.ToString(), parms.ToArray());
-        gvLeave.DataSource = dt;
-        gvLeave.DataBind();
+        sql.Append(" ORDER BY e.emp_name");
+        return Query(sql.ToString(), p.ToArray());
     }
 
-    private void BindLeaveHistoryGrid()
+    private void BindBalances(int year)
     {
-        string year = ddlLeaveYear.SelectedValue;
+        DataTable dt = BalancesTable(year);
+        litBalanceCount.Text = dt.Rows.Count == 1 ? "1 employee" : dt.Rows.Count.ToString("N0") + " employees";
+        if (dt.Rows.Count == 0)
+        {
+            litBalances.Text = "<tr><td colspan='7' class='hr-empty'>No leave has been allocated for " + year + " with these filters.</td></tr>";
+            return;
+        }
+        StringBuilder sb = new StringBuilder();
+        foreach (DataRow r in dt.Rows)
+        {
+            int alloc = I(r["default_days"]), taken = I(r["taken_days"]), rem = alloc - taken;
+            string id = r["allocID"].ToString();
+            string nameJs = HttpUtility.JavaScriptStringEncode(Str(r["emp_name"]));
+            sb.Append("<tr>")
+              .Append("<td>").Append(Enc(r["emp_name"])).Append("<span class='hr-sub'>").Append(Enc(r["EMP_CODE"])).Append("</span></td>")
+              .Append("<td>").Append(Enc(r["dept_name"])).Append("</td>")
+              .Append("<td class='hr-num'>").Append(alloc).Append("</td>")
+              .Append("<td class='hr-num'>").Append(taken).Append("</td>")
+              .Append("<td class='hr-num'><strong>").Append(rem).Append("</strong></td>")
+              .Append("<td>").Append(BalanceBadge(rem)).Append("</td>")
+              .Append("<td class='hr-right' style='white-space:nowrap'>")
+              .Append("<button type='button' class='hr-btn hr-btn--secondary hr-btn--sm' onclick=\"openEditDays(").Append(id).Append(",'").Append(nameJs).Append("',").Append(alloc).Append(")\">Edit days</button> ")
+              .Append("<button type='button' class='hr-btn hr-btn--danger hr-btn--sm' onclick=\"deleteAlloc(").Append(id).Append(",'").Append(nameJs).Append("')\">Delete</button>")
+              .Append("</td></tr>");
+        }
+        litBalances.Text = sb.ToString();
+    }
 
-        DataTable dt = ExecuteQuery(@"
-            SELECT lt.ID AS leaveRecID, lt.startDate, lt.endDate, lt.no_days,
-                al.leave_year, e.EMP_CODE, e.emp_name, d.dept_name
+    private void BindTaken(int year)
+    {
+        DataTable dt = Query(@"
+            SELECT lt.ID AS recID, lt.startDate, lt.endDate, lt.no_days, e.EMP_CODE, e.emp_name, d.dept_name
             FROM hrm_leave_taken lt
             JOIN hrm_annual_leave al ON al.ID = lt.leaveID
-            JOIN hrm_employee e ON e.empID = al.empID
-            LEFT JOIN hrm_emp_contracts c ON c.empID = e.empID AND c.ID = (SELECT MAX(c2.ID) FROM hrm_emp_contracts c2 WHERE c2.empID = e.empID)
-            LEFT JOIN hrm_departments d ON d.ID = c.departmentID
+            JOIN hrm_employee e ON e.empID = al.empID" + DeptJoin + @"
             WHERE al.leave_year = @yr
             ORDER BY lt.startDate DESC",
-            new MySqlParameter("@yr", year));
-
-        gvLeaveHistory.DataSource = dt;
-        gvLeaveHistory.DataBind();
-    }
-
-    #endregion
-
-    #region Grid Events
-
-    protected void gvLeave_RowUpdating(object sender, DevExpress.Web.Data.ASPxDataUpdatingEventArgs e)
-    {
-        int allocID = Convert.ToInt32(e.Keys["leaveAllocID"]);
-        int newDays = Convert.ToInt32(e.NewValues["default_days"]);
-
-        ExecuteNonQuery("UPDATE hrm_annual_leave SET default_days = @days WHERE ID = @id",
-            new MySqlParameter("@days", newDays),
-            new MySqlParameter("@id", allocID));
-
-        e.Cancel = true;
-        gvLeave.CancelEdit();
-        BindLeaveGrid();
-    }
-
-    protected void gvLeave_RowDeleting(object sender, DevExpress.Web.Data.ASPxDataDeletingEventArgs e)
-    {
-        int allocID = Convert.ToInt32(e.Keys["leaveAllocID"]);
-        // Delete leave taken records first
-        ExecuteNonQuery("DELETE FROM hrm_leave_taken WHERE leaveID = @id", new MySqlParameter("@id", allocID));
-        ExecuteNonQuery("DELETE FROM hrm_annual_leave WHERE ID = @id", new MySqlParameter("@id", allocID));
-
-        e.Cancel = true;
-        gvLeave.CancelEdit();
-        BindLeaveGrid();
-        BindLeaveHistoryGrid();
-    }
-
-    protected void gvLeaveHistory_RowDeleting(object sender, DevExpress.Web.Data.ASPxDataDeletingEventArgs e)
-    {
-        int recID = Convert.ToInt32(e.Keys["leaveRecID"]);
-        ExecuteNonQuery("DELETE FROM hrm_leave_taken WHERE ID = @id", new MySqlParameter("@id", recID));
-
-        e.Cancel = true;
-        gvLeaveHistory.CancelEdit();
-        BindLeaveGrid();
-        BindLeaveHistoryGrid();
-    }
-
-    #endregion
-
-    #region Filter Events
-
-    protected void ddlLeaveYear_Changed(object sender, EventArgs e)
-    {
-        BindLeaveGrid();
-        BindLeaveHistoryGrid();
-        LoadStats();
-    }
-
-    protected void btnLeaveSearch_Click(object sender, EventArgs e)
-    {
-        BindLeaveGrid();
-    }
-
-    protected void btnLeaveReset_Click(object sender, EventArgs e)
-    {
-        txtLeaveSearch.Text = "";
-        ddlLeaveDept.SelectedIndex = 0;
-        ddlLeaveYear.SelectedValue = DateTime.Now.Year.ToString();
-        BindLeaveGrid();
-        BindLeaveHistoryGrid();
-        LoadStats();
-    }
-
-    #endregion
-
-    #region Allocate Leave
-
-    protected void btnAllocateLeave_Click(object sender, EventArgs e)
-    {
-        string empID = ddlAllocEmployee.SelectedValue;
-        string yearStr = txtAllocYear.Text.Trim();
-        string daysStr = txtAllocDays.Text.Trim();
-
-        if (string.IsNullOrEmpty(empID) || string.IsNullOrEmpty(yearStr) || string.IsNullOrEmpty(daysStr))
-        {
-            ShowModalError("allocateModal", "allocResult", "All fields are required.");
-            return;
-        }
-
-        int year, days;
-        if (!int.TryParse(yearStr, out year) || !int.TryParse(daysStr, out days))
-        {
-            ShowModalError("allocateModal", "allocResult", "Invalid year or days value.");
-            return;
-        }
-
-        // Check if allocation already exists
-        DataTable existing = ExecuteQuery(
-            "SELECT ID FROM hrm_annual_leave WHERE empID = @eid AND leave_year = @yr",
-            new MySqlParameter("@eid", empID),
             new MySqlParameter("@yr", year.ToString()));
-
-        if (existing.Rows.Count > 0)
+        if (dt.Rows.Count == 0)
         {
-            ShowModalError("allocateModal", "allocResult", "Allocation already exists for this employee and year. Edit it from the grid.");
+            litTaken.Text = "<tr><td colspan='6' class='hr-empty'>No leave has been recorded for " + year + ".</td></tr>";
             return;
         }
-
-        ExecuteNonQuery("INSERT INTO hrm_annual_leave (empID, leave_year, default_days) VALUES (@eid, @yr, @days)",
-            new MySqlParameter("@eid", empID),
-            new MySqlParameter("@yr", year.ToString()),
-            new MySqlParameter("@days", days));
-
-        BindLeaveGrid();
-        LoadStats();
+        StringBuilder sb = new StringBuilder();
+        foreach (DataRow r in dt.Rows)
+        {
+            sb.Append("<tr>")
+              .Append("<td>").Append(Enc(r["emp_name"])).Append("<span class='hr-sub'>").Append(Enc(r["EMP_CODE"])).Append("</span></td>")
+              .Append("<td>").Append(Enc(r["dept_name"])).Append("</td>")
+              .Append("<td style='white-space:nowrap'>").Append(D(r["startDate"])).Append("</td>")
+              .Append("<td style='white-space:nowrap'>").Append(D(r["endDate"])).Append("</td>")
+              .Append("<td class='hr-num'>").Append(I(r["no_days"])).Append("</td>")
+              .Append("<td class='hr-right'><button type='button' class='hr-btn hr-btn--danger hr-btn--sm' onclick=\"deleteRecord(")
+              .Append(r["recID"]).Append(",'").Append(HttpUtility.JavaScriptStringEncode(Str(r["emp_name"]))).Append("')\">Delete</button></td></tr>");
+        }
+        litTaken.Text = sb.ToString();
     }
 
-    #endregion
-
-    #region Record Leave
-
-    protected void ddlRecordEmployee_Changed(object sender, EventArgs e)
+    /// <summary>Employee options for both pickers and this year's balances for the record dialog.</summary>
+    private void LoadPickers()
     {
-        string empID = ddlRecordEmployee.SelectedValue;
-        if (string.IsNullOrEmpty(empID)) return;
+        DataTable emps = Query("SELECT empID, emp_name, EMP_CODE FROM hrm_employee ORDER BY emp_name");
+        StringBuilder sb = new StringBuilder("<option value=\"\">Select employee</option>");
+        foreach (DataRow r in emps.Rows)
+        {
+            string code = Str(r["EMP_CODE"]);
+            sb.AppendFormat("<option value=\"{0}\">{1}</option>", r["empID"],
+                Enc(Str(r["emp_name"]) + (code == "" || code == "-" ? "" : " (" + code + ")")));
+        }
+        litEmpOptions.Text = sb.ToString();
 
-        string year = DateTime.Now.Year.ToString();
-        DataTable dt = ExecuteQuery(@"
+        DataTable bal = Query(@"
+            SELECT al.empID, al.default_days, COALESCE(SUM(lt.no_days),0) AS taken
+            FROM hrm_annual_leave al
+            LEFT JOIN hrm_leave_taken lt ON lt.leaveID = al.ID
+            WHERE al.leave_year = @yr
+            GROUP BY al.ID, al.empID, al.default_days",
+            new MySqlParameter("@yr", DateTime.Now.Year.ToString()));
+        Dictionary<string, object> map = new Dictionary<string, object>();
+        foreach (DataRow r in bal.Rows)
+            map[r["empID"].ToString()] = new int[] { I(r["default_days"]), I(r["taken"]) };
+        litBalanceJson.Text = "<script>window.LV_BAL=" + new JavaScriptSerializer().Serialize(map) + ";</script>";
+    }
+
+    // ══════════════════════════════════════════════════════════════════
+    //  ACTIONS (JSON)
+    // ══════════════════════════════════════════════════════════════════
+
+    private void HandleAction(string action)
+    {
+        Response.Clear();
+        Response.ContentType = "application/json";
+        Response.Cache.SetNoStore();
+        try
+        {
+            if (Request.HttpMethod != "POST") { Json(false, "Send the form again."); }
+            else switch (action)
+            {
+                case "allocate":      DoAllocate(); break;
+                case "record":        DoRecord(); break;
+                case "update_days":   DoUpdateDays(); break;
+                case "delete_alloc":  DoDeleteAlloc(); break;
+                case "delete_record": DoDeleteRecord(); break;
+                default:              Json(false, "Unknown action."); break;
+            }
+        }
+        catch (Exception ex)
+        {
+            System.Diagnostics.Trace.TraceError("HRLeaveManagement action " + action + ": " + ex);
+            Response.Clear();
+            Json(false, "The change could not be saved. Try again, and contact MIS if it keeps happening.");
+        }
+        Response.End();
+    }
+
+    private void DoAllocate()
+    {
+        int empID = FormInt("emp_id"), year = FormInt("year"), days;
+        string daysStr = (Request.Form["days"] ?? "").Trim();
+        if (empID <= 0 || year <= 0 || daysStr == "") { Json(false, "Choose an employee and enter the year and days."); return; }
+        if (!int.TryParse(daysStr, out days) || year < 2000 || year > 2100) { Json(false, "Enter a valid year and number of days."); return; }
+
+        DataTable existing = Query("SELECT ID FROM hrm_annual_leave WHERE empID = @eid AND leave_year = @yr",
+            new MySqlParameter("@eid", empID), new MySqlParameter("@yr", year.ToString()));
+        if (existing.Rows.Count > 0) { Json(false, "This employee already has an allocation for " + year + ". Use Edit days in the list."); return; }
+
+        Exec("INSERT INTO hrm_annual_leave (empID, leave_year, default_days) VALUES (@eid, @yr, @days)",
+            new MySqlParameter("@eid", empID), new MySqlParameter("@yr", year.ToString()), new MySqlParameter("@days", days));
+        Json(true, "Leave allocated.");
+    }
+
+    private void DoRecord()
+    {
+        int empID = FormInt("emp_id"), noDays;
+        int year = DateTime.Now.Year;
+        DataTable al = Query(@"
             SELECT al.ID, al.default_days, COALESCE(SUM(lt.no_days),0) AS taken
             FROM hrm_annual_leave al
             LEFT JOIN hrm_leave_taken lt ON lt.leaveID = al.ID
             WHERE al.empID = @eid AND al.leave_year = @yr
             GROUP BY al.ID, al.default_days",
-            new MySqlParameter("@eid", empID),
-            new MySqlParameter("@yr", year));
+            new MySqlParameter("@eid", empID), new MySqlParameter("@yr", year.ToString()));
+        if (empID <= 0 || al.Rows.Count == 0) { Json(false, "This employee has no leave allocated for " + year + ". Allocate leave first."); return; }
 
-        if (dt.Rows.Count > 0)
-        {
-            int allocated = Convert.ToInt32(dt.Rows[0]["default_days"]);
-            int taken = Convert.ToInt32(dt.Rows[0]["taken"]);
-            int remaining = allocated - taken;
-            hdnLeaveAllocID.Value = dt.Rows[0]["ID"].ToString();
-            litEmpLeaveInfo.Text = string.Format("Allocated: <strong>{0}</strong> days | Taken: <strong>{1}</strong> | Remaining: <strong>{2}</strong>", allocated, taken, remaining);
-            ScriptManager.RegisterStartupScript(this, GetType(), "showInfo",
-                "document.getElementById('empLeaveInfo').style.display='block';document.getElementById('recordLeaveModal').style.display='flex';", true);
-        }
-        else
-        {
-            hdnLeaveAllocID.Value = "";
-            litEmpLeaveInfo.Text = "<span style='color:#dc3545;'>No leave allocation found for " + year + ". Please allocate leave first.</span>";
-            ScriptManager.RegisterStartupScript(this, GetType(), "showInfo",
-                "document.getElementById('empLeaveInfo').style.display='block';document.getElementById('recordLeaveModal').style.display='flex';", true);
-        }
+        DateTime start, end;
+        if (!DateTime.TryParse(Request.Form["start"], out start) || !DateTime.TryParse(Request.Form["end"], out end))
+        { Json(false, "Enter valid first and last days."); return; }
+        if (!int.TryParse(Request.Form["days"], out noDays) || noDays <= 0) { Json(false, "Enter a valid number of days."); return; }
+        if (end < start) { Json(false, "The last day cannot be before the first day."); return; }
+
+        int allocated = I(al.Rows[0]["default_days"]), taken = I(al.Rows[0]["taken"]);
+        if (taken + noDays > allocated)
+        { Json(false, string.Format("Cannot record {0} days. Only {1} days remain.", noDays, allocated - taken)); return; }
+
+        Exec("INSERT INTO hrm_leave_taken (leaveID, startDate, endDate, no_days) VALUES (@lid, @start, @end, @days)",
+            new MySqlParameter("@lid", al.Rows[0]["ID"]), new MySqlParameter("@start", start),
+            new MySqlParameter("@end", end), new MySqlParameter("@days", noDays));
+        Json(true, "Leave recorded.");
     }
 
-    protected void btnRecordLeave_Click(object sender, EventArgs e)
+    private void DoUpdateDays()
     {
-        string allocID = hdnLeaveAllocID.Value;
-        if (string.IsNullOrEmpty(allocID))
-        {
-            ShowModalError("recordLeaveModal", "recordResult", "No leave allocation found. Please allocate leave first.");
-            return;
-        }
-
-        DateTime startDate, endDate;
-        int noDays;
-
-        if (!DateTime.TryParse(txtLeaveStart.Text, out startDate) || !DateTime.TryParse(txtLeaveEnd.Text, out endDate))
-        {
-            ShowModalError("recordLeaveModal", "recordResult", "Please provide valid start and end dates.");
-            return;
-        }
-
-        if (!int.TryParse(txtLeaveDays.Text, out noDays) || noDays <= 0)
-        {
-            ShowModalError("recordLeaveModal", "recordResult", "Please provide a valid number of days.");
-            return;
-        }
-
-        if (endDate < startDate)
-        {
-            ShowModalError("recordLeaveModal", "recordResult", "End date cannot be before start date.");
-            return;
-        }
-
-        // Check remaining days
-        DataTable dtCheck = ExecuteQuery(@"
-            SELECT al.default_days, COALESCE(SUM(lt.no_days),0) AS taken
-            FROM hrm_annual_leave al
-            LEFT JOIN hrm_leave_taken lt ON lt.leaveID = al.ID
-            WHERE al.ID = @id
-            GROUP BY al.ID, al.default_days",
-            new MySqlParameter("@id", allocID));
-
-        if (dtCheck.Rows.Count > 0)
-        {
-            int allocated = Convert.ToInt32(dtCheck.Rows[0]["default_days"]);
-            int taken = Convert.ToInt32(dtCheck.Rows[0]["taken"]);
-            if (taken + noDays > allocated)
-            {
-                ShowModalError("recordLeaveModal", "recordResult",
-                    string.Format("Cannot record {0} days. Only {1} days remaining.", noDays, allocated - taken));
-                return;
-            }
-        }
-
-        ExecuteNonQuery(@"INSERT INTO hrm_leave_taken (leaveID, startDate, endDate, no_days) VALUES (@lid, @start, @end, @days)",
-            new MySqlParameter("@lid", allocID),
-            new MySqlParameter("@start", startDate),
-            new MySqlParameter("@end", endDate),
-            new MySqlParameter("@days", noDays));
-
-        txtLeaveStart.Text = "";
-        txtLeaveEnd.Text = "";
-        txtLeaveDays.Text = "";
-
-        BindLeaveGrid();
-        BindLeaveHistoryGrid();
-        LoadStats();
+        int id = FormInt("id"), days;
+        if (id <= 0 || !int.TryParse(Request.Form["days"], out days) || days < 0 || days > 365)
+        { Json(false, "Enter a number of days from 0 to 365."); return; }
+        Exec("UPDATE hrm_annual_leave SET default_days = @days WHERE ID = @id",
+            new MySqlParameter("@days", days), new MySqlParameter("@id", id));
+        Json(true, "Allocated days updated.");
     }
 
-    #endregion
-
-    #region Template Helpers
-
-    protected string GetRemainingHtml(object allocatedObj, object takenObj)
+    private void DoDeleteAlloc()
     {
-        int allocated = 0, taken = 0;
-        if (allocatedObj != null && allocatedObj != DBNull.Value) allocated = Convert.ToInt32(allocatedObj);
-        if (takenObj != null && takenObj != DBNull.Value) taken = Convert.ToInt32(takenObj);
-
-        int remaining = allocated - taken;
-        double pct = allocated > 0 ? ((double)remaining / allocated) * 100 : 0;
-        string barColor = remaining <= 0 ? "#dc3545" : remaining <= 5 ? "#ffc107" : "#28a745";
-        string textColor = remaining <= 0 ? "#dc3545" : remaining <= 5 ? "#856404" : "#28a745";
-
-        return string.Format(
-            "<div><strong style='color:{0};'>{1}</strong> <span style='font-size:9px;color:#888;'>of {2}</span>" +
-            "<div class='lv-days-bar'><div class='lv-days-bar__fill' style='width:{3}%;background:{4};'></div></div></div>",
-            textColor, remaining, allocated, Math.Max(pct, 0), barColor);
+        int id = FormInt("id");
+        if (id <= 0) { Json(false, "Choose an allocation."); return; }
+        // Leave taken against the allocation goes with it.
+        Exec("DELETE FROM hrm_leave_taken WHERE leaveID = @id", new MySqlParameter("@id", id));
+        Exec("DELETE FROM hrm_annual_leave WHERE ID = @id", new MySqlParameter("@id", id));
+        Json(true, "Allocation deleted.");
     }
 
-    protected string GetLeaveStatusBadge(object allocatedObj, object takenObj)
+    private void DoDeleteRecord()
     {
-        int allocated = 0, taken = 0;
-        if (allocatedObj != null && allocatedObj != DBNull.Value) allocated = Convert.ToInt32(allocatedObj);
-        if (takenObj != null && takenObj != DBNull.Value) taken = Convert.ToInt32(takenObj);
-
-        int remaining = allocated - taken;
-        if (remaining <= 0) return "<span class='hr-badge hr-badge--danger'>EXHAUSTED</span>";
-        if (remaining <= 5) return "<span class='hr-badge hr-badge--warning'>LOW</span>";
-        return "<span class='hr-badge hr-badge--success'>AVAILABLE</span>";
+        int id = FormInt("id");
+        if (id <= 0) { Json(false, "Choose a leave record."); return; }
+        Exec("DELETE FROM hrm_leave_taken WHERE ID = @id", new MySqlParameter("@id", id));
+        Json(true, "Leave record deleted.");
     }
 
-    #endregion
-
-    #region Helpers
-
-    private void ShowModalError(string modalId, string resultId, string message)
+    private void Json(bool ok, string message)
     {
-        ScriptManager.RegisterStartupScript(this, GetType(), "modalErr",
-            "document.getElementById('" + resultId + "').innerHTML='<span style=\"color:red;\">" +
-            HttpUtility.JavaScriptStringEncode(message) + "</span>';document.getElementById('" + modalId + "').style.display='flex';", true);
+        Response.Write(new JavaScriptSerializer().Serialize(new Dictionary<string, object> {
+            { "ok", ok }, { "success", ok }, { "message", message }, { "error", ok ? "" : message } }));
     }
 
-    private DataTable ExecuteQuery(string sql, params MySqlParameter[] parms)
+    // ══════════════════════════════════════════════════════════════════
+    //  EXPORT
+    // ══════════════════════════════════════════════════════════════════
+
+    private void SendExport(string fmt)
+    {
+        int year = QsYear;
+        HrExport.Report r = new HrExport.Report("Leave balances " + year, "leave-balances");
+        r.PreparedBy = HrAccess.Username();
+        r.AddScope("Year", year.ToString());
+        if (QsDept != "")
+        {
+            DataTable d = Query("SELECT dept_name FROM hrm_departments WHERE ID = @id", new MySqlParameter("@id", QsDept));
+            r.AddScope("Department", d.Rows.Count > 0 ? Str(d.Rows[0][0]) : "");
+        }
+        r.AddScope("Search", QsSearch);
+
+        HrExport.Sheet sh = r.NewSheet("Balances");
+        sh.Add("Staff No").Add("Name").Add("Department").Add("Year")
+          .Add("Allocated days", HrExport.Kind.Number, true).Add("Days taken", HrExport.Kind.Number, true)
+          .Add("Days remaining", HrExport.Kind.Number, true).Add("Status");
+        foreach (DataRow row in BalancesTable(year).Rows)
+        {
+            int alloc = I(row["default_days"]), taken = I(row["taken_days"]);
+            sh.Row(Str(row["EMP_CODE"]), Str(row["emp_name"]), Str(row["dept_name"]), Str(row["leave_year"]),
+                alloc, taken, alloc - taken, BalanceLabel(alloc - taken));
+        }
+
+        if (fmt == "csv") HrExport.SendCsv(Response, r, 0);
+        else HrExport.SendXlsx(Response, r);
+        Response.End();
+    }
+
+    // ══════════════════════════════════════════════════════════════════
+    //  HELPERS
+    // ══════════════════════════════════════════════════════════════════
+
+    private static string BalanceLabel(int remaining)
+    {
+        if (remaining <= 0) return "Used up";
+        if (remaining <= 5) return "Low";
+        return "Available";
+    }
+
+    private static string BalanceBadge(int remaining)
+    {
+        string kind = remaining <= 0 ? "bad" : remaining <= 5 ? "warn" : "ok";
+        return "<span class='hr-badge hr-badge--" + kind + "'>" + BalanceLabel(remaining) + "</span>";
+    }
+
+    private string FilterUrl(string extra)
+    {
+        List<string> p = new List<string>();
+        p.Add("year=" + QsYear);
+        if (QsDept != "") p.Add("dept=" + QsDept);
+        if (QsSearch != "") p.Add("q=" + HttpUtility.UrlEncode(QsSearch));
+        if (!string.IsNullOrEmpty(extra)) p.Add(extra);
+        return "HRLeaveManagement.aspx?" + string.Join("&", p.ToArray());
+    }
+
+    private const string IconDownload =
+        "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><path d=\"M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4\"/><polyline points=\"7 10 12 15 17 10\"/><line x1=\"12\" y1=\"15\" x2=\"12\" y2=\"3\"/></svg>";
+
+    private int FormInt(string key) { int v; return int.TryParse((Request.Form[key] ?? "").Trim(), out v) ? v : 0; }
+    private static int I(object v) { int n; return v != null && v != DBNull.Value && int.TryParse(Convert.ToDecimal(v).ToString("0"), out n) ? n : 0; }
+    private static string N(object v) { decimal n; return v != null && v != DBNull.Value && decimal.TryParse(v.ToString(), out n) ? n.ToString("N0") : "0"; }
+    private static string Str(object v) { return v == null || v == DBNull.Value ? "" : v.ToString().Trim(); }
+    private static string Enc(object v) { return HttpUtility.HtmlEncode(HrExport.Clean(Str(v))); }
+    private static string D(object v)
+    {
+        DateTime d;
+        if (v == null || v == DBNull.Value) return "";
+        if (v is DateTime) d = (DateTime)v; else if (!DateTime.TryParse(v.ToString(), out d)) return "";
+        return d.ToString("d MMM yyyy", CultureInfo.InvariantCulture);
+    }
+
+    private DataTable Query(string sql, params MySqlParameter[] parms)
     {
         DataTable dt = new DataTable();
         using (MySqlConnection conn = new MySqlConnection(ConnStr))
@@ -436,28 +425,23 @@ public partial class COOPERP_NewScreens_HRLeaveManagement : System.Web.UI.Page
             conn.Open();
             using (MySqlCommand cmd = new MySqlCommand(sql, conn))
             {
-                if (parms != null)
-                    foreach (MySqlParameter p in parms) cmd.Parameters.Add(p);
-                using (MySqlDataAdapter da = new MySqlDataAdapter(cmd))
-                    da.Fill(dt);
+                if (parms != null) foreach (MySqlParameter p in parms) cmd.Parameters.Add(p);
+                using (MySqlDataAdapter da = new MySqlDataAdapter(cmd)) da.Fill(dt);
             }
         }
         return dt;
     }
 
-    private int ExecuteNonQuery(string sql, params MySqlParameter[] parms)
+    private int Exec(string sql, params MySqlParameter[] parms)
     {
         using (MySqlConnection conn = new MySqlConnection(ConnStr))
         {
             conn.Open();
             using (MySqlCommand cmd = new MySqlCommand(sql, conn))
             {
-                if (parms != null)
-                    foreach (MySqlParameter p in parms) cmd.Parameters.Add(p);
+                if (parms != null) foreach (MySqlParameter p in parms) cmd.Parameters.Add(p);
                 return cmd.ExecuteNonQuery();
             }
         }
     }
-
-    #endregion
 }

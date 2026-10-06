@@ -1,10 +1,16 @@
 using System;
 using System.Collections.Generic;
 using System.Configuration;
+using System.Globalization;
 using System.Text;
 using System.Web;
 using MySql.Data.MySqlClient;
 
+/// <summary>
+/// Leave applications list. Used by every employee (own applications and those they approve),
+/// HODs, HR and the Vice Chancellor; the role rules below decide what each one sees.
+/// Search, status and type filters are applied in SQL and kept by the pager and the export.
+/// </summary>
 public partial class COOPERP_NewScreens_LeaveApplications : System.Web.UI.Page
 {
     private const int PageSize = 40;
@@ -21,111 +27,172 @@ public partial class COOPERP_NewScreens_LeaveApplications : System.Web.UI.Page
     private static readonly HashSet<string> HodRoles = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
         { "dean", "registrar", "hr_manager", "admin" };
 
+    private static readonly string[] Pending = { "SUBMITTED", "HOD_APPROVED", "HR_APPROVED" };
+    private static readonly string[] Declined = { "HOD_DECLINED", "HR_DECLINED", "VC_NOT_GRANTED", "CANCELLED" };
+    private static readonly string[] AllStatuses =
+        { "DRAFT", "SUBMITTED", "HOD_APPROVED", "HOD_DECLINED", "HR_APPROVED", "HR_DECLINED", "VC_GRANTED", "VC_NOT_GRANTED", "VC_POSTPONED", "CANCELLED" };
+    private static readonly string[] LeaveTypes = { "annual", "study", "sick", "maternity", "bereavement" };
+
+    // ── filters from the query string ─────────────────────────────────────
+    private string QsSearch { get { return (Request.QueryString["q"] ?? "").Trim(); } }
+    private string QsStatus
+    {
+        get
+        {
+            string s = (Request.QueryString["status"] ?? "").Trim().ToUpperInvariant();
+            if (s == "PENDING" || s == "DECLINED" || Array.IndexOf(AllStatuses, s) >= 0) return s;
+            return "";
+        }
+    }
+    private string QsType
+    {
+        get
+        {
+            string t = (Request.QueryString["type"] ?? "").Trim().ToLowerInvariant();
+            return Array.IndexOf(LeaveTypes, t) >= 0 ? t : "";
+        }
+    }
+
     protected void Page_Load(object sender, EventArgs e)
     {
+        if (!HrAccess.IsSignedIn()) { Response.Redirect("~/Default.aspx", true); return; }
         RoleAccessService.RequireSlug(this, "hr.leave_applications");
+
+        string export = (Request.QueryString["export"] ?? "").Trim().ToLowerInvariant();
+        if (export == "xlsx" || export == "csv")
+        {
+            SendExport(export);
+            return;
+        }
 
         if (!IsPostBack)
             LoadPage();
     }
 
-    // ── Page render ────────────────────────────────────────────────────────────
+    // ── role scope ────────────────────────────────────────────────────────
+
+    private sealed class Scope
+    {
+        public string RoleCode, Username;
+        public bool IsAdmin, IsHr, IsVc, IsHod;
+    }
+
+    private Scope CurrentScope()
+    {
+        Scope s = new Scope();
+        s.RoleCode = RoleAccessService.GetRoleCode();
+        s.Username = Session["username"] as string ?? "";
+        s.IsAdmin  = RoleAccessService.IsAdmin();
+        s.IsHr     = HrRoles.Contains(s.RoleCode);
+        s.IsVc     = VcRoles.Contains(s.RoleCode);
+        s.IsHod    = HodRoles.Contains(s.RoleCode);
+        return s;
+    }
+
+    private static string BuildRoleWhere(Scope s)
+    {
+        if (s.IsAdmin) return "";  // Admin sees all
+        if (s.IsVc && !s.IsHr)
+            return " AND status IN ('HR_APPROVED','VC_GRANTED','VC_NOT_GRANTED','VC_POSTPONED')";
+        if (s.IsHr) return "";     // HR sees all
+        // HOD and regular employees: their own, plus any application they were chosen to approve.
+        return " AND (created_by = @uname OR supervisor_username = @uname)";
+    }
+
+    private static void AddRoleParams(MySqlCommand cmd, Scope s)
+    {
+        if (!s.IsAdmin && !s.IsVc && (s.IsHod || !s.IsHr))
+            cmd.Parameters.AddWithValue("@uname", s.Username);
+    }
+
+    /// <summary>Search, status and type filters as SQL (applied after the role scope).</summary>
+    private string BuildFilterWhere(bool withStatus)
+    {
+        StringBuilder w = new StringBuilder();
+        if (QsSearch != "")
+            w.Append(" AND (emp_name LIKE @q OR emp_code LIKE @q OR faculty_dept LIKE @q OR position_held LIKE @q)");
+        if (QsType != "") w.Append(" AND leave_type = @type");
+        if (withStatus)
+        {
+            string st = QsStatus;
+            if (st == "PENDING") w.Append(" AND status IN ('SUBMITTED','HOD_APPROVED','HR_APPROVED')");
+            else if (st == "DECLINED") w.Append(" AND status IN ('HOD_DECLINED','HR_DECLINED','VC_NOT_GRANTED','CANCELLED')");
+            else if (st != "") w.Append(" AND status = @status");
+        }
+        return w.ToString();
+    }
+
+    private void AddFilterParams(MySqlCommand cmd, bool withStatus)
+    {
+        if (QsSearch != "") cmd.Parameters.AddWithValue("@q", "%" + QsSearch + "%");
+        if (QsType != "") cmd.Parameters.AddWithValue("@type", QsType);
+        if (withStatus && QsStatus != "" && QsStatus != "PENDING" && QsStatus != "DECLINED")
+            cmd.Parameters.AddWithValue("@status", QsStatus);
+    }
+
+    // ── page ──────────────────────────────────────────────────────────────
 
     private void LoadPage()
     {
-        string roleCode = RoleAccessService.GetRoleCode();
-        string username = Session["username"] as string ?? "";
-        bool   isAdmin  = RoleAccessService.IsAdmin();
-        bool   isHr     = HrRoles.Contains(roleCode);
-        bool   isVc     = VcRoles.Contains(roleCode);
-        bool   isHod    = HodRoles.Contains(roleCode);
+        Scope s = CurrentScope();
 
-        // ── Subtitle ─────────────────────────────────────────────────────────
         string subtitle;
-        if (isAdmin)       subtitle = "All leave applications across the institution";
-        else if (isHr)     subtitle = "All applications — HR management view";
-        else if (isVc)     subtitle = "Applications pending Vice Chancellor decision";
-        else if (isHod)    subtitle = "Applications from your department pending your approval";
-        else               subtitle = "Your leave application history";
+        if (s.IsAdmin || s.IsHr) subtitle = "All applications";
+        else if (s.IsVc)         subtitle = "Applications for the Vice Chancellor";
+        else                     subtitle = "Your applications and those you approve";
         litSubtitle.Text = HttpUtility.HtmlEncode(subtitle);
 
-        // ── New Application button (employees, HR admin on behalf) ────────────
-        if (!isVc || isAdmin)
+        if (!s.IsVc || s.IsAdmin)
         {
             litNewBtn.Text =
-                "<a href=\"LeaveApplicationForm.aspx\" class=\"lv-btn lv-btn--primary\">" +
-                "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"12\" height=\"12\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2.5\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><line x1=\"12\" y1=\"5\" x2=\"12\" y2=\"19\"/><line x1=\"5\" y1=\"12\" x2=\"19\" y2=\"12\"/></svg>" +
-                "New Application</a>";
+                "<a href=\"LeaveApplicationForm.aspx\" class=\"hr-btn hr-btn--inverse\">" +
+                "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><line x1=\"12\" y1=\"5\" x2=\"12\" y2=\"19\"/><line x1=\"5\" y1=\"12\" x2=\"19\" y2=\"12\"/></svg>" +
+                "New application</a>";
         }
+
+        txtSearchValue = QsSearch;
+        litStatusOptions.Text = StatusOptions(QsStatus);
+        litTypeOptions.Text = TypeOptions(QsType);
 
         int page = 1;
         int.TryParse(Request.QueryString["page"] ?? "1", out page);
         if (page < 1) page = 1;
 
-        var rowsSb  = new StringBuilder();
-        var statsSb = new StringBuilder();
-        var pagerSb = new StringBuilder();
-
-        // Stat counters
-        int cAll = 0, cPending = 0, cHod = 0, cHr = 0, cVc = 0, cGranted = 0, cDeclined = 0;
+        StringBuilder rowsSb = new StringBuilder();
+        string roleWhere = BuildRoleWhere(s);
 
         try
         {
-            using (var conn = new MySqlConnection(ConnStr()))
+            using (MySqlConnection conn = new MySqlConnection(ConnStr()))
             {
                 conn.Open();
 
-                // ── Counts by status (scope to what this role can see) ────────
-                string countWhere = BuildRoleWhere(roleCode, username, isAdmin, isHr, isVc, isHod);
-
-                const string countSql = @"
-                    SELECT status, COUNT(*) AS cnt
-                    FROM hrm_leave_applications
-                    WHERE is_active=1 {0}
-                    GROUP BY status";
-
-                using (var cmd = new MySqlCommand(string.Format(countSql, countWhere), conn))
+                // Tile counts: role scope + search + type, every status.
+                Dictionary<string, int> counts = new Dictionary<string, int>();
+                int cAll = 0;
+                using (MySqlCommand cmd = new MySqlCommand(
+                    "SELECT status, COUNT(*) AS cnt FROM hrm_leave_applications WHERE is_active=1" +
+                    roleWhere + BuildFilterWhere(false) + " GROUP BY status", conn))
                 {
-                    AddRoleParams(cmd, roleCode, username, isAdmin, isHr, isVc, isHod);
-                    using (var dr = cmd.ExecuteReader())
-                    {
+                    AddRoleParams(cmd, s);
+                    AddFilterParams(cmd, false);
+                    using (MySqlDataReader dr = cmd.ExecuteReader())
                         while (dr.Read())
                         {
-                            int cnt = Convert.ToInt32(dr["cnt"]);
-                            string s = dr["status"].ToString();
-                            cAll += cnt;
-                            switch (s)
-                            {
-                                case "SUBMITTED":     cPending += cnt; break;
-                                case "HOD_APPROVED":  cHod     += cnt; break;
-                                case "HR_APPROVED":   cHr      += cnt; break;
-                                case "VC_GRANTED":    cGranted += cnt; break;
-                                case "HOD_DECLINED":
-                                case "HR_DECLINED":
-                                case "VC_NOT_GRANTED":
-                                case "CANCELLED":     cDeclined += cnt; break;
-                            }
-                            if (s == "HR_APPROVED") cVc += cnt;
+                            int n = Convert.ToInt32(dr["cnt"]);
+                            counts[dr["status"].ToString()] = n;
+                            cAll += n;
                         }
-                    }
                 }
+                litStats.Text = BuildTiles(counts, cAll);
 
-                // ── Stat chips ────────────────────────────────────────────────
-                statsSb.Append("<div class=\"pa-list-stats\">");
-                statsSb.AppendFormat("<span class=\"pa-list-stat ps--all\"><b>{0}</b>&nbsp;<span class=\"pa-list-stat__lbl\">Total</span></span>", cAll);
-                statsSb.AppendFormat("<span class=\"pa-list-stat ps--pending\"><b>{0}</b>&nbsp;<span class=\"pa-list-stat__lbl\">Pending HOD</span></span>", cPending);
-                statsSb.AppendFormat("<span class=\"pa-list-stat ps--hod\"><b>{0}</b>&nbsp;<span class=\"pa-list-stat__lbl\">Pending HR</span></span>", cHod);
-                statsSb.AppendFormat("<span class=\"pa-list-stat ps--vc\"><b>{0}</b>&nbsp;<span class=\"pa-list-stat__lbl\">Pending VC</span></span>", cVc);
-                statsSb.AppendFormat("<span class=\"pa-list-stat ps--ok\"><b>{0}</b>&nbsp;<span class=\"pa-list-stat__lbl\">Granted</span></span>", cGranted);
-                statsSb.AppendFormat("<span class=\"pa-list-stat ps--no\"><b>{0}</b>&nbsp;<span class=\"pa-list-stat__lbl\">Declined</span></span>", cDeclined);
-                statsSb.Append("</div>");
-
-                // ── Total for pagination ──────────────────────────────────────
-                int total = 0;
-                using (var cmd = new MySqlCommand(
-                    "SELECT COUNT(*) FROM hrm_leave_applications WHERE is_active=1 " + countWhere, conn))
+                // Total for the pager (all filters).
+                int total;
+                string where = " WHERE is_active=1" + roleWhere + BuildFilterWhere(true);
+                using (MySqlCommand cmd = new MySqlCommand("SELECT COUNT(*) FROM hrm_leave_applications" + where, conn))
                 {
-                    AddRoleParams(cmd, roleCode, username, isAdmin, isHr, isVc, isHod);
+                    AddRoleParams(cmd, s);
+                    AddFilterParams(cmd, true);
                     total = Convert.ToInt32(cmd.ExecuteScalar());
                 }
 
@@ -133,248 +200,332 @@ public partial class COOPERP_NewScreens_LeaveApplications : System.Web.UI.Page
                 if (page > totalPages) page = totalPages;
                 int offset = (page - 1) * PageSize;
 
-                // ── Data rows ─────────────────────────────────────────────────
-                string dataSql = @"
-                    SELECT id, emp_name, emp_code, faculty_dept, leave_type,
-                           leave_from, leave_to, num_days, status,
-                           created_at, employee_submitted_at,
-                           hod_actor_name, hr_actor_name, vc_actor_name, vc_decision
-                    FROM hrm_leave_applications
-                    WHERE is_active=1 " + countWhere + @"
-                    ORDER BY
-                        CASE status
-                            WHEN 'SUBMITTED'    THEN 1
-                            WHEN 'HOD_APPROVED' THEN 2
-                            WHEN 'HR_APPROVED'  THEN 3
-                            ELSE 4
-                        END,
-                        COALESCE(employee_submitted_at, created_at) DESC
-                    LIMIT @lim OFFSET @off";
+                string dataSql =
+                    @"SELECT id, emp_name, emp_code, faculty_dept, position_held, leave_type,
+                             leave_from, leave_to, num_days, status, created_at, employee_submitted_at
+                      FROM hrm_leave_applications" + where + @"
+                      ORDER BY CASE status WHEN 'SUBMITTED' THEN 1 WHEN 'HOD_APPROVED' THEN 2 WHEN 'HR_APPROVED' THEN 3 ELSE 4 END,
+                               COALESCE(employee_submitted_at, created_at) DESC
+                      LIMIT @lim OFFSET @off";
 
-                using (var cmd = new MySqlCommand(dataSql, conn))
+                using (MySqlCommand cmd = new MySqlCommand(dataSql, conn))
                 {
-                    AddRoleParams(cmd, roleCode, username, isAdmin, isHr, isVc, isHod);
+                    AddRoleParams(cmd, s);
+                    AddFilterParams(cmd, true);
                     cmd.Parameters.AddWithValue("@lim", PageSize);
                     cmd.Parameters.AddWithValue("@off", offset);
-
-                    using (var dr = cmd.ExecuteReader())
+                    using (MySqlDataReader dr = cmd.ExecuteReader())
                     {
-                        bool any = false;
-                        int  rowNum = offset;
                         while (dr.Read())
-                        {
-                            any = true;
-                            rowNum++;
-                            int    id         = Convert.ToInt32(dr["id"]);
-                            string empName    = dr["emp_name"].ToString();
-                            string empCode    = dr["emp_code"].ToString();
-                            string dept       = dr["faculty_dept"].ToString();
-                            string lvType     = dr["leave_type"].ToString();
-                            string status     = dr["status"].ToString();
-                            string fromDt     = Convert.ToDateTime(dr["leave_from"]).ToString("dd MMM yyyy");
-                            string toDt       = Convert.ToDateTime(dr["leave_to"]).ToString("dd MMM yyyy");
-                            int    days       = dr["num_days"] == DBNull.Value ? 0 : Convert.ToInt32(dr["num_days"]);
-                            DateTime created  = Convert.ToDateTime(dr["created_at"]);
-                            string appliedOn  = created.ToString("dd MMM yy");
-
-                            string searchVal  = (empName + " " + empCode + " " + dept + " " + lvType).ToLower();
-
-                            // Avatar
-                            string initials = GetInitials(empName);
-                            string avatarClr= GetAvatarColor(empName);
-
-                            rowsSb.Append("<tr class=\"lv-row\"");
-                            rowsSb.AppendFormat(" data-search=\"{0}\"", HttpUtility.HtmlAttributeEncode(searchVal));
-                            rowsSb.AppendFormat(" data-status=\"{0}\"", HttpUtility.HtmlAttributeEncode(status));
-                            rowsSb.AppendFormat(" data-type=\"{0}\"",   HttpUtility.HtmlAttributeEncode(lvType));
-                            rowsSb.Append(">");
-
-                            // #
-                            rowsSb.AppendFormat("<td style=\"color:var(--muted);font-size:10px;\">{0}</td>", rowNum);
-
-                            // Employee
-                            rowsSb.Append("<td>");
-                            rowsSb.Append("<div class=\"lv-emp\">");
-                            rowsSb.AppendFormat("<div class=\"lv-avatar\" style=\"background:{0}\">{1}</div>", avatarClr, initials);
-                            rowsSb.Append("<div>");
-                            rowsSb.AppendFormat("<div class=\"lv-emp__name\">{0}</div>", HttpUtility.HtmlEncode(empName));
-                            if (!string.IsNullOrEmpty(dept))
-                                rowsSb.AppendFormat("<div class=\"lv-emp__dept\">{0}</div>", HttpUtility.HtmlEncode(dept));
-                            rowsSb.Append("</div></div></td>");
-
-                            // Leave type
-                            rowsSb.AppendFormat("<td>{0}</td>", LeaveTypeBadge(lvType));
-
-                            // From / To
-                            rowsSb.AppendFormat("<td style=\"white-space:nowrap;font-size:11px;\">{0}</td>", HttpUtility.HtmlEncode(fromDt));
-                            rowsSb.AppendFormat("<td style=\"white-space:nowrap;font-size:11px;\">{0}</td>", HttpUtility.HtmlEncode(toDt));
-
-                            // Days
-                            rowsSb.AppendFormat("<td style=\"text-align:center;font-weight:600;color:var(--txt);\">{0}</td>", days > 0 ? days.ToString() : "—");
-
-                            // Status
-                            rowsSb.AppendFormat("<td>{0}</td>", StatusBadge(status));
-
-                            // Applied
-                            rowsSb.AppendFormat("<td style=\"font-size:10px;color:var(--muted);white-space:nowrap;\">{0}</td>", HttpUtility.HtmlEncode(appliedOn));
-
-                            // Actions
-                            string idStr = id.ToString();
-                            rowsSb.Append("<td>");
-                            rowsSb.Append("<div class=\"pa-act-menu\">");
-                            rowsSb.Append("<button type=\"button\" class=\"pa-act-btn\">Actions " +
-                                "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"10\" height=\"10\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><polyline points=\"6 9 12 15 18 9\"/></svg></button>");
-                            rowsSb.Append("<div class=\"pa-act-drop\">");
-                            rowsSb.AppendFormat(
-                                "<a class=\"pa-act-item\" href=\"LeaveApplicationForm.aspx?id={0}\">" +
-                                "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"12\" height=\"12\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><path d=\"M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z\"/><circle cx=\"12\" cy=\"12\" r=\"3\"/></svg>" +
-                                "View / Approve</a>",
-                                id);
-                            rowsSb.AppendFormat(
-                                "<a class=\"pa-act-item\" href=\"LeaveApplicationForm.aspx?id={0}&print=1\" target=\"_blank\">" +
-                                "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"12\" height=\"12\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><polyline points=\"6 9 6 2 18 2 18 9\"/><path d=\"M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2\"/><rect x=\"6\" y=\"14\" width=\"12\" height=\"8\"/></svg>" +
-                                "Print Form</a>",
-                                id);
-
-                            if (isAdmin || isHr)
-                            {
-                                rowsSb.Append("<div class=\"pa-act-sep\"></div>");
-                                rowsSb.AppendFormat(
-                                    "<button type=\"button\" class=\"pa-act-item pa-act-item--danger\" onclick=\"cancelApp({0})\">" +
-                                    "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"12\" height=\"12\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><circle cx=\"12\" cy=\"12\" r=\"10\"/><line x1=\"15\" y1=\"9\" x2=\"9\" y2=\"15\"/><line x1=\"9\" y1=\"9\" x2=\"15\" y2=\"15\"/></svg>" +
-                                    "Cancel Application</button>",
-                                    id);
-                            }
-
-                            rowsSb.Append("</div></div></td>");
-                            rowsSb.Append("</tr>");
-                        }
-
-                        if (!any)
-                            rowsSb.Append("<tr><td colspan=\"9\" class=\"lv-empty\">No leave applications found.</td></tr>");
+                            rowsSb.Append(RowHtml(dr, s));
                     }
                 }
+                if (rowsSb.Length == 0)
+                    rowsSb.Append("<tr><td colspan=\"8\" class=\"hr-empty\">No leave applications match these filters.</td></tr>");
 
-                // ── Pager ─────────────────────────────────────────────────────
-                if (totalPages > 1)
+                litCount.Text = total == 1 ? "1 application" : total.ToString("N0") + " applications";
+                litPager.Text = BuildPager(page, totalPages, total);
+            }
+        }
+        catch (Exception ex)
+        {
+            System.Diagnostics.Trace.TraceError("LeaveApplications: " + ex);
+            rowsSb.Length = 0;
+            rowsSb.Append("<tr><td colspan=\"8\" class=\"hr-empty\">The applications could not be loaded. Refresh the page, and contact MIS if it keeps happening.</td></tr>");
+        }
+
+        litRows.Text = rowsSb.ToString();
+        litExportLinks.Text =
+            "<a class=\"hr-btn hr-btn--secondary hr-btn--sm\" href=\"" + HttpUtility.HtmlAttributeEncode(FilterUrl("export=xlsx", false)) + "\">" + IconDownload + "Excel</a>" +
+            "<a class=\"hr-btn hr-btn--secondary hr-btn--sm\" href=\"" + HttpUtility.HtmlAttributeEncode(FilterUrl("export=csv", false)) + "\">CSV</a>";
+    }
+
+    protected string txtSearchValue = "";
+
+    private string RowHtml(MySqlDataReader dr, Scope s)
+    {
+        int id = Convert.ToInt32(dr["id"]);
+        string empName = dr["emp_name"].ToString();
+        string status  = dr["status"].ToString();
+        int days = dr["num_days"] == DBNull.Value ? 0 : Convert.ToInt32(dr["num_days"]);
+        object submitted = dr["employee_submitted_at"] != DBNull.Value ? dr["employee_submitted_at"] : dr["created_at"];
+
+        StringBuilder sb = new StringBuilder();
+        sb.Append("<tr>");
+        sb.Append("<td><div class=\"lv-emp\"><span class=\"lv-ini\">").Append(HttpUtility.HtmlEncode(Initials(empName))).Append("</span><div>")
+          .Append("<div class=\"lv-name\">").Append(Enc(empName)).Append("</div>")
+          .Append("<span class=\"hr-sub\">").Append(Enc(JoinNonEmpty(dr["emp_code"], dr["faculty_dept"]))).Append("</span>")
+          .Append("</div></div></td>");
+        sb.Append("<td>").Append(HttpUtility.HtmlEncode(LeaveTypeLabel(dr["leave_type"].ToString()))).Append("</td>");
+        sb.Append("<td style=\"white-space:nowrap\">").Append(D(dr["leave_from"])).Append("</td>");
+        sb.Append("<td style=\"white-space:nowrap\">").Append(D(dr["leave_to"])).Append("</td>");
+        sb.Append("<td class=\"hr-num\">").Append(days > 0 ? days.ToString() : "").Append("</td>");
+        sb.Append("<td>").Append(StatusBadge(status)).Append("</td>");
+        sb.Append("<td style=\"white-space:nowrap\">").Append(D(submitted)).Append("</td>");
+        sb.Append("<td class=\"hr-right\" style=\"white-space:nowrap\">");
+        sb.AppendFormat("<a class=\"hr-btn hr-btn--secondary hr-btn--sm\" href=\"LeaveApplicationForm.aspx?id={0}\">Open</a> ", id);
+        sb.AppendFormat("<a class=\"hr-btn hr-btn--secondary hr-btn--sm\" href=\"LeaveApplicationForm.aspx?id={0}&amp;print=1\" target=\"_blank\" title=\"Print form\">Print</a>", id);
+        if ((s.IsAdmin || s.IsHr) && status != "CANCELLED" && status != "VC_GRANTED")
+            sb.AppendFormat(" <button type=\"button\" class=\"hr-btn hr-btn--danger hr-btn--sm\" onclick=\"cancelApp({0})\">Cancel</button>", id);
+        sb.Append("</td></tr>");
+        return sb.ToString();
+    }
+
+    private string BuildTiles(Dictionary<string, int> c, int all)
+    {
+        int awaitingHod = Get(c, "SUBMITTED"), awaitingHr = Get(c, "HOD_APPROVED"), awaitingVc = Get(c, "HR_APPROVED");
+        int granted = Get(c, "VC_GRANTED");
+        int declined = 0;
+        foreach (string st in Declined) declined += Get(c, st);
+
+        StringBuilder sb = new StringBuilder("<div class=\"hr-kpis\">");
+        Tile(sb, "All applications", all, "");
+        Tile(sb, "Awaiting HOD", awaitingHod, "SUBMITTED");
+        Tile(sb, "Awaiting HR", awaitingHr, "HOD_APPROVED");
+        Tile(sb, "Awaiting Vice Chancellor", awaitingVc, "HR_APPROVED");
+        Tile(sb, "Granted", granted, "VC_GRANTED");
+        Tile(sb, "Declined or cancelled", declined, "DECLINED");
+        sb.Append("</div>");
+        return sb.ToString();
+    }
+
+    private void Tile(StringBuilder sb, string label, int value, string status)
+    {
+        bool active = QsStatus == status;
+        sb.Append("<a class=\"hr-kpi").Append(active ? " lv-kpi--on" : "").Append("\" href=\"")
+          .Append(HttpUtility.HtmlAttributeEncode(FilterUrlWithStatus(status))).Append("\">")
+          .Append("<div class=\"hr-kpi__label\">").Append(HttpUtility.HtmlEncode(label)).Append("</div>")
+          .Append("<div class=\"hr-kpi__value\">").Append(value.ToString("N0")).Append("</div></a>");
+    }
+
+    private static int Get(Dictionary<string, int> d, string k) { int v; return d.TryGetValue(k, out v) ? v : 0; }
+
+    // ── URLs that keep the filters ────────────────────────────────────────
+
+    private string FilterUrl(string extra, bool keepPage)
+    {
+        List<string> p = new List<string>();
+        if (QsSearch != "") p.Add("q=" + HttpUtility.UrlEncode(QsSearch));
+        if (QsStatus != "") p.Add("status=" + HttpUtility.UrlEncode(QsStatus));
+        if (QsType != "") p.Add("type=" + HttpUtility.UrlEncode(QsType));
+        if (keepPage && Request.QueryString["page"] != null) p.Add("page=" + HttpUtility.UrlEncode(Request.QueryString["page"]));
+        if (!string.IsNullOrEmpty(extra)) p.Add(extra);
+        return "LeaveApplications.aspx" + (p.Count > 0 ? "?" + string.Join("&", p.ToArray()) : "");
+    }
+
+    private string FilterUrlWithStatus(string status)
+    {
+        List<string> p = new List<string>();
+        if (QsSearch != "") p.Add("q=" + HttpUtility.UrlEncode(QsSearch));
+        if (status != "") p.Add("status=" + HttpUtility.UrlEncode(status));
+        if (QsType != "") p.Add("type=" + HttpUtility.UrlEncode(QsType));
+        return "LeaveApplications.aspx" + (p.Count > 0 ? "?" + string.Join("&", p.ToArray()) : "");
+    }
+
+    private string BuildPager(int page, int totalPages, int total)
+    {
+        if (totalPages <= 1) return "";
+        StringBuilder sb = new StringBuilder("<div class=\"hr-pager\">");
+        sb.AppendFormat("<span>Page {0} of {1}</span>", page, totalPages);
+        sb.Append(PagerLink("Previous", page - 1, page > 1));
+        sb.Append(PagerLink("Next", page + 1, page < totalPages));
+        sb.Append("</div>");
+        return sb.ToString();
+    }
+
+    private string PagerLink(string label, int target, bool enabled)
+    {
+        if (!enabled) return "<button type=\"button\" disabled=\"disabled\">" + label + "</button>";
+        return "<button type=\"button\" onclick=\"location.href='" +
+               HttpUtility.JavaScriptStringEncode(FilterUrl("page=" + target, false)) + "'\">" + label + "</button>";
+    }
+
+    // ── export ────────────────────────────────────────────────────────────
+
+    private void SendExport(string fmt)
+    {
+        Scope s = CurrentScope();
+        HrExport.Report r = new HrExport.Report("Leave applications", "leave-applications");
+        r.PreparedBy = HrAccess.Username();
+        if (!(s.IsAdmin || s.IsHr))
+            r.AddScope("View", s.IsVc ? "Applications for the Vice Chancellor" : "Own applications and those approved by " + s.Username);
+        r.AddScope("Status", StatusFilterLabel(QsStatus));
+        r.AddScope("Leave type", QsType == "" ? "" : LeaveTypeLabel(QsType));
+        r.AddScope("Search", QsSearch);
+
+        HrExport.Sheet sh = r.NewSheet("Applications");
+        sh.Add("Reference").Add("Staff No").Add("Name").Add("Department").Add("Position").Add("Leave type")
+          .Add("First day", HrExport.Kind.Date).Add("Last day", HrExport.Kind.Date).Add("Days", HrExport.Kind.Number, true)
+          .Add("Status").Add("Submitted", HrExport.Kind.Date).Add("Head of Department")
+          .Add("HOD decision", HrExport.Kind.Date).Add("HR decision", HrExport.Kind.Date)
+          .Add("Vice Chancellor decision", HrExport.Kind.Date).Add("Days granted", HrExport.Kind.Number);
+
+        try
+        {
+            using (MySqlConnection conn = new MySqlConnection(ConnStr()))
+            {
+                conn.Open();
+                string sql =
+                    @"SELECT id, emp_code, emp_name, faculty_dept, position_held, leave_type, leave_from, leave_to,
+                             num_days, status, employee_submitted_at, supervisor_name, supervisor_username,
+                             hod_action_at, hr_action_at, vc_action_at, vc_days_taken
+                      FROM hrm_leave_applications WHERE is_active=1" + BuildRoleWhere(s) + BuildFilterWhere(true) + @"
+                      ORDER BY leave_from DESC, emp_name";
+                using (MySqlCommand cmd = new MySqlCommand(sql, conn))
                 {
-                    string baseUrl = "LeaveApplications.aspx?x=1";
-                    pagerSb.AppendFormat("<span style=\"margin-right:8px;\">Page {0} of {1} ({2} records)</span>", page, totalPages, total);
-                    if (page > 1)
-                        pagerSb.AppendFormat("<a href=\"{0}&amp;page={1}\">&laquo;</a>", baseUrl, page - 1);
-                    for (int i = 1; i <= totalPages; i++)
-                    {
-                        if (totalPages > 10 && i > 3 && i < totalPages - 2 && Math.Abs(i - page) > 2)
+                    AddRoleParams(cmd, s);
+                    AddFilterParams(cmd, true);
+                    using (MySqlDataReader dr = cmd.ExecuteReader())
+                        while (dr.Read())
                         {
-                            if (i == 4) pagerSb.Append("<span style=\"padding:0 4px;\">…</span>");
-                            continue;
+                            string sup = Str(dr["supervisor_name"]);
+                            if (sup == "") sup = Str(dr["supervisor_username"]);
+                            sh.Row("LV-" + Convert.ToInt32(dr["id"]).ToString("0000"), Str(dr["emp_code"]), Str(dr["emp_name"]),
+                                Str(dr["faculty_dept"]), Str(dr["position_held"]), LeaveTypeLabel(Str(dr["leave_type"])),
+                                dr["leave_from"], dr["leave_to"], dr["num_days"], StatusLabel(Str(dr["status"])),
+                                dr["employee_submitted_at"], sup, dr["hod_action_at"], dr["hr_action_at"],
+                                dr["vc_action_at"], dr["vc_days_taken"]);
                         }
-                        pagerSb.AppendFormat("<a href=\"{0}&amp;page={1}\"{2}>{1}</a>",
-                            baseUrl, i, i == page ? " class=\"active\"" : "");
-                    }
-                    if (page < totalPages)
-                        pagerSb.AppendFormat("<a href=\"{0}&amp;page={1}\">&raquo;</a>", baseUrl, page + 1);
                 }
             }
         }
         catch (Exception ex)
         {
-            rowsSb.Append("<tr><td colspan=\"9\" style=\"color:#dc2626;padding:20px\">" +
-                HttpUtility.HtmlEncode("Error: " + ex.Message) + "</td></tr>");
+            System.Diagnostics.Trace.TraceError("LeaveApplications export: " + ex);
+            Response.Clear();
+            Response.ContentType = "text/plain";
+            Response.Write("The export could not be prepared. Go back and try again.");
+            Response.End();
+            return;
         }
 
-        litStats.Text = statsSb.ToString();
-        litRows.Text  = rowsSb.ToString();
-        litPager.Text = pagerSb.ToString();
+        if (fmt == "csv") HrExport.SendCsv(Response, r, 0);
+        else HrExport.SendXlsx(Response, r);
+        Response.End();
     }
 
-    // ── Role-based WHERE builder ────────────────────────────────────────────────
+    // ── labels and badges ─────────────────────────────────────────────────
 
-    private static string BuildRoleWhere(string roleCode, string username,
-        bool isAdmin, bool isHr, bool isVc, bool isHod)
+    internal static string StatusLabel(string status)
     {
-        if (isAdmin) return "";  // Admin sees all
-
-        if (isVc && !isHr)
-            return "AND status IN ('HR_APPROVED','VC_GRANTED','VC_NOT_GRANTED','VC_POSTPONED')";
-
-        if (isHr)
-            return ""; // HR sees all
-
-        if (isHod)
-            // HOD sees: their own + submissions from their supervised users
-            return "AND (created_by = @uname OR supervisor_username = @uname)";
-
-        // Regular employee sees their own, plus any application they were chosen to
-        // approve as Supervisor / HOD (e.g. users whose role is 'hod').
-        return "AND (created_by = @uname OR supervisor_username = @uname)";
+        switch (status)
+        {
+            case "DRAFT":          return "Draft";
+            case "SUBMITTED":      return "Awaiting HOD";
+            case "HOD_APPROVED":   return "Awaiting HR";
+            case "HOD_DECLINED":   return "Declined by HOD";
+            case "HR_APPROVED":    return "Awaiting Vice Chancellor";
+            case "HR_DECLINED":    return "Declined by HR";
+            case "VC_GRANTED":     return "Granted";
+            case "VC_NOT_GRANTED": return "Not granted";
+            case "VC_POSTPONED":   return "Postponed";
+            case "CANCELLED":      return "Cancelled";
+            default:               return status;
+        }
     }
 
-    private static void AddRoleParams(MySqlCommand cmd, string roleCode, string username,
-        bool isAdmin, bool isHr, bool isVc, bool isHod)
+    private static string StatusFilterLabel(string st)
     {
-        if (!isAdmin && !isVc && (isHod || (!isHr)))
-            cmd.Parameters.AddWithValue("@uname", username);
+        if (st == "") return "";
+        if (st == "PENDING") return "Awaiting action";
+        if (st == "DECLINED") return "Declined or cancelled";
+        return StatusLabel(st);
     }
-
-    // ── Badge helpers ──────────────────────────────────────────────────────────
 
     private static string StatusBadge(string status)
     {
-        string cls, label;
+        string kind;
         switch (status)
         {
-            case "DRAFT":          cls = "draft";           label = "Draft";           break;
-            case "SUBMITTED":      cls = "submitted";       label = "Pending HOD";     break;
-            case "HOD_APPROVED":   cls = "hod_approved";   label = "Pending HR";      break;
-            case "HOD_DECLINED":   cls = "hod_declined";   label = "HOD Declined";    break;
-            case "HR_APPROVED":    cls = "hr_approved";    label = "Pending VC";      break;
-            case "HR_DECLINED":    cls = "hr_declined";    label = "HR Declined";     break;
-            case "VC_GRANTED":     cls = "vc_granted";     label = "Granted";         break;
-            case "VC_NOT_GRANTED": cls = "vc_not_granted"; label = "Not Granted";     break;
-            case "VC_POSTPONED":   cls = "vc_postponed";   label = "Postponed";       break;
-            case "CANCELLED":      cls = "cancelled";      label = "Cancelled";       break;
-            default:               cls = "draft";           label = status;            break;
+            case "SUBMITTED": case "HOD_APPROVED": case "HR_APPROVED": kind = "info"; break;
+            case "VC_GRANTED": kind = "ok"; break;
+            case "VC_POSTPONED": kind = "warn"; break;
+            case "HOD_DECLINED": case "HR_DECLINED": case "VC_NOT_GRANTED": kind = "bad"; break;
+            default: kind = "neutral"; break;
         }
-        return string.Format("<span class=\"lv-status lv-status--{0}\">{1}</span>", cls, label);
+        return "<span class=\"hr-badge hr-badge--" + kind + "\">" + HttpUtility.HtmlEncode(StatusLabel(status)) + "</span>";
     }
 
-    private static string LeaveTypeBadge(string type)
+    private static string LeaveTypeLabel(string type)
     {
-        string cls, label;
         switch (type)
         {
-            case "annual":       cls = "annual";      label = "Annual";       break;
-            case "study":        cls = "study";       label = "Study";        break;
-            case "sick":         cls = "sick";        label = "Sick";         break;
-            case "maternity":    cls = "maternity";   label = "Maternity";    break;
-            case "bereavement":  cls = "bereavement"; label = "Bereavement";  break;
-            default:             cls = "annual";      label = type;           break;
+            case "annual":      return "Annual leave";
+            case "study":       return "Study leave";
+            case "sick":        return "Sick leave";
+            case "maternity":   return "Maternity leave";
+            case "bereavement": return "Family bereavement";
+            default:            return type;
         }
-        return string.Format("<span class=\"lv-type lv-type--{0}\">{1}</span>", cls, label);
     }
 
-    private static readonly string[] AvatarColors = {
-        "#174DA4","#2e7d32","#6a1b9a","#00838f","#c62828","#4527a0","#00695c","#ad1457","#e65100","#37474f"
-    };
-    private static string GetAvatarColor(string name)
+    private static string StatusOptions(string sel)
     {
-        if (string.IsNullOrEmpty(name)) return AvatarColors[0];
-        int h = 0; foreach (char c in name) h = (h * 31 + (int)c) & 0x7fffffff;
-        return AvatarColors[h % AvatarColors.Length];
-    }
-    private static string GetInitials(string name)
-    {
-        var parts = (name ?? "?").Split(new[]{' '}, StringSplitOptions.RemoveEmptyEntries);
-        if (parts.Length >= 2) return ("" + parts[0][0] + parts[parts.Length - 1][0]).ToUpper();
-        return name.Length >= 2 ? name.Substring(0, 2).ToUpper() : (name.Length == 1 ? name.ToUpper() : "?");
+        string[][] opts =
+        {
+            new[] { "", "All statuses" },
+            new[] { "PENDING", "Awaiting action" },
+            new[] { "SUBMITTED", "Awaiting HOD" },
+            new[] { "HOD_APPROVED", "Awaiting HR" },
+            new[] { "HR_APPROVED", "Awaiting Vice Chancellor" },
+            new[] { "VC_GRANTED", "Granted" },
+            new[] { "VC_POSTPONED", "Postponed" },
+            new[] { "DECLINED", "Declined or cancelled" },
+            new[] { "HOD_DECLINED", "Declined by HOD" },
+            new[] { "HR_DECLINED", "Declined by HR" },
+            new[] { "VC_NOT_GRANTED", "Not granted" },
+            new[] { "CANCELLED", "Cancelled" },
+            new[] { "DRAFT", "Draft" }
+        };
+        StringBuilder sb = new StringBuilder();
+        foreach (string[] o in opts)
+            sb.AppendFormat("<option value=\"{0}\"{1}>{2}</option>", o[0], o[0] == sel ? " selected=\"selected\"" : "", o[1]);
+        return sb.ToString();
     }
 
-    // ── Utilities ──────────────────────────────────────────────────────────────
+    private static string TypeOptions(string sel)
+    {
+        StringBuilder sb = new StringBuilder("<option value=\"\">All leave types</option>");
+        foreach (string t in LeaveTypes)
+            sb.AppendFormat("<option value=\"{0}\"{1}>{2}</option>", t, t == sel ? " selected=\"selected\"" : "", LeaveTypeLabel(t));
+        return sb.ToString();
+    }
+
+    private const string IconDownload =
+        "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><path d=\"M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4\"/><polyline points=\"7 10 12 15 17 10\"/><line x1=\"12\" y1=\"15\" x2=\"12\" y2=\"3\"/></svg>";
+
+    // ── utilities ─────────────────────────────────────────────────────────
+
+    private static string Initials(string name)
+    {
+        string[] parts = (name ?? "").Split(new[] { ' ' }, StringSplitOptions.RemoveEmptyEntries);
+        if (parts.Length >= 2) return ("" + parts[0][0] + parts[parts.Length - 1][0]).ToUpperInvariant();
+        if (parts.Length == 1) return parts[0].Substring(0, Math.Min(2, parts[0].Length)).ToUpperInvariant();
+        return "";
+    }
+
+    private static string JoinNonEmpty(object a, object b)
+    {
+        string x = Str(a), y = Str(b);
+        if (x != "" && y != "") return x + ", " + y;
+        return x + y;
+    }
+
+    private static string D(object v)
+    {
+        if (v == null || v == DBNull.Value) return "";
+        DateTime d;
+        if (v is DateTime) d = (DateTime)v;
+        else if (!DateTime.TryParse(v.ToString(), out d)) return "";
+        return d.ToString("d MMM yyyy", CultureInfo.InvariantCulture);
+    }
+
+    private static string Str(object v) { return v == null || v == DBNull.Value ? "" : v.ToString().Trim(); }
+    private static string Enc(string s) { return HttpUtility.HtmlEncode(HrExport.Clean(s ?? "")); }
 
     private static string ConnStr()
     {
-        var cs = ConfigurationManager.ConnectionStrings["vacConnectionString"];
+        ConnectionStringSettings cs = ConfigurationManager.ConnectionStrings["vacConnectionString"];
         if (cs != null && !string.IsNullOrEmpty(cs.ConnectionString)) return cs.ConnectionString;
         cs = ConfigurationManager.ConnectionStrings["DefaultConnection"];
         if (cs != null) return cs.ConnectionString;

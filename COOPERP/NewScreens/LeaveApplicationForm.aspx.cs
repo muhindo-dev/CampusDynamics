@@ -6,6 +6,13 @@ using System.Text;
 using System.Web;
 using MySql.Data.MySqlClient;
 
+/// <summary>
+/// Leave application form: Section 1 (employee), 2 (Head of Department), 3 (HR) and
+/// 4 (Vice Chancellor). Used by every employee, by whoever they chose as Supervisor / HOD,
+/// by HR and by the Vice Chancellor; the role rules below decide who may act at each stage.
+/// ?print=1 renders the official form through HrDocument with all four sections and
+/// signature lines.
+/// </summary>
 public partial class COOPERP_NewScreens_LeaveApplicationForm : System.Web.UI.Page
 {
     private static readonly HashSet<string> HrRoles = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
@@ -21,17 +28,28 @@ public partial class COOPERP_NewScreens_LeaveApplicationForm : System.Web.UI.Pag
 
     protected void Page_Load(object sender, EventArgs e)
     {
-        RoleAccessService.RequireSlug(this, "hr.leave_applications");
-
         string ajax = (Request.QueryString["ajax"] ?? "").Trim();
         if (!string.IsNullOrEmpty(ajax))
         {
+            Response.Clear();
             Response.ContentType = "application/json";
             Response.Cache.SetNoStore();
+            if (!HrAccess.IsSignedIn())
+            {
+                Response.StatusCode = 401;
+                Response.Write("{\"ok\":false,\"error\":\"Your session has expired. Please sign in again.\"}");
+                Response.Flush();
+                Response.End();
+                return;
+            }
+            RoleAccessService.RequireSlug(this, "hr.leave_applications");
             HandleAjax(ajax);
             Response.End();
             return;
         }
+
+        if (!HrAccess.IsSignedIn()) { Response.Redirect("~/Default.aspx", true); return; }
+        RoleAccessService.RequireSlug(this, "hr.leave_applications");
 
         if (!IsPostBack)
             LoadForm();
@@ -51,46 +69,49 @@ public partial class COOPERP_NewScreens_LeaveApplicationForm : System.Web.UI.Pag
         int.TryParse(Request.QueryString["id"] ?? "0", out appId);
         bool isPrint = (Request.QueryString["print"] == "1");
 
-        if (appId <= 0)
-            RenderNewForm(username, screenName, isAdmin, isHr, isVc, isHod);
-        else
-            RenderExistingForm(appId, username, screenName, roleCode, isAdmin, isHr, isVc, isHod, isPrint);
+        if (isPrint && appId > 0)
+        {
+            RenderPrint(appId, username, isAdmin, isHr, isVc, isHod);
+            return;
+        }
 
-        if (isPrint)
-            Page.ClientScript.RegisterStartupScript(GetType(), "autoPrint",
-                "window.onload = function(){ window.print(); };", true);
+        if (appId <= 0)
+            RenderNewForm(username, screenName);
+        else
+            RenderExistingForm(appId, username, screenName, roleCode, isAdmin, isHr, isVc, isHod);
+    }
+
+    /// <summary>Employees see only their own; the chosen Supervisor / HOD sees theirs; HR, VC and HOD roles see all.</summary>
+    private static bool CanView(Dictionary<string, object> app, string username, bool isAdmin, bool isHr, bool isVc, bool isHod)
+    {
+        string createdBy = S(app, "created_by");
+        string supUser   = S(app, "supervisor_username").Trim();
+        bool isAssignedHod = supUser.Length > 0 && string.Equals(supUser, username.Trim(), StringComparison.OrdinalIgnoreCase);
+        return isAdmin || isHr || isVc || isHod || isAssignedHod ||
+               string.Equals(createdBy, username, StringComparison.OrdinalIgnoreCase);
     }
 
     // ══════════════════════════════════════════════════════════════════════════
     //  NEW APPLICATION
     // ══════════════════════════════════════════════════════════════════════════
 
-    private void RenderNewForm(string username, string screenName,
-        bool isAdmin, bool isHr, bool isVc, bool isHod)
+    private void RenderNewForm(string username, string screenName)
     {
-        litPageTitle.Text   = "New Leave Application";
+        litPageTitle.Text   = "New leave application";
         litStatusBadge.Text = StatusBadge("DRAFT");
-        litHeaderSub.Text   = "Fill in Section 1 and submit it to your Supervisor / HOD.";
+        litHeaderSub.Text   = "Complete section 1 and submit it to your Head of Department";
         litAppId.Text       = "0";
         litPrintBtn.Text    = "";
-        litLetterRef.Text   = "New application";
-        litTimeline.Text    = BuildTimeline("DRAFT", "", "", "");
+        litTimeline.Text    = BuildTimeline("DRAFT");
 
         StaffProfile prof   = LoadStaffProfile(username);
         if (string.IsNullOrEmpty(prof.Name)) prof.Name = screenName;
         litSection1.Text    = BuildSection1Editable(null, prof, username);
-        litSection2.Text    = SectionLocked("2", "Section 2 — Head of Department Approval",
-                                  "Waiting for employee to submit the application.");
-        litSection3.Text    = SectionLocked("3", "Section 3 — Human Resources Department",
-                                  "Requires HOD approval before HR can act.");
-        litSection4.Text    = SectionLocked("4", "Section 4 — Vice Chancellor's Office",
-                                  "Requires HR approval before VC can act.");
+        litSection2.Text    = SectionLocked(2, "Opens when the application is submitted.");
+        litSection3.Text    = SectionLocked(3, "Opens after the Head of Department approves.");
+        litSection4.Text    = SectionLocked(4, "Opens after HR approves.");
         litAuditTrail.Text  = "";
-
-        var ab = new StringBuilder();
-        ab.Append(DraftButtons());
-        ab.Append("<span class=\"lf-actions__note\">Save a draft to finish later. Submitting sends it to the Supervisor / HOD you chose.</span>");
-        litActionBar.Text = ab.ToString();
+        litActionBar.Text   = DraftButtons();
     }
 
     // ══════════════════════════════════════════════════════════════════════════
@@ -98,13 +119,14 @@ public partial class COOPERP_NewScreens_LeaveApplicationForm : System.Web.UI.Pag
     // ══════════════════════════════════════════════════════════════════════════
 
     private void RenderExistingForm(int appId, string username, string screenName,
-        string roleCode, bool isAdmin, bool isHr, bool isVc, bool isHod, bool isPrint)
+        string roleCode, bool isAdmin, bool isHr, bool isVc, bool isHod)
     {
         Dictionary<string, object> app = LoadApp(appId);
 
         if (app == null)
         {
-            litSection1.Text = "<div style=\"color:#dc2626;padding:20px;\">Application not found or has been cancelled.</div>";
+            litPageTitle.Text = "Leave application";
+            litSection1.Text  = "<div class=\"hr-notice hr-notice--bad\">This application was not found or has been removed.</div>";
             litActionBar.Text = "";
             return;
         }
@@ -114,36 +136,30 @@ public partial class COOPERP_NewScreens_LeaveApplicationForm : System.Web.UI.Pag
         string createdBy = S(app, "created_by");
         string supUser   = S(app, "supervisor_username");
 
-        // Only the assigned Supervisor / HOD (or an admin) can act - the same rule
+        // Only the assigned Supervisor / HOD (or an admin) can act: the same rule
         // the hod_approve / hod_decline handlers enforce.
         bool isAssignedHod = !string.IsNullOrEmpty(supUser) &&
                              string.Equals(supUser.Trim(), username.Trim(), StringComparison.OrdinalIgnoreCase);
 
-        // Access check: employees see only their own; the assigned supervisor sees theirs
-        if (!isAdmin && !isHr && !isVc && !isHod && !isAssignedHod &&
-            !string.Equals(createdBy, username, StringComparison.OrdinalIgnoreCase))
+        if (!CanView(app, username, isAdmin, isHr, isVc, isHod))
         {
-            litSection1.Text  = "<div style=\"color:#dc2626;padding:20px;\">You do not have permission to view this application.</div>";
+            litPageTitle.Text = "Leave application";
+            litSection1.Text  = "<div class=\"hr-notice hr-notice--bad\">You do not have permission to view this application.</div>";
             litActionBar.Text = "";
             return;
         }
 
-        litPageTitle.Text   = "Leave Application — " + HttpUtility.HtmlEncode(empName);
+        litPageTitle.Text   = "Leave application: " + Enc(empName);
         litStatusBadge.Text = StatusBadge(status);
-        litHeaderSub.Text   = "Application #" + appId + " &nbsp;·&nbsp; " +
-                              HttpUtility.HtmlEncode(LeaveTypeLabel(S(app, "leave_type"))) +
-                              " &nbsp;·&nbsp; " + FormatDate(app, "leave_from") +
-                              " to " + FormatDate(app, "leave_to");
+        litHeaderSub.Text   = Enc(Ref(appId) + ", " + LeaveTypeLabel(S(app, "leave_type")) + ", " +
+                              FormatDate(app, "leave_from") + " to " + FormatDate(app, "leave_to"));
         litAppId.Text       = appId.ToString();
-        string submittedOn  = FormatDate(app, "employee_submitted_at");
-        litLetterRef.Text   = "Application #" + appId +
-                              (string.IsNullOrEmpty(submittedOn) ? "" : " &nbsp;&middot;&nbsp; Submitted " + HttpUtility.HtmlEncode(submittedOn));
         litPrintBtn.Text    =
-            "<button type=\"button\" class=\"lf-btn lf-btn--outline\" onclick=\"printForm()\">" +
-            "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"11\" height=\"11\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><polyline points=\"6 9 6 2 18 2 18 9\"/><path d=\"M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2\"/><rect x=\"6\" y=\"14\" width=\"12\" height=\"8\"/></svg>" +
-            " Print</button>";
+            "<a class=\"hr-btn hr-btn--inverse\" href=\"LeaveApplicationForm.aspx?id=" + appId + "&amp;print=1\" target=\"_blank\">" +
+            "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><polyline points=\"6 9 6 2 18 2 18 9\"/><path d=\"M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2\"/><rect x=\"6\" y=\"14\" width=\"12\" height=\"8\"/></svg>" +
+            "Print</a>";
 
-        litTimeline.Text = BuildTimeline(status, S(app, "hod_actor_name"), S(app, "hr_actor_name"), S(app, "vc_decision"));
+        litTimeline.Text = BuildTimeline(status);
 
         // ── Section 1 ──────────────────────────────────────────────────────────
         bool canEditDraft = (status == "DRAFT") &&
@@ -161,27 +177,30 @@ public partial class COOPERP_NewScreens_LeaveApplicationForm : System.Web.UI.Pag
         bool canActHod = (status == "SUBMITTED") && (isAdmin || isAssignedHod);
 
         if (status == "DRAFT")
-            litSection2.Text = SectionLocked("2", "Section 2 — Head of Department Approval",
-                "Waiting for employee to submit the application.");
+            litSection2.Text = SectionLocked(2, "Opens when the application is submitted.");
         else if (status == "SUBMITTED" && canActHod)
-            litSection2.Text = BuildSection2Active(app);
+            litSection2.Text = SectionWaiting(2, "Awaiting your decision", "Approve to forward the application to HR, or decline it.");
         else if (status == "SUBMITTED")
-            litSection2.Text = SectionLocked("2", "Section 2 — Head of Department Approval",
-                "Application submitted — awaiting HOD / Supervisor action.");
+            litSection2.Text = SectionLocked(2, "Awaiting the Head of Department.");
+        else if (status == "CANCELLED" && string.IsNullOrEmpty(S(app, "hod_action")))
+            litSection2.Text = SectionLocked(2, "Not reached.");
         else
             litSection2.Text = BuildSection2Readonly(app);
 
         // ── Section 3 ──────────────────────────────────────────────────────────
         bool canActHr = (status == "HOD_APPROVED") && (isAdmin || isHr);
 
-        if (status == "DRAFT" || status == "SUBMITTED" || status == "HOD_DECLINED")
-            litSection3.Text = SectionLocked("3", "Section 3 — Human Resources Department",
-                status == "HOD_DECLINED" ? "HOD declined — HR review not required." : "Requires HOD approval before HR can act.");
+        if (status == "DRAFT" || status == "SUBMITTED")
+            litSection3.Text = SectionLocked(3, "Opens after the Head of Department approves.");
+        else if (status == "HOD_DECLINED")
+            litSection3.Text = SectionLocked(3, "Not required: declined by the Head of Department.");
         else if (canActHr)
-            litSection3.Text = BuildSection3Active(app);
+            litSection3.Text = SectionWaiting(3, "Awaiting your decision",
+                "Duties handed over to " + Or(S(app, "hod_handover_to"), "nobody named") + ". Approved by " + Or(S(app, "hod_actor_name"), "the Head of Department") + ".");
         else if (status == "HOD_APPROVED")
-            litSection3.Text = SectionLocked("3", "Section 3 — Human Resources Department",
-                "HOD approved — awaiting HR Department action.");
+            litSection3.Text = SectionLocked(3, "Awaiting HR.");
+        else if (status == "CANCELLED" && string.IsNullOrEmpty(S(app, "hr_action")))
+            litSection3.Text = SectionLocked(3, "Not reached.");
         else
             litSection3.Text = BuildSection3Readonly(app);
 
@@ -189,23 +208,22 @@ public partial class COOPERP_NewScreens_LeaveApplicationForm : System.Web.UI.Pag
         bool canActVc = (status == "HR_APPROVED") && (isAdmin || isVc);
         bool vcDone   = (status == "VC_GRANTED" || status == "VC_NOT_GRANTED" || status == "VC_POSTPONED");
 
-        if (status == "DRAFT" || status == "SUBMITTED" || status == "HOD_DECLINED" ||
-            status == "HOD_APPROVED" || status == "HR_DECLINED")
-            litSection4.Text = SectionLocked("4", "Section 4 — Vice Chancellor's Office",
-                "Requires HR approval before VC can act.");
+        if (status == "HOD_DECLINED" || status == "HR_DECLINED")
+            litSection4.Text = SectionLocked(4, "Not required: the application was declined.");
+        else if (status == "DRAFT" || status == "SUBMITTED" || status == "HOD_APPROVED")
+            litSection4.Text = SectionLocked(4, "Opens after HR approves.");
         else if (canActVc)
-            litSection4.Text = BuildSection4Active(app);
+            litSection4.Text = SectionWaiting(4, "Awaiting your decision",
+                "HR set the leave from " + Or(FormatDate(app, "hr_effective_from"), "the requested date") + " to " + Or(FormatDate(app, "hr_effective_to"), "the requested date") + ".");
         else if (status == "HR_APPROVED")
-            litSection4.Text = SectionLocked("4", "Section 4 — Vice Chancellor's Office",
-                "HR approved — awaiting Vice Chancellor's decision.");
+            litSection4.Text = SectionLocked(4, "Awaiting the Vice Chancellor.");
         else if (vcDone)
             litSection4.Text = BuildSection4Readonly(app);
         else
-            litSection4.Text = SectionLocked("4", "Section 4 — Vice Chancellor's Office", "");
+            litSection4.Text = SectionLocked(4, "Not reached.");
 
         litAuditTrail.Text = BuildAuditTrail(appId);
-        litActionBar.Text  = BuildActionBar(app, appId, status, username,
-            isAdmin, isHr, isVc, isHod, canEditDraft, canActHod, canActHr, canActVc) +
+        litActionBar.Text  = BuildActionBar(status, isAdmin, isHr, canEditDraft, canActHod, canActHr, canActVc) +
             AppJsData(app);
     }
 
@@ -214,11 +232,11 @@ public partial class COOPERP_NewScreens_LeaveApplicationForm : System.Web.UI.Pag
     {
         int nd = N(app, "num_days");
         string summary =
-            "<strong>" + HttpUtility.HtmlEncode(S(app, "emp_name")) + "</strong> &middot; " +
-            HttpUtility.HtmlEncode(LeaveTypeLabel(S(app, "leave_type"))) + "<br/>" +
-            HttpUtility.HtmlEncode(LongDate(app, "leave_from")) + " to " +
-            HttpUtility.HtmlEncode(LongDate(app, "leave_to")) +
-            (nd > 0 ? " &middot; " + nd + (nd == 1 ? " day" : " days") : "");
+            "<strong>" + Enc(S(app, "emp_name")) + "</strong>, " +
+            Enc(LeaveTypeLabel(S(app, "leave_type"))) + "<br/>" +
+            Enc(LongDate(app, "leave_from")) + " to " +
+            Enc(LongDate(app, "leave_to")) +
+            (nd > 0 ? ", " + nd + (nd == 1 ? " day" : " days") : "");
         return "<script>window.LF_APP={" +
             "from:" + JsStr(DateVal(app, "leave_from")) + "," +
             "to:"   + JsStr(DateVal(app, "leave_to"))   + "," +
@@ -230,105 +248,77 @@ public partial class COOPERP_NewScreens_LeaveApplicationForm : System.Web.UI.Pag
     private static string DraftButtons()
     {
         return
-            "<button type=\"button\" class=\"lf-btn lf-btn--outline\" id=\"btnSaveDraft\" onclick=\"saveDraft(false)\">" +
-            "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"12\" height=\"12\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><path d=\"M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z\"/><polyline points=\"17 21 17 13 7 13 7 21\"/><polyline points=\"7 3 7 8 15 8\"/></svg>" +
-            " Save Draft</button>" +
-            "<button type=\"button\" class=\"lf-btn lf-btn--primary\" id=\"btnSubmitApp\" onclick=\"saveDraft(true)\">" +
-            "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"12\" height=\"12\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><line x1=\"22\" y1=\"2\" x2=\"11\" y2=\"13\"/><polygon points=\"22 2 15 22 11 13 2 9 22 2\"/></svg>" +
-            " Submit Application</button>";
+            "<button type=\"button\" class=\"hr-btn hr-btn--secondary\" id=\"btnSaveDraft\" onclick=\"saveDraft(false)\">Save draft</button>" +
+            "<button type=\"button\" class=\"hr-btn hr-btn--primary\" id=\"btnSubmitApp\" onclick=\"saveDraft(true)\">" +
+            "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><line x1=\"22\" y1=\"2\" x2=\"11\" y2=\"13\"/><polygon points=\"22 2 15 22 11 13 2 9 22 2\"/></svg>" +
+            "Submit application</button>";
     }
 
     // ══════════════════════════════════════════════════════════════════════════
-    //  TIMELINE
+    //  STAGES
     // ══════════════════════════════════════════════════════════════════════════
 
-    private static string BuildTimeline(string status, string hodActor, string hrActor, string vcDecision)
+    private static string BuildTimeline(string status)
     {
-        // Step states
-        bool isNew         = (status == "DRAFT");
-        bool hodDeclined   = (status == "HOD_DECLINED");
-        bool hrDeclined    = (status == "HR_DECLINED");
-        bool vcNotGood     = (status == "VC_NOT_GRANTED" || status == "VC_POSTPONED");
-        bool vcGranted     = (status == "VC_GRANTED");
-
-        bool submitted     = !isNew;
-        bool hodActed      = submitted && status != "SUBMITTED";
-        bool hodOk         = hodActed && !hodDeclined;
-        bool hrActed       = hodOk && status != "HOD_APPROVED";
-        bool hrOk          = hrActed && !hrDeclined;
-        bool vcActed       = hrOk && status != "HR_APPROVED";
-
-        string step1Cls = isNew      ? "active" : "done";
-        string step1Sub = isNew      ? "Filling form" : "Submitted";
-
-        string step2Cls = !submitted ? "" : (hodDeclined ? "declined" : (hodActed ? "done" : "active"));
-        string step2Sub = !submitted ? "Awaiting submission"
-                        : hodDeclined ? "Declined by HOD"
-                        : hodActed   ? "Approved" + (string.IsNullOrEmpty(hodActor) ? "" : " by " + hodActor)
-                        : "Awaiting HOD action";
-
-        string step3Cls = !hodOk ? "" : (hrDeclined ? "declined" : (hrActed ? "done" : "active"));
-        string step3Sub = !hodOk ? "Pending HOD approval"
-                        : hrDeclined ? "Declined by HR"
-                        : hrActed   ? "Approved" + (string.IsNullOrEmpty(hrActor) ? "" : " by " + hrActor)
-                        : "Awaiting HR Department";
-
-        string step4Cls = !hrOk ? "" : (vcNotGood ? "declined" : (vcActed ? "done" : "active"));
-        string step4Sub = !hrOk ? "Pending HR approval"
-                        : vcGranted ? "Leave Granted"
-                        : vcNotGood ? (status == "VC_POSTPONED" ? "Postponed" : "Not Granted")
-                        : vcActed   ? "Decision issued"
-                        : "Awaiting VC decision";
-
-        var sb = new StringBuilder();
-        sb.Append("<div class=\"lf-timeline\">");
-        sb.Append(TlStep("1", "Employee", step1Sub, step1Cls));
-        sb.Append(TlArrow(step1Cls == "done"));
-        sb.Append(TlStep("2", "HOD Approval", step2Sub, step2Cls));
-        sb.Append(TlArrow(step2Cls == "done"));
-        sb.Append(TlStep("3", "HR Department", step3Sub, step3Cls));
-        sb.Append(TlArrow(step3Cls == "done"));
-        sb.Append(TlStep("4", "Vice Chancellor", step4Sub, step4Cls));
-        sb.Append("</div>");
+        // 0 = draft, 1 = with HOD, 2 = with HR, 3 = with VC, 4 = decided
+        string[] cls = new string[4];
+        switch (status)
+        {
+            case "DRAFT":          cls = new[] { "is-now", "", "", "" }; break;
+            case "SUBMITTED":      cls = new[] { "is-done", "is-now", "", "" }; break;
+            case "HOD_DECLINED":   cls = new[] { "is-done", "is-stop", "", "" }; break;
+            case "HOD_APPROVED":   cls = new[] { "is-done", "is-done", "is-now", "" }; break;
+            case "HR_DECLINED":    cls = new[] { "is-done", "is-done", "is-stop", "" }; break;
+            case "HR_APPROVED":    cls = new[] { "is-done", "is-done", "is-done", "is-now" }; break;
+            case "VC_GRANTED":     cls = new[] { "is-done", "is-done", "is-done", "is-done" }; break;
+            case "VC_NOT_GRANTED":
+            case "VC_POSTPONED":   cls = new[] { "is-done", "is-done", "is-done", "is-stop" }; break;
+            default:               cls = new[] { "is-done", "", "", "" }; break;
+        }
+        string[] labels = { "Employee", "Head of Department", "HR", "Vice Chancellor" };
+        StringBuilder sb = new StringBuilder("<ul class=\"hr-stages\">");
+        for (int i = 0; i < 4; i++)
+            sb.Append("<li").Append(cls[i] != "" ? " class=\"" + cls[i] + "\"" : "").Append("><span></span>")
+              .Append(labels[i]).Append("</li>");
+        sb.Append("</ul>");
         return sb.ToString();
     }
 
-    private static string TlStep(string num, string label, string sub, string cls)
-    {
-        string dotCls = cls == "done" ? "lf-step__dot--done"
-                      : cls == "active" ? "lf-step__dot--active"
-                      : cls == "declined" ? "lf-step__dot--declined" : "";
-        string icon   = cls == "done" ? "&#10003;" : cls == "declined" ? "&#10007;" : num;
-        return string.Format(
-            "<div class=\"lf-step\">" +
-            "<div class=\"lf-step__dot {0}\">{1}</div>" +
-            "<div class=\"lf-step__info\">" +
-            "<div class=\"lf-step__label\">{2}</div>" +
-            "<div class=\"lf-step__sub\">{3}</div>" +
-            "</div></div>",
-            dotCls, icon,
-            HttpUtility.HtmlEncode(label),
-            HttpUtility.HtmlEncode(sub));
-    }
-    private static string TlArrow(bool done)
-    {
-        return "<div class=\"lf-step__arrow" + (done ? " lf-step__arrow--done" : "") + "\"></div>";
-    }
-
     // ══════════════════════════════════════════════════════════════════════════
-    //  SECTION 1 — EMPLOYEE DETAILS
+    //  SECTION 1: EMPLOYEE
     // ══════════════════════════════════════════════════════════════════════════
 
-    private const string ReqMark = "<span class=\"lf-req\" title=\"Required\">*</span>";
+    private const string ReqMark = " <span class=\"hr-req\" title=\"Required\">*</span>";
 
     private static readonly string[][] LeaveTypes =
     {
-        new[] { "annual",      "Annual leave",       "Your yearly paid leave entitlement." },
-        new[] { "study",       "Study leave",        "Time off for approved courses or examinations." },
-        new[] { "sick",        "Sick leave",         "Illness, injury or medical treatment." },
-        new[] { "maternity",   "Maternity leave",    "Before and after the birth of your child." },
-        new[] { "bereavement", "Family bereavement", "Death or burial of a close family member." }
+        new[] { "annual",      "Annual leave" },
+        new[] { "study",       "Study leave" },
+        new[] { "sick",        "Sick leave" },
+        new[] { "maternity",   "Maternity leave" },
+        new[] { "bereavement", "Family bereavement" }
     };
+
+    private static string SectionTitle(int n)
+    {
+        switch (n)
+        {
+            case 1: return "Section 1: Leave request";
+            case 2: return "Section 2: Head of Department";
+            case 3: return "Section 3: Human Resources";
+            default: return "Section 4: Vice Chancellor";
+        }
+    }
+
+    private static string SectionHead(int n, string badgeHtml)
+    {
+        return "<div class=\"hr-card__head\"><div class=\"hr-card__title\">" + SectionTitle(n) + "</div>" + badgeHtml + "</div>";
+    }
+
+    private static string Badge(string kind, string text)
+    {
+        return "<span class=\"hr-badge hr-badge--" + kind + "\">" + HttpUtility.HtmlEncode(text) + "</span>";
+    }
 
     private string BuildSection1Editable(Dictionary<string, object> app, StaffProfile prof, string currentUser)
     {
@@ -363,215 +353,155 @@ public partial class COOPERP_NewScreens_LeaveApplicationForm : System.Web.UI.Pag
         bool supFound;
         string supOptions = BuildSupervisorOptions(LoadSupervisors(), supUser, supName, supForce, currentUser, out supFound);
 
-        bool fromRecord = prof.EmpId > 0;
+        StringBuilder sb = new StringBuilder();
+        sb.Append("<div class=\"hr-card lf-sec lf-sec--now\" id=\"sec1\">");
+        sb.Append(SectionHead(1, Badge("neutral", "Draft")));
+        sb.Append("<div class=\"hr-card__body\" id=\"sec1Form\">");
 
-        var sb = new StringBuilder();
-        sb.Append("<div class=\"lf-section lf-section--active\" id=\"sec1\">");
-        sb.Append("<div class=\"lf-section__head\">");
-        sb.Append("<div class=\"lf-section__num\">1</div>");
-        sb.Append("<div class=\"lf-section__title\">Section 1 &mdash; Leave Request</div>");
-        sb.Append("<span class=\"lf-section__badge badge--waiting\">Draft</span>");
-        sb.Append("</div><div class=\"lf-section__body lf-form\" id=\"sec1Form\">");
-        sb.Append("<p class=\"lf-intro\">Fields marked " + ReqMark + " are needed to submit. You can save a draft at any time and finish later.</p>");
-
-        // ── (a) Leave requested ─────────────────────────────────────────────
-        sb.Append(GroupHead(IconCalendar, "Leave requested", ""));
-        sb.Append("<div class=\"lf-leave-grid\">");
-
-        sb.Append("<div class=\"lf-field\" id=\"fld_leaveType\">");
-        sb.Append("<span class=\"lf-label\" id=\"lblLeaveType\">Type of leave" + ReqMark + "</span>");
-        sb.Append("<div class=\"lf-radios\" role=\"radiogroup\" aria-labelledby=\"lblLeaveType\">");
+        // Leave requested
+        sb.Append("<div class=\"lf-group\">Leave requested</div>");
+        sb.Append("<div class=\"hr-form\">");
+        sb.Append("<div class=\"hr-field hr-full\" id=\"fld_leaveType\">");
+        sb.Append("<span class=\"hr-label\" id=\"lblLeaveType\">Type of leave" + ReqMark + "</span>");
+        sb.Append("<div class=\"hr-radios\" role=\"radiogroup\" aria-labelledby=\"lblLeaveType\">");
         bool known = false;
         foreach (string[] lt in LeaveTypes)
         {
             bool chk = string.Equals(lt[0], lvType, StringComparison.OrdinalIgnoreCase);
             if (chk) known = true;
-            sb.Append(LvTypeRadio(lt[0], lt[1], lt[2], chk));
+            sb.Append(LvTypeRadio(lt[0], lt[1], chk));
         }
         if (!known && !string.IsNullOrEmpty(lvType))   // legacy value saved on an old draft
-            sb.Append(LvTypeRadio(lvType, LeaveTypeLabel(lvType), "Saved on this draft.", true));
-        sb.Append("</div><div class=\"lf-err\" role=\"alert\"></div></div>");
+            sb.Append(LvTypeRadio(lvType, LeaveTypeLabel(lvType), true));
+        sb.Append("</div><div class=\"hr-error lf-err\" role=\"alert\"></div></div>");
 
-        sb.Append("<div style=\"min-width:0;\">");
-        sb.Append("<div class=\"lf-grid\">");
-        sb.Append(Fld("leaveFrom", "First day", true,
-            InputHtml("leaveFrom", "date", lvFrom, ""), ""));
-        sb.Append(Fld("leaveTo", "Last day", true,
-            InputHtml("leaveTo", "date", lvTo, ""), ""));
+        sb.Append(Fld("leaveFrom", "First day", true, InputHtml("leaveFrom", "date", lvFrom, ""), ""));
+        sb.Append(Fld("leaveTo", "Last day", true, InputHtml("leaveTo", "date", lvTo, ""), ""));
+        sb.Append("<div class=\"hr-full hr-hint lf-days\" id=\"leaveSummary\" aria-live=\"polite\"></div>");
+        sb.Append("<div class=\"hr-full\">");
+        sb.Append(Fld("substituteArrangement", "Who will cover your duties", true,
+            TextareaHtml("substituteArrangement", subst, "Name and title of the colleague, and what they will handle"), ""));
         sb.Append("</div>");
-        sb.Append("<div class=\"lf-days\" id=\"leaveSummary\" aria-live=\"polite\"></div>");
-        sb.Append("<div style=\"margin-top:12px;\">");
-        sb.Append(Fld("substituteArrangement", "Who will cover your duties?", true,
-            TextareaHtml("substituteArrangement", subst,
-                "Name and title of the colleague, and what they will handle. e.g. Ms. Jane Nakato, Assistant Lecturer, will take my classes."),
-            ""));
-        sb.Append("</div></div>");
-        sb.Append("</div>");   // lf-leave-grid
-        sb.Append("</div>");   // group (opened by GroupHead)
-
-        // ── (b) Approver ─────────────────────────────────────────────────────
-        sb.Append(GroupHead(IconUserCheck, "Approver", ""));
-        string supHint = "Your request goes to this person first, then to Human Resources and the Vice Chancellor. Type a name to jump to it.";
-        if (app == null && supFound && !string.IsNullOrEmpty(prof.SupUsername))
-            supHint = "Pre-selected from your staff record. " + supHint;
-        else if (app == null && !string.IsNullOrEmpty(prof.SupName) && !supFound)
-            supHint = "Your staff record lists " + HttpUtility.HtmlEncode(prof.SupName) +
-                      " as your supervisor, but they cannot approve leave online yet. Choose your Head of Department from the list. " + supHint;
-        sb.Append("<div class=\"lf-grid\"><div class=\"lf-span\" style=\"max-width:520px;\">");
-        sb.Append(Fld("supUsername", "Supervisor / Head of Department", true,
-            "<select id=\"supUsername\"><option value=\"\">Select your Supervisor / HOD</option>" + supOptions + "</select>",
+        sb.Append("<div class=\"hr-full\">");
+        string supHint = "";
+        if (app == null && !string.IsNullOrEmpty(prof.SupName) && !supFound)
+            supHint = Enc(prof.SupName) + " cannot approve leave online yet. Choose your Head of Department.";
+        sb.Append(Fld("supUsername", "Head of Department or supervisor", true,
+            "<select id=\"supUsername\" class=\"hr-select\"><option value=\"\">Select the person who approves your leave</option>" + supOptions + "</select>",
             supHint));
-        sb.Append("</div></div>");
-        sb.Append("</div>");
-
-        // ── (c) Your details ────────────────────────────────────────────────
-        sb.Append(GroupHead(IconUser, "Your details",
-            fromRecord ? "Filled in from your staff record. Correct anything that is out of date." : ""));
-        sb.Append("<div class=\"lf-grid lf-grid--3\">");
-        sb.Append(Fld("empName", "Full name", true, InputHtml("empName", "text", empName, "As on your staff record"), ""));
-        sb.Append(Fld("empCode", "Employee code", false, InputHtml("empCode", "text", empCode, "e.g. MRU0123"), ""));
-        sb.Append(Fld("mobileContact", "Mobile number", true, InputHtml("mobileContact", "tel", mobile, "e.g. 0772 123456"), ""));
-        sb.Append(Fld("empDept", "Faculty / department / section", true, InputHtml("empDept", "text", dept, "e.g. Faculty of Education"), ""));
-        sb.Append(Fld("positionHeld", "Position held", false, InputHtml("positionHeld", "text", position, "e.g. Senior Lecturer"), ""));
-        sb.Append(Fld("officeLocation", "Office location", false, InputHtml("officeLocation", "text", office, "Building and room, e.g. Admin Block, Room 4"), ""));
         sb.Append("</div>");
         sb.Append("</div>");
 
-        // ── (d) While you are on leave ──────────────────────────────────────
-        sb.Append(GroupHead(IconHome, "While you are on leave", "So the University can reach you or your family if needed."));
-        sb.Append("<div class=\"lf-grid\">");
-        sb.Append("<div class=\"lf-span\">");
+        // Employee details
+        sb.Append("<div class=\"lf-group\">Employee details</div>");
+        sb.Append("<div class=\"hr-form hr-form--3\">");
+        sb.Append(Fld("empName", "Full name", true, InputHtml("empName", "text", empName, ""), ""));
+        sb.Append(Fld("empCode", "Staff number", false, InputHtml("empCode", "text", empCode, ""), ""));
+        sb.Append(Fld("mobileContact", "Mobile number", true, InputHtml("mobileContact", "tel", mobile, ""), ""));
+        sb.Append(Fld("empDept", "Faculty, department or section", true, InputHtml("empDept", "text", dept, ""), ""));
+        sb.Append(Fld("positionHeld", "Position held", false, InputHtml("positionHeld", "text", position, ""), ""));
+        sb.Append(Fld("officeLocation", "Office location", false, InputHtml("officeLocation", "text", office, "Building and room"), ""));
+        sb.Append("</div>");
+
+        // While on leave
+        sb.Append("<div class=\"lf-group\">While on leave</div>");
+        sb.Append("<div class=\"hr-form hr-form--3\">");
+        sb.Append("<div class=\"hr-full\">");
         sb.Append(Fld("residenceAddress", "Where you will stay", false,
-            TextareaHtml("residenceAddress", address, "Village / town, district, and a landmark if helpful"), ""));
+            TextareaHtml("residenceAddress", address, "Village or town, district"), ""));
         sb.Append("</div>");
-        sb.Append("</div>");
-        sb.Append("<div class=\"lf-grid lf-grid--3\" style=\"margin-top:14px;\">");
-        sb.Append(Fld("nokName", "Next of kin", false, InputHtml("nokName", "text", nokName, "Name and relationship, e.g. Sarah Kato (wife)"), ""));
-        sb.Append(Fld("nokMobile", "Next of kin phone", false, InputHtml("nokMobile", "tel", nokMob, "e.g. 0701 123456"), ""));
-        sb.Append(Fld("nokAddress", "Next of kin address", false, InputHtml("nokAddress", "text", nokAddr, "Village / town, district"), ""));
-        sb.Append("</div>");
+        sb.Append(Fld("nokName", "Next of kin", false, InputHtml("nokName", "text", nokName, "Name and relationship"), ""));
+        sb.Append(Fld("nokMobile", "Next of kin phone", false, InputHtml("nokMobile", "tel", nokMob, ""), ""));
+        sb.Append(Fld("nokAddress", "Next of kin address", false, InputHtml("nokAddress", "text", nokAddr, ""), ""));
         sb.Append("</div>");
 
-        sb.Append("</div></div>"); // body + section
+        sb.Append("</div></div>"); // body + card
         return sb.ToString();
     }
 
-    private static string LvTypeRadio(string value, string label, string desc, bool chk)
+    private static string LvTypeRadio(string value, string label, bool chk)
     {
         string v = HttpUtility.HtmlAttributeEncode(value);
         return string.Format(
-            "<label class=\"lf-radio{3}\" for=\"lt_{0}\">" +
-            "<input type=\"radio\" name=\"leaveTypeRadio\" id=\"lt_{0}\" value=\"{0}\"{4} />" +
-            "<span class=\"lf-radio__text\"><span class=\"lf-radio__title\">{1}</span>" +
-            "<span class=\"lf-radio__desc\">{2}</span></span></label>",
-            v, HttpUtility.HtmlEncode(label), HttpUtility.HtmlEncode(desc),
-            chk ? " is-checked" : "", chk ? " checked" : "");
+            "<label for=\"lt_{0}\"><input type=\"radio\" name=\"leaveTypeRadio\" id=\"lt_{0}\" value=\"{0}\"{2} />{1}</label>",
+            v, HttpUtility.HtmlEncode(label), chk ? " checked=\"checked\"" : "");
     }
-
-    // Opens a group; the caller closes it with "</div>".
-    private static string GroupHead(string icon, string title, string note)
-    {
-        return "<div class=\"lf-group\"><div class=\"lf-group__head\">" +
-               "<span class=\"lf-group__icon\">" + icon + "</span>" +
-               "<span class=\"lf-group__title\">" + HttpUtility.HtmlEncode(title) + "</span>" +
-               (string.IsNullOrEmpty(note) ? "" : "<span class=\"lf-group__note\">" + HttpUtility.HtmlEncode(note) + "</span>") +
-               "</div>";
-    }
-
-    private const string IconCalendar  = "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"13\" height=\"13\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><rect x=\"3\" y=\"4\" width=\"18\" height=\"18\"/><line x1=\"16\" y1=\"2\" x2=\"16\" y2=\"6\"/><line x1=\"8\" y1=\"2\" x2=\"8\" y2=\"6\"/><line x1=\"3\" y1=\"10\" x2=\"21\" y2=\"10\"/></svg>";
-    private const string IconUserCheck = "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"13\" height=\"13\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><path d=\"M16 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2\"/><circle cx=\"8.5\" cy=\"7\" r=\"4\"/><polyline points=\"17 11 19 13 23 9\"/></svg>";
-    private const string IconUser      = "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"13\" height=\"13\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><path d=\"M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2\"/><circle cx=\"12\" cy=\"7\" r=\"4\"/></svg>";
-    private const string IconHome      = "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"13\" height=\"13\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><path d=\"M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z\"/><polyline points=\"9 22 9 12 15 12 15 22\"/></svg>";
 
     private static string BuildSection1Readonly(Dictionary<string, object> app)
     {
         string status = S(app, "status");
-        string cls    = (status == "CANCELLED") ? "" : "lf-section--completed";
-        string badge  = (status == "CANCELLED")
-            ? "<span class=\"lf-section__badge badge--locked\">Cancelled</span>"
-            : "<span class=\"lf-section__badge badge--approved\">Submitted</span>";
-
-        var sb = new StringBuilder();
-        sb.AppendFormat("<div class=\"lf-section {0}\">", cls);
-        sb.Append("<div class=\"lf-section__head\">");
-        sb.Append("<div class=\"lf-section__num\">1</div>");
-        sb.Append("<div class=\"lf-section__title\">Section 1 &mdash; Leave Request</div>");
-        sb.Append(badge);
-        sb.Append("</div><div class=\"lf-section__body\">");
-
+        string badge  = status == "CANCELLED" ? Badge("neutral", "Cancelled") : Badge("ok", "Submitted");
         int nd = N(app, "num_days");
-        sb.Append("<div class=\"lf-ro-group\"><div class=\"lf-ro-title\">Leave requested</div><dl class=\"lf-dl\">");
-        sb.Append(Dl("Type of leave", LeaveTypeLabel(S(app, "leave_type")), false));
-        sb.Append(Dl("Number of days", nd > 0 ? nd + (nd == 1 ? " day" : " days") : "", false));
-        sb.Append(Dl("First day", LongDate(app, "leave_from"), false));
-        sb.Append(Dl("Last day",  LongDate(app, "leave_to"),   false));
-        sb.Append(Dl("Cover arrangement", S(app, "substitute_arrangement"), true));
-        sb.Append("</dl></div>");
-
         string supDisp = S(app, "supervisor_name");
         if (string.IsNullOrEmpty(supDisp)) supDisp = S(app, "supervisor_username");
-        sb.Append("<div class=\"lf-ro-group\"><div class=\"lf-ro-title\">Approver</div><dl class=\"lf-dl\">");
-        sb.Append(Dl("Supervisor / HOD", supDisp, true));
-        sb.Append("</dl></div>");
 
-        sb.Append("<div class=\"lf-ro-group\"><div class=\"lf-ro-title\">Employee details</div><dl class=\"lf-dl\">");
-        sb.Append(Dl("Full name",       S(app, "emp_name"),        false));
-        sb.Append(Dl("Employee code",   S(app, "emp_code"),        false));
-        sb.Append(Dl("Department",      S(app, "faculty_dept"),    false));
-        sb.Append(Dl("Position held",   S(app, "position_held"),   false));
-        sb.Append(Dl("Office location", S(app, "office_location"), false));
-        sb.Append(Dl("Mobile number",   S(app, "mobile_contact"),  false));
-        sb.Append("</dl></div>");
+        StringBuilder sb = new StringBuilder();
+        sb.Append("<div class=\"hr-card lf-sec\">");
+        sb.Append(SectionHead(1, badge));
+        sb.Append("<div class=\"hr-card__body\">");
 
-        sb.Append("<div class=\"lf-ro-group\"><div class=\"lf-ro-title\">While on leave</div><dl class=\"lf-dl\">");
-        sb.Append(Dl("Staying at",          S(app, "residence_address"), true));
-        sb.Append(Dl("Next of kin",         S(app, "nok_name"),          false));
-        sb.Append(Dl("Next of kin phone",   S(app, "nok_mobile"),        false));
-        sb.Append(Dl("Next of kin address", S(app, "nok_address"),       true));
-        sb.Append("</dl></div>");
+        sb.Append("<div class=\"lf-group\">Leave requested</div><dl class=\"hr-dl\">");
+        sb.Append(Dl("Type of leave", LeaveTypeLabel(S(app, "leave_type"))));
+        sb.Append(Dl("First day", LongDate(app, "leave_from")));
+        sb.Append(Dl("Last day",  LongDate(app, "leave_to")));
+        sb.Append(Dl("Number of days", nd > 0 ? nd + (nd == 1 ? " day" : " days") : ""));
+        sb.Append(Dl("Head of Department or supervisor", supDisp));
+        sb.Append(Dl("Submitted", FormatDateTime(app, "employee_submitted_at")));
+        sb.Append(DlWide("Cover arrangement", S(app, "substitute_arrangement")));
+        sb.Append("</dl>");
 
-        string submitted = FormatDateTime(app, "employee_submitted_at");
-        if (!string.IsNullOrEmpty(submitted))
-            sb.AppendFormat("<p class=\"lf-meta\">Submitted on {0}</p>", HttpUtility.HtmlEncode(submitted));
+        sb.Append("<div class=\"lf-group\">Employee details</div><dl class=\"hr-dl\">");
+        sb.Append(Dl("Full name",       S(app, "emp_name")));
+        sb.Append(Dl("Staff number",    S(app, "emp_code")));
+        sb.Append(Dl("Department",      S(app, "faculty_dept")));
+        sb.Append(Dl("Position held",   S(app, "position_held")));
+        sb.Append(Dl("Office location", S(app, "office_location")));
+        sb.Append(Dl("Mobile number",   S(app, "mobile_contact")));
+        sb.Append("</dl>");
 
-        // Signature lines appear on the printed form only.
-        sb.Append("<div class=\"lf-sign\"><div>Employee&rsquo;s signature and date</div><div>Supervisor / HOD signature and date</div></div>");
+        sb.Append("<div class=\"lf-group\">While on leave</div><dl class=\"hr-dl\">");
+        sb.Append(Dl("Next of kin",         S(app, "nok_name")));
+        sb.Append(Dl("Next of kin phone",   S(app, "nok_mobile")));
+        sb.Append(Dl("Next of kin address", S(app, "nok_address")));
+        sb.Append(DlWide("Staying at",      S(app, "residence_address")));
+        sb.Append("</dl>");
 
         sb.Append("</div></div>");
         return sb.ToString();
     }
 
-    // One dt/dd pair of the read-only definition list; wide pairs take a full row.
-    private static string Dl(string label, string value, bool wide)
+    // One dt/dd pair of a definition list. Empty values read "Not recorded".
+    private static string Dl(string label, string value)
     {
         bool empty = string.IsNullOrWhiteSpace(value);
-        string cls = ((wide ? "lf-dl__wide " : "") + (empty ? "lf-dl__empty" : "")).Trim();
-        return string.Format("<dt{0}>{1}</dt><dd{2}>{3}</dd>",
-            wide ? " style=\"grid-column:1;\"" : "",
-            HttpUtility.HtmlEncode(label),
-            cls.Length > 0 ? " class=\"" + cls + "\"" : "",
-            empty ? "&mdash;" : HttpUtility.HtmlEncode(value.Trim()));
+        return "<div><dt>" + HttpUtility.HtmlEncode(label) + "</dt><dd" + (empty ? " class=\"hr-muted\"" : "") + ">" +
+               (empty ? "Not recorded" : Multiline(value.Trim())) + "</dd></div>";
+    }
+
+    private static string DlWide(string label, string value)
+    {
+        return Dl(label, value).Replace("<div>", "<div class=\"lf-wide\">");
     }
 
     // Field wrapper: label + control + optional hint + inline error slot.
     private static string Fld(string id, string label, bool required, string control, string hintHtml)
     {
-        return "<div class=\"lf-field\" id=\"fld_" + id + "\">" +
-               "<label for=\"" + id + "\">" + HttpUtility.HtmlEncode(label) + (required ? ReqMark : "") + "</label>" +
+        return "<div class=\"hr-field\" id=\"fld_" + id + "\">" +
+               "<label class=\"hr-label\" for=\"" + id + "\">" + HttpUtility.HtmlEncode(label) + (required ? ReqMark : "") + "</label>" +
                control +
-               (string.IsNullOrEmpty(hintHtml) ? "" : "<div class=\"lf-hint\">" + hintHtml + "</div>") +
-               "<div class=\"lf-err\" role=\"alert\"></div></div>";
+               (string.IsNullOrEmpty(hintHtml) ? "" : "<div class=\"hr-hint\">" + hintHtml + "</div>") +
+               "<div class=\"hr-error lf-err\" role=\"alert\"></div></div>";
     }
 
     private static string InputHtml(string id, string type, string value, string placeholder)
     {
-        return string.Format("<input type=\"{0}\" id=\"{1}\" value=\"{2}\" placeholder=\"{3}\" maxlength=\"250\" />",
+        return string.Format("<input type=\"{0}\" id=\"{1}\" class=\"hr-input\" value=\"{2}\" placeholder=\"{3}\" maxlength=\"250\" />",
             type, id, HttpUtility.HtmlAttributeEncode(value ?? ""), HttpUtility.HtmlAttributeEncode(placeholder ?? ""));
     }
 
     private static string TextareaHtml(string id, string value, string placeholder)
     {
-        return string.Format("<textarea id=\"{0}\" placeholder=\"{1}\" rows=\"2\">{2}</textarea>",
+        return string.Format("<textarea id=\"{0}\" class=\"hr-textarea\" placeholder=\"{1}\" rows=\"2\">{2}</textarea>",
             id, HttpUtility.HtmlAttributeEncode(placeholder ?? ""), HttpUtility.HtmlEncode(value ?? ""));
     }
 
@@ -591,174 +521,88 @@ public partial class COOPERP_NewScreens_LeaveApplicationForm : System.Web.UI.Pag
     }
 
     // ══════════════════════════════════════════════════════════════════════════
-    //  SECTION 2 — HOD
+    //  SECTIONS 2 TO 4
     // ══════════════════════════════════════════════════════════════════════════
 
-    private static string BuildSection2Active(Dictionary<string, object> app)
+    private static string SectionLocked(int n, string reason)
     {
-        var sb = new StringBuilder();
-        sb.Append("<div class=\"lf-section lf-section--active\">");
-        sb.Append("<div class=\"lf-section__head\">");
-        sb.Append("<div class=\"lf-section__num\">2</div>");
-        sb.Append("<div class=\"lf-section__title\">Section 2 — Head of Department Approval</div>");
-        sb.Append("<span class=\"lf-section__badge badge--waiting\">Awaiting Your Action</span>");
-        sb.Append("</div><div class=\"lf-section__body\">");
-        sb.Append("<p style=\"font-size:12px;color:#374151;margin:0 0 8px;\">Review the employee details above. Approve and forward to HR, or decline.</p>");
-        sb.Append("<p style=\"font-size:11px;color:var(--muted);margin:0;\">Use the action buttons in the bar below to approve or decline this application.</p>");
-        sb.Append("</div></div>");
-        return sb.ToString();
+        return "<div class=\"hr-card lf-sec lf-sec--locked\">" + SectionHead(n, "") +
+               "<div class=\"hr-card__body hr-muted\">" + HttpUtility.HtmlEncode(reason) + "</div></div>";
+    }
+
+    private static string SectionWaiting(int n, string badge, string line)
+    {
+        return "<div class=\"hr-card lf-sec lf-sec--now\">" + SectionHead(n, Badge("info", badge)) +
+               "<div class=\"hr-card__body\">" + HttpUtility.HtmlEncode(HrExport.Clean(line)) + "</div></div>";
     }
 
     private static string BuildSection2Readonly(Dictionary<string, object> app)
     {
         bool approved = S(app, "hod_action") == "APPROVED";
-        string cls   = approved ? "lf-section--completed" : "lf-section--declined";
-        string badge = approved
-            ? "<span class=\"lf-section__badge badge--approved\">Approved</span>"
-            : "<span class=\"lf-section__badge badge--declined\">Declined</span>";
-        string dot   = approved ? "&#10003;" : "&#10007;";
-
-        var sb = new StringBuilder();
-        sb.AppendFormat("<div class=\"lf-section {0}\">", cls);
-        sb.Append("<div class=\"lf-section__head\">");
-        sb.AppendFormat("<div class=\"lf-section__num\">{0}</div>", dot);
-        sb.Append("<div class=\"lf-section__title\">Section 2 — Head of Department Approval</div>");
-        sb.Append(badge);
-        sb.Append("</div><div class=\"lf-section__body\">");
-        sb.Append("<div class=\"lf-grid\" style=\"margin-bottom:14px;\">");
-        sb.Append(RoField("HOD Decision",  approved ? "Approved" : "Declined"));
-        sb.Append(RoField("Actioned By",   S(app, "hod_actor_name")));
-        sb.Append("</div>");
+        StringBuilder sb = new StringBuilder();
+        sb.Append("<div class=\"hr-card lf-sec\">");
+        sb.Append(SectionHead(2, approved ? Badge("ok", "Approved") : Badge("bad", "Declined")));
+        sb.Append("<div class=\"hr-card__body\"><dl class=\"hr-dl\">");
+        sb.Append(Dl("Decision", approved ? "Approved" : "Declined"));
+        sb.Append(Dl("By", S(app, "hod_actor_name")));
+        sb.Append(Dl("Date", FormatDate(app, "hod_action_at")));
         if (approved)
         {
-            sb.Append("<div class=\"lf-grid\" style=\"margin-bottom:14px;\">");
-            sb.Append(RoField("Handover To", S(app, "hod_handover_to")));
-            sb.Append(RoField("Date",        FormatDate(app, "hod_action_at")));
-            sb.Append("</div>");
+            sb.Append(DlWide("Duties handed over to", S(app, "hod_handover_to")));
+            if (!string.IsNullOrEmpty(S(app, "hod_notes"))) sb.Append(DlWide("Remarks", S(app, "hod_notes")));
         }
         else
-        {
-            sb.Append("<div class=\"lf-grid\" style=\"margin-bottom:14px;\">");
-            sb.Append(RoField("Date",   FormatDate(app, "hod_action_at")));
-            sb.Append(RoField("Reason", S(app, "hod_notes")));
-            sb.Append("</div>");
-        }
-        string notes = S(app, "hod_notes");
-        if (approved && !string.IsNullOrEmpty(notes))
-            sb.Append(RoField("Notes / Remarks", notes));
-        sb.Append("</div></div>");
-        return sb.ToString();
-    }
-
-    // ══════════════════════════════════════════════════════════════════════════
-    //  SECTION 3 — HR
-    // ══════════════════════════════════════════════════════════════════════════
-
-    private static string BuildSection3Active(Dictionary<string, object> app)
-    {
-        var sb = new StringBuilder();
-        sb.Append("<div class=\"lf-section lf-section--active\">");
-        sb.Append("<div class=\"lf-section__head\">");
-        sb.Append("<div class=\"lf-section__num\">3</div>");
-        sb.Append("<div class=\"lf-section__title\">Section 3 — Human Resources Department</div>");
-        sb.Append("<span class=\"lf-section__badge badge--waiting\">Awaiting HR Action</span>");
-        sb.Append("</div><div class=\"lf-section__body\">");
-        sb.Append("<div class=\"lf-grid\" style=\"margin-bottom:14px;\">");
-        sb.Append(RoField("HOD Handover To",  S(app, "hod_handover_to")));
-        sb.Append(RoField("HOD Approved By",  S(app, "hod_actor_name")));
-        sb.Append("</div>");
-        sb.Append("<p style=\"font-size:11px;color:var(--muted);margin:0;\">Use the Approve or Decline buttons in the action bar to process this application.</p>");
-        sb.Append("</div></div>");
+            sb.Append(DlWide("Reason", S(app, "hod_notes")));
+        sb.Append("</dl></div></div>");
         return sb.ToString();
     }
 
     private static string BuildSection3Readonly(Dictionary<string, object> app)
     {
         bool approved = S(app, "hr_action") == "APPROVED";
-        string cls   = approved ? "lf-section--completed" : "lf-section--declined";
-        string badge = approved
-            ? "<span class=\"lf-section__badge badge--approved\">Approved</span>"
-            : "<span class=\"lf-section__badge badge--declined\">Declined</span>";
-
-        var sb = new StringBuilder();
-        sb.AppendFormat("<div class=\"lf-section {0}\">", cls);
-        sb.Append("<div class=\"lf-section__head\">");
-        sb.AppendFormat("<div class=\"lf-section__num\">{0}</div>", approved ? "&#10003;" : "&#10007;");
-        sb.Append("<div class=\"lf-section__title\">Section 3 — Human Resources Department</div>");
-        sb.Append(badge);
-        sb.Append("</div><div class=\"lf-section__body\">");
-        sb.Append("<div class=\"lf-grid\" style=\"margin-bottom:14px;\">");
-        sb.Append(RoField("HR Decision",   approved ? "Approved" : "Declined"));
-        sb.Append(RoField("Actioned By",   S(app, "hr_actor_name")));
-        sb.Append("</div>");
+        StringBuilder sb = new StringBuilder();
+        sb.Append("<div class=\"hr-card lf-sec\">");
+        sb.Append(SectionHead(3, approved ? Badge("ok", "Approved") : Badge("bad", "Declined")));
+        sb.Append("<div class=\"hr-card__body\"><dl class=\"hr-dl\">");
+        sb.Append(Dl("Decision", approved ? "Approved" : "Declined"));
+        sb.Append(Dl("By", S(app, "hr_actor_name")));
+        sb.Append(Dl("Date", FormatDate(app, "hr_action_at")));
         if (approved)
         {
-            sb.Append("<div class=\"lf-grid\" style=\"margin-bottom:14px;\">");
-            sb.Append(RoField("Effective From", FormatDate(app, "hr_effective_from")));
-            sb.Append(RoField("Effective To",   FormatDate(app, "hr_effective_to")));
-            sb.Append("</div>");
+            sb.Append(Dl("Leave from", FormatDate(app, "hr_effective_from")));
+            sb.Append(Dl("Leave to",   FormatDate(app, "hr_effective_to")));
         }
-        sb.Append("<div class=\"lf-grid\" style=\"margin-bottom:14px;\">");
-        sb.Append(RoField("Date Actioned", FormatDate(app, "hr_action_at")));
         string hrNotes = S(app, "hr_notes");
-        if (!string.IsNullOrEmpty(hrNotes)) sb.Append(RoField("HR Notes", hrNotes));
-        sb.Append("</div>");
-        sb.Append("</div></div>");
-        return sb.ToString();
-    }
-
-    // ══════════════════════════════════════════════════════════════════════════
-    //  SECTION 4 — VC
-    // ══════════════════════════════════════════════════════════════════════════
-
-    private static string BuildSection4Active(Dictionary<string, object> app)
-    {
-        var sb = new StringBuilder();
-        sb.Append("<div class=\"lf-section lf-section--active\">");
-        sb.Append("<div class=\"lf-section__head\">");
-        sb.Append("<div class=\"lf-section__num\">4</div>");
-        sb.Append("<div class=\"lf-section__title\">Section 4 — Vice Chancellor's Office</div>");
-        sb.Append("<span class=\"lf-section__badge badge--waiting\">Awaiting VC Decision</span>");
-        sb.Append("</div><div class=\"lf-section__body\">");
-        sb.Append("<div class=\"lf-grid\" style=\"margin-bottom:14px;\">");
-        sb.Append(RoField("HR Effective From", FormatDate(app, "hr_effective_from")));
-        sb.Append(RoField("HR Effective To",   FormatDate(app, "hr_effective_to")));
-        sb.Append("</div>");
-        sb.Append("<p style=\"font-size:11px;color:var(--muted);margin:0;\">Use <strong>Record VC Decision</strong> in the action bar to grant, not grant or postpone this leave.</p>");
-        sb.Append("</div></div>");
+        if (!string.IsNullOrEmpty(hrNotes)) sb.Append(DlWide(approved ? "HR notes" : "Reason", hrNotes));
+        sb.Append("</dl></div></div>");
         return sb.ToString();
     }
 
     private static string BuildSection4Readonly(Dictionary<string, object> app)
     {
-        string vcDec  = S(app, "vc_decision");
-        bool granted  = (vcDec == "GRANTED");
+        string vcDec   = S(app, "vc_decision");
+        bool granted   = (vcDec == "GRANTED");
         bool postponed = (vcDec == "POSTPONED");
-        string cls    = granted ? "lf-section--completed" : "lf-section--declined";
-        string badgeLbl = granted ? "Granted" : (postponed ? "Postponed" : "Not Granted");
-        string badgeCls = granted ? "badge--granted" : (postponed ? "badge--postponed" : "badge--notgranted");
-
-        var sb = new StringBuilder();
-        sb.AppendFormat("<div class=\"lf-section {0}\">", cls);
-        sb.Append("<div class=\"lf-section__head\">");
-        sb.AppendFormat("<div class=\"lf-section__num\">{0}</div>", granted ? "&#10003;" : "&#10007;");
-        sb.Append("<div class=\"lf-section__title\">Section 4 — Vice Chancellor's Office</div>");
-        sb.AppendFormat("<span class=\"lf-section__badge {0}\">{1}</span>", badgeCls, badgeLbl);
-        sb.Append("</div><div class=\"lf-section__body\">");
-        sb.Append("<div class=\"lf-grid\" style=\"margin-bottom:14px;\">");
-        sb.Append(RoField("VC Decision",  badgeLbl));
-        sb.Append(RoField("Actioned By",  S(app, "vc_actor_name")));
-        sb.Append("</div>");
-        sb.Append("<div class=\"lf-grid\" style=\"margin-bottom:14px;\">");
+        string label   = granted ? "Granted" : (postponed ? "Postponed" : "Not granted");
+        string kind    = granted ? "ok" : (postponed ? "warn" : "bad");
         int accum = N(app, "vc_accumulated_days");
         int taken = N(app, "vc_days_taken");
-        sb.Append(RoField("Accumulated Leave Days",    accum > 0 ? accum.ToString() : "—"));
-        sb.Append(RoField("Days Granted (This Leave)", taken > 0 ? taken.ToString() : "—"));
-        sb.Append("</div>");
+
+        StringBuilder sb = new StringBuilder();
+        sb.Append("<div class=\"hr-card lf-sec\">");
+        sb.Append(SectionHead(4, Badge(kind, label)));
+        sb.Append("<div class=\"hr-card__body\"><dl class=\"hr-dl\">");
+        sb.Append(Dl("Decision", label));
+        sb.Append(Dl("By", S(app, "vc_actor_name")));
+        sb.Append(Dl("Date", FormatDate(app, "vc_action_at")));
+        if (granted)
+        {
+            sb.Append(Dl("Accumulated leave days", accum > 0 ? accum.ToString() : ""));
+            sb.Append(Dl("Days granted", taken > 0 ? taken.ToString() : ""));
+        }
         string vcReason = S(app, "vc_reason");
-        if (!string.IsNullOrEmpty(vcReason)) sb.Append(RoField("Remarks", vcReason));
-        sb.Append(RoField("Date", FormatDate(app, "vc_action_at")));
-        sb.Append("</div></div>");
+        if (!string.IsNullOrEmpty(vcReason)) sb.Append(DlWide(granted ? "Remarks" : "Reason", vcReason));
+        sb.Append("</dl></div></div>");
         return sb.ToString();
     }
 
@@ -766,59 +610,35 @@ public partial class COOPERP_NewScreens_LeaveApplicationForm : System.Web.UI.Pag
     //  ACTION BAR
     // ══════════════════════════════════════════════════════════════════════════
 
-    private static string BuildActionBar(Dictionary<string, object> app, int appId, string status,
-        string username, bool isAdmin, bool isHr, bool isVc, bool isHod,
+    private static string BuildActionBar(string status, bool isAdmin, bool isHr,
         bool canEditDraft, bool canActHod, bool canActHr, bool canActVc)
     {
-        var sb = new StringBuilder();
+        StringBuilder sb = new StringBuilder();
 
         if (canEditDraft)
-        {
             sb.Append(DraftButtons());
-        }
         if (canActHod)
         {
-            sb.Append("<button type=\"button\" class=\"lf-btn lf-btn--success\" onclick=\"openHodApprove()\">Approve &amp; Forward to HR</button>");
-            sb.Append("<button type=\"button\" class=\"lf-btn lf-btn--danger\" onclick=\"openModal('modalHodDecline')\">Decline</button>");
+            sb.Append("<button type=\"button\" class=\"hr-btn hr-btn--primary\" onclick=\"openHodApprove()\">Approve and forward to HR</button>");
+            sb.Append("<button type=\"button\" class=\"hr-btn hr-btn--danger\" onclick=\"openModal('modalHodDecline')\">Decline</button>");
         }
         if (canActHr)
         {
-            sb.Append("<button type=\"button\" class=\"lf-btn lf-btn--success\" onclick=\"openHrApprove()\">Approve &amp; Forward to VC</button>");
-            sb.Append("<button type=\"button\" class=\"lf-btn lf-btn--danger\" onclick=\"openModal('modalHrDecline')\">Decline</button>");
+            sb.Append("<button type=\"button\" class=\"hr-btn hr-btn--primary\" onclick=\"openHrApprove()\">Approve and forward to the Vice Chancellor</button>");
+            sb.Append("<button type=\"button\" class=\"hr-btn hr-btn--danger\" onclick=\"openModal('modalHrDecline')\">Decline</button>");
         }
         if (canActVc)
-        {
-            sb.Append("<button type=\"button\" class=\"lf-btn lf-btn--primary\" onclick=\"openVcDecision('')\">" +
-                "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"12\" height=\"12\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><polyline points=\"9 11 12 14 22 4\"/><path d=\"M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11\"/></svg>" +
-                " Record VC Decision</button>");
-        }
+            sb.Append("<button type=\"button\" class=\"hr-btn hr-btn--primary\" onclick=\"openVcDecision('')\">Record decision</button>");
+
+        if (!canEditDraft && !canActHod && !canActHr && !canActVc)
+            sb.AppendFormat("<span class=\"lf-note\">{0}</span>", HttpUtility.HtmlEncode(StatusNote(status)));
 
         // Cancel for admin/HR
         if ((isAdmin || isHr) && status != "CANCELLED" && status != "VC_GRANTED")
         {
-            if (sb.Length > 0) sb.Append("<span style=\"flex:1\"></span>");
-            sb.Append("<button type=\"button\" class=\"lf-btn lf-btn--danger\" onclick=\"cancelAppForm()\">" +
-                "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"11\" height=\"11\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><circle cx=\"12\" cy=\"12\" r=\"10\"/><line x1=\"15\" y1=\"9\" x2=\"9\" y2=\"15\"/><line x1=\"9\" y1=\"9\" x2=\"15\" y2=\"15\"/></svg>" +
-                " Cancel Application</button>");
+            sb.Append("<span class=\"hr-spacer\"></span>");
+            sb.Append("<button type=\"button\" class=\"hr-btn hr-btn--danger\" onclick=\"cancelAppForm()\">Cancel application</button>");
         }
-
-        if (!canEditDraft && !canActHod && !canActHr && !canActVc)
-        {
-            sb.AppendFormat("<span class=\"lf-actions__note\" style=\"color:var(--txt);font-weight:600;\">{0}</span>",
-                HttpUtility.HtmlEncode(StatusNote(status)));
-        }
-
-        // cancelAppForm JS (uses APP_ID from the page)
-        sb.Append("<script>function cancelAppForm(){" +
-            "if(!confirm('Cancel this leave application? This cannot be undone.'))return;" +
-            "fetch('LeaveApplicationForm.aspx?ajax=cancel',{method:'POST'," +
-            "headers:{'Content-Type':'application/x-www-form-urlencoded'}," +
-            "body:'id='+encodeURIComponent(APP_ID)})" +
-            ".then(function(r){return r.json();})" +
-            ".then(function(d){if(d.ok){showToast('Application cancelled.','ok');" +
-            "setTimeout(function(){location.href='LeaveApplications.aspx';},1300);}else showToast(d.error||'Failed.','err');});" +
-            "}</script>");
-
         return sb.ToString();
     }
 
@@ -826,79 +646,78 @@ public partial class COOPERP_NewScreens_LeaveApplicationForm : System.Web.UI.Pag
     {
         switch (status)
         {
-            case "SUBMITTED":      return "Application submitted — awaiting HOD approval.";
-            case "HOD_APPROVED":   return "HOD approved — awaiting HR Department review.";
-            case "HOD_DECLINED":   return "Application was declined by the Head of Department.";
-            case "HR_APPROVED":    return "HR approved — awaiting Vice Chancellor's decision.";
-            case "HR_DECLINED":    return "Application was declined by the HR Department.";
+            case "SUBMITTED":      return "Submitted. Awaiting the Head of Department.";
+            case "HOD_APPROVED":   return "Approved by the Head of Department. Awaiting HR.";
+            case "HOD_DECLINED":   return "Declined by the Head of Department.";
+            case "HR_APPROVED":    return "Approved by HR. Awaiting the Vice Chancellor.";
+            case "HR_DECLINED":    return "Declined by HR.";
             case "VC_GRANTED":     return "Leave granted by the Vice Chancellor.";
-            case "VC_NOT_GRANTED": return "Leave was not granted by the Vice Chancellor.";
-            case "VC_POSTPONED":   return "Leave has been postponed by the Vice Chancellor.";
+            case "VC_NOT_GRANTED": return "Leave not granted by the Vice Chancellor.";
+            case "VC_POSTPONED":   return "Leave postponed by the Vice Chancellor.";
             case "CANCELLED":      return "This application has been cancelled.";
-            default:               return "Application is in " + status + " status.";
+            case "DRAFT":          return "Draft. Only the applicant can edit it.";
+            default:               return "";
         }
     }
 
     // ══════════════════════════════════════════════════════════════════════════
-    //  AUDIT TRAIL
+    //  HISTORY (audit trail)
     // ══════════════════════════════════════════════════════════════════════════
 
     private string BuildAuditTrail(int appId)
     {
-        var sb = new StringBuilder();
+        StringBuilder rows = new StringBuilder();
         try
         {
-            using (var conn = new MySqlConnection(ConnStr()))
+            using (MySqlConnection conn = new MySqlConnection(ConnStr()))
             {
                 conn.Open();
                 const string sql = @"
-                    SELECT action_code, old_status, new_status,
-                           actor_name, actor_role, remarks, created_at
+                    SELECT action_code, actor_name, actor_role, remarks, created_at
                     FROM hrm_leave_audit WHERE application_id=@id ORDER BY created_at ASC";
-                using (var cmd = new MySqlCommand(sql, conn))
+                using (MySqlCommand cmd = new MySqlCommand(sql, conn))
                 {
                     cmd.Parameters.AddWithValue("@id", appId);
-                    using (var dr = cmd.ExecuteReader())
+                    using (MySqlDataReader dr = cmd.ExecuteReader())
                     {
-                        bool any = false;
                         while (dr.Read())
                         {
-                            if (!any)
-                            {
-                                sb.Append("<div class=\"lf-audit__title\">Audit Trail</div>");
-                                any = true;
-                            }
-                            string code    = dr["action_code"].ToString();
-                            string actor   = dr["actor_name"].ToString();
-                            string role    = dr["actor_role"].ToString();
                             string remarks = dr["remarks"] == DBNull.Value ? "" : dr["remarks"].ToString();
                             DateTime when  = Convert.ToDateTime(dr["created_at"]);
-
-                            string dotCls = "audit-dot";
-                            if (code.Contains("APPROVED") || code == "VC_GRANTED") dotCls += " audit-dot--ok";
-                            else if (code.Contains("DECLINED") || code == "VC_NOT_GRANTED" || code == "CANCELLED") dotCls += " audit-dot--err";
-                            else if (code == "SUBMITTED") dotCls += " audit-dot--warn";
-
-                            sb.Append("<div class=\"audit-entry\">");
-                            sb.AppendFormat("<div class=\"{0}\"></div>", dotCls);
-                            sb.Append("<div class=\"audit-body\">");
-                            sb.AppendFormat("<div class=\"audit-action\">{0}</div>",
-                                HttpUtility.HtmlEncode(AuditLabel(code)));
-                            sb.AppendFormat("<div class=\"audit-meta\">{0} — {1} &nbsp;·&nbsp; {2}</div>",
-                                HttpUtility.HtmlEncode(actor),
-                                HttpUtility.HtmlEncode(role),
-                                HttpUtility.HtmlEncode(when.ToString("dd MMM yyyy, h:mm tt")));
-                            if (!string.IsNullOrEmpty(remarks))
-                                sb.AppendFormat("<div class=\"audit-remark\">&ldquo;{0}&rdquo;</div>",
-                                    HttpUtility.HtmlEncode(remarks));
-                            sb.Append("</div></div>");
+                            string role    = RoleWords(dr["actor_role"].ToString());
+                            rows.Append("<tr><td style=\"white-space:nowrap\">").Append(when.ToString("d MMM yyyy, HH:mm", CultureInfo.InvariantCulture)).Append("</td>")
+                                .Append("<td>").Append(HttpUtility.HtmlEncode(AuditLabel(dr["action_code"].ToString()))).Append("</td>")
+                                .Append("<td>").Append(Enc(dr["actor_name"].ToString()))
+                                .Append(role == "" ? "" : "<span class=\"hr-sub\">" + Enc(role) + "</span>").Append("</td>")
+                                .Append("<td>").Append(Enc(remarks)).Append("</td></tr>");
                         }
                     }
                 }
             }
         }
-        catch { /* don't break page on audit errors */ }
-        return sb.ToString();
+        catch (Exception ex)
+        {
+            System.Diagnostics.Trace.TraceWarning("LeaveApplicationForm history: " + ex.Message);
+        }
+        if (rows.Length == 0) return "";
+        return "<div class=\"hr-card\"><div class=\"hr-card__head\"><div class=\"hr-card__title\">History</div></div>" +
+               "<div class=\"hr-table-wrap\"><table class=\"hr-table\"><thead><tr><th>Date</th><th>Action</th><th>By</th><th>Remarks</th></tr></thead><tbody>" +
+               rows + "</tbody></table></div></div>";
+    }
+
+    private static string RoleWords(string role)
+    {
+        switch ((role ?? "").Trim().ToLowerInvariant())
+        {
+            case "employee":                 return "Employee";
+            case "hod / supervisor":         return "Head of Department";
+            case "hr department":            return "HR";
+            case "vice chancellor's office": return "Vice Chancellor";
+            case "admin":                    return "Administrator";
+            case "hr_manager":               return "HR";
+            case "vc":                       return "Vice Chancellor";
+            default:                         return "";
+        }
     }
 
     private static string AuditLabel(string code)
@@ -906,17 +725,127 @@ public partial class COOPERP_NewScreens_LeaveApplicationForm : System.Web.UI.Pag
         switch (code)
         {
             case "DRAFT_SAVED":    return "Draft saved";
-            case "SUBMITTED":      return "Application submitted";
-            case "HOD_APPROVED":   return "Approved by Head of Department";
-            case "HOD_DECLINED":   return "Declined by Head of Department";
-            case "HR_APPROVED":    return "Approved by HR Department";
-            case "HR_DECLINED":    return "Declined by HR Department";
-            case "VC_GRANTED":     return "Leave Granted by Vice Chancellor";
-            case "VC_NOT_GRANTED": return "Not Granted by Vice Chancellor";
-            case "VC_POSTPONED":   return "Postponed by Vice Chancellor";
-            case "CANCELLED":      return "Application Cancelled";
+            case "SUBMITTED":      return "Submitted";
+            case "HOD_APPROVED":   return "Approved by the Head of Department";
+            case "HOD_DECLINED":   return "Declined by the Head of Department";
+            case "HR_APPROVED":    return "Approved by HR";
+            case "HR_DECLINED":    return "Declined by HR";
+            case "VC_GRANTED":     return "Granted by the Vice Chancellor";
+            case "VC_NOT_GRANTED": return "Not granted by the Vice Chancellor";
+            case "VC_POSTPONED":   return "Postponed by the Vice Chancellor";
+            case "CANCELLED":      return "Cancelled";
             default:               return code;
         }
+    }
+
+    // ══════════════════════════════════════════════════════════════════════════
+    //  PRINT (HrDocument)
+    // ══════════════════════════════════════════════════════════════════════════
+
+    private void RenderPrint(int appId, string username, bool isAdmin, bool isHr, bool isVc, bool isHod)
+    {
+        Dictionary<string, object> app = LoadApp(appId);
+        string html;
+        if (app == null || !CanView(app, username, isAdmin, isHr, isVc, isHod))
+        {
+            HrDocument.Options o0 = new HrDocument.Options();
+            o0.BackUrl = ResolveUrl("~/COOPERP/NewScreens/LeaveApplications.aspx");
+            html = HrDocument.Page("Leave application",
+                HrDocument.Paragraph(app == null ? "This application was not found." : "You do not have permission to view this application."), o0);
+        }
+        else
+            html = HrDocument.Page("Leave application form", PrintBody(app, appId), PrintOptions(app, appId));
+
+        html = html.Replace("</body>", "<script>window.onload=function(){window.print();};</script></body>");
+        Response.Clear();
+        Response.ContentType = "text/html; charset=utf-8";
+        Response.Write(html);
+        Response.End();
+    }
+
+    private HrDocument.Options PrintOptions(Dictionary<string, object> app, int appId)
+    {
+        HrDocument.Options o = new HrDocument.Options();
+        o.Reference = "Ref: " + Ref(appId) + "   |   Status: " + StatusLabel(S(app, "status"));
+        o.BackUrl = ResolveUrl("~/COOPERP/NewScreens/LeaveApplicationForm.aspx") + "?id=" + appId;
+        return o;
+    }
+
+    private static string PrintBody(Dictionary<string, object> app, int appId)
+    {
+        string status = S(app, "status");
+        int nd = N(app, "num_days");
+        string sup = S(app, "supervisor_name");
+        if (sup == "") sup = S(app, "supervisor_username");
+        StringBuilder b = new StringBuilder();
+
+        // Section 1
+        b.Append(HrDocument.Heading("Section 1: Leave request"));
+        b.Append(HrDocument.Meta(
+            "Full name", S(app, "emp_name"),               "Staff number", S(app, "emp_code"),
+            "Department", S(app, "faculty_dept"),          "Position held", S(app, "position_held"),
+            "Office location", S(app, "office_location"),  "Mobile number", S(app, "mobile_contact"),
+            "Type of leave", LeaveTypeLabel(S(app, "leave_type")), "Number of days", nd > 0 ? nd.ToString() : "",
+            "First day", FormatDate(app, "leave_from"),    "Last day", FormatDate(app, "leave_to"),
+            "Next of kin", S(app, "nok_name"),             "Next of kin phone", S(app, "nok_mobile"),
+            "Staying at", S(app, "residence_address"),     "Next of kin address", S(app, "nok_address"),
+            "Head of Department", sup,                     "Submitted", FormatDateTime(app, "employee_submitted_at")));
+        b.Append("<div class=\"box\"><strong>Cover arrangement:</strong> ").Append(HrDocument.Multiline(S(app, "substitute_arrangement"))).Append("</div>");
+        b.Append(HrDocument.Signatures("Employee", S(app, "emp_name"),
+            Signed("Submitted", S(app, "employee_submitted_at") == "" ? null : app["employee_submitted_at"])));
+
+        // Section 2
+        string hodAction = S(app, "hod_action");
+        b.Append(HrDocument.Heading("Section 2: Head of Department"));
+        b.Append(HrDocument.Meta(
+            "Decision", hodAction == "APPROVED" ? "Approved" : hodAction == "DECLINED" ? "Declined" : "",
+            "Date", FormatDate(app, "hod_action_at"),
+            "Duties handed over to", S(app, "hod_handover_to"),
+            hodAction == "DECLINED" ? "Reason" : "Remarks", S(app, "hod_notes")));
+        b.Append(HrDocument.Signatures("Head of Department", S(app, "hod_actor_name"),
+            Signed(hodAction == "APPROVED" ? "Approved" : "Declined", hodAction == "" ? null : Obj(app, "hod_action_at"))));
+
+        // Section 3
+        string hrAction = S(app, "hr_action");
+        b.Append(HrDocument.Heading("Section 3: Human Resources"));
+        b.Append(HrDocument.Meta(
+            "Decision", hrAction == "APPROVED" ? "Approved" : hrAction == "DECLINED" ? "Declined" : "",
+            "Date", FormatDate(app, "hr_action_at"),
+            "Leave from", FormatDate(app, "hr_effective_from"),
+            "Leave to", FormatDate(app, "hr_effective_to"),
+            hrAction == "DECLINED" ? "Reason" : "HR notes", S(app, "hr_notes")));
+        b.Append(HrDocument.Signatures("Human Resources", S(app, "hr_actor_name"),
+            Signed(hrAction == "APPROVED" ? "Approved" : "Declined", hrAction == "" ? null : Obj(app, "hr_action_at"))));
+
+        // Section 4
+        string vc = S(app, "vc_decision");
+        string vcLabel = vc == "GRANTED" ? "Granted" : vc == "NOT_GRANTED" ? "Not granted" : vc == "POSTPONED" ? "Postponed" : "";
+        int accum = N(app, "vc_accumulated_days"), taken = N(app, "vc_days_taken");
+        b.Append(HrDocument.Heading("Section 4: Vice Chancellor"));
+        b.Append(HrDocument.Meta(
+            "Decision", vcLabel,
+            "Date", FormatDate(app, "vc_action_at"),
+            "Accumulated leave days", accum > 0 ? accum.ToString() : "",
+            "Days granted", taken > 0 ? taken.ToString() : "",
+            vc == "GRANTED" || vc == "" ? "Remarks" : "Reason", S(app, "vc_reason")));
+        b.Append(HrDocument.Signatures("Vice Chancellor", S(app, "vc_actor_name"),
+            Signed(vcLabel, vc == "" ? null : Obj(app, "vc_action_at"))));
+
+        if (status == "CANCELLED")
+            b.Append(HrDocument.Paragraph("This application was cancelled."));
+        b.Append(HrDocument.Paragraph("On return from leave, report to the Human Resource Office before resuming duties."));
+        return b.ToString();
+    }
+
+    private static object Obj(Dictionary<string, object> d, string key) { object v; return d.TryGetValue(key, out v) ? v : null; }
+
+    private static string Signed(string what, object when)
+    {
+        if (when == null || when is DBNull || string.IsNullOrEmpty(what)) return "";
+        DateTime dt;
+        if (when is DateTime) dt = (DateTime)when;
+        else if (!DateTime.TryParse(when.ToString(), out dt)) return "";
+        return "Signed electronically on " + dt.ToString("d MMM yyyy, HH:mm", CultureInfo.InvariantCulture);
     }
 
     // ══════════════════════════════════════════════════════════════════════════
@@ -940,18 +869,20 @@ public partial class COOPERP_NewScreens_LeaveApplicationForm : System.Web.UI.Pag
             {
                 case "save_draft":  AjaxSaveDraft(username, screenName, ip, false, isAdmin); break;
                 case "submit":      AjaxSaveDraft(username, screenName, ip, true,  isAdmin); break;
-                case "hod_approve": AjaxHodApprove(username, screenName, ip, isAdmin, isHod); break;
-                case "hod_decline": AjaxHodDecline(username, screenName, ip, isAdmin, isHod); break;
+                case "hod_approve": AjaxHodApprove(username, screenName, ip, isAdmin); break;
+                case "hod_decline": AjaxHodDecline(username, screenName, ip, isAdmin); break;
                 case "hr_approve":  AjaxHrApprove(username, screenName, ip, isAdmin, isHr);  break;
                 case "hr_decline":  AjaxHrDecline(username, screenName, ip, isAdmin, isHr);  break;
-                case "vc_decision": AjaxVcDecision(username, screenName, roleCode, ip, isAdmin, isVc); break;
+                case "vc_decision": AjaxVcDecision(username, screenName, ip, isAdmin, isVc); break;
                 case "cancel":      AjaxCancel(username, screenName, roleCode, ip, isAdmin, isHr); break;
-                default: Response.Write("{\"ok\":false,\"error\":\"Unknown action.\"}"); break;
+                default: Err("Unknown action."); break;
             }
         }
         catch (Exception ex)
         {
-            Response.Write("{\"ok\":false,\"error\":" + JsonStr(ex.Message) + "}");
+            System.Diagnostics.Trace.TraceError("LeaveApplicationForm " + action + ": " + ex);
+            Response.Clear();
+            Err("The change could not be saved. Try again, and contact MIS if it keeps happening.");
         }
     }
 
@@ -966,15 +897,15 @@ public partial class COOPERP_NewScreens_LeaveApplicationForm : System.Web.UI.Pag
         string lvTo     = FormStr("leave_to");
 
         if (string.IsNullOrEmpty(empName))
-        { Err("Employee name is required."); return; }
+        { Err("Enter your full name."); return; }
         if (string.IsNullOrEmpty(lvType))
-        { Err("Leave type is required."); return; }
+        { Err("Choose the type of leave."); return; }
 
         DateTime dtFrom, dtTo;
         if (!DateTime.TryParse(lvFrom, out dtFrom) || !DateTime.TryParse(lvTo, out dtTo))
-        { Err("Invalid leave dates."); return; }
+        { Err("Enter valid first and last days."); return; }
         if (dtTo < dtFrom)
-        { Err("End date must be after start date."); return; }
+        { Err("The last day must be on or after the first day."); return; }
 
         int numDays = FormInt("num_days");
         if (numDays <= 0) numDays = (int)Math.Round((dtTo - dtFrom).TotalDays) + 1;
@@ -982,13 +913,13 @@ public partial class COOPERP_NewScreens_LeaveApplicationForm : System.Web.UI.Pag
         string supUser = FormStr("supervisor_username");
         string supName = FormStr("supervisor_name");
         if (submit && string.IsNullOrEmpty(supUser))
-        { Err("Please select a Supervisor / HOD."); return; }
+        { Err("Choose your Head of Department or supervisor."); return; }
         if (submit && !isAdmin && string.Equals(supUser.Trim(), username.Trim(), StringComparison.OrdinalIgnoreCase))
-        { Err("You cannot approve your own leave. Please choose your Supervisor / HOD."); return; }
+        { Err("You cannot approve your own leave. Choose your Head of Department or supervisor."); return; }
 
         string newStatus = submit ? "SUBMITTED" : "DRAFT";
 
-        using (var conn = new MySqlConnection(ConnStr()))
+        using (MySqlConnection conn = new MySqlConnection(ConnStr()))
         {
             conn.Open();
 
@@ -1004,7 +935,7 @@ public partial class COOPERP_NewScreens_LeaveApplicationForm : System.Web.UI.Pag
                     VALUES
                         (@en,@ec,@fd,@ol,@ph,@ra,@mc,@nn,@na,@nm,
                          @lt,@lf,@lt2,@nd,@sa,@su,@sn,@st,@sub_at,@cb,NOW(),NOW())";
-                using (var cmd = new MySqlCommand(sql, conn))
+                using (MySqlCommand cmd = new MySqlCommand(sql, conn))
                 {
                     BindDraftParams(cmd, empName, numDays, dtFrom, dtTo, newStatus, supUser, supName, username, submit);
                     cmd.ExecuteNonQuery();
@@ -1014,19 +945,19 @@ public partial class COOPERP_NewScreens_LeaveApplicationForm : System.Web.UI.Pag
             else
             {
                 string existStatus = "", existCreator = "";
-                using (var cmd = new MySqlCommand(
+                using (MySqlCommand cmd = new MySqlCommand(
                     "SELECT status,created_by FROM hrm_leave_applications WHERE id=@id AND is_active=1", conn))
                 {
                     cmd.Parameters.AddWithValue("@id", appId);
-                    using (var dr = cmd.ExecuteReader())
+                    using (MySqlDataReader dr = cmd.ExecuteReader())
                     {
-                        if (!dr.Read()) { Err("Application not found."); return; }
+                        if (!dr.Read()) { Err("This application was not found."); return; }
                         existStatus = dr[0].ToString(); existCreator = dr[1].ToString();
                     }
                 }
-                if (existStatus != "DRAFT") { Err("Only DRAFT applications can be edited."); return; }
+                if (existStatus != "DRAFT") { Err("Only a draft can be edited. This application has already been submitted."); return; }
                 if (!isAdmin && !string.Equals(existCreator, username, StringComparison.OrdinalIgnoreCase))
-                { Err("Permission denied."); return; }
+                { Err("Only the applicant can edit this draft."); return; }
 
                 const string upd = @"
                     UPDATE hrm_leave_applications SET
@@ -1036,7 +967,7 @@ public partial class COOPERP_NewScreens_LeaveApplicationForm : System.Web.UI.Pag
                         supervisor_username=@su,supervisor_name=@sn,status=@st,
                         employee_submitted_at=@sub_at,updated_at=NOW()
                     WHERE id=@id";
-                using (var cmd = new MySqlCommand(upd, conn))
+                using (MySqlCommand cmd = new MySqlCommand(upd, conn))
                 {
                     BindDraftParams(cmd, empName, numDays, dtFrom, dtTo, newStatus, supUser, supName, username, submit);
                     cmd.Parameters.AddWithValue("@id", appId);
@@ -1047,7 +978,7 @@ public partial class COOPERP_NewScreens_LeaveApplicationForm : System.Web.UI.Pag
             LogAudit(conn, appId,
                 submit ? "SUBMITTED" : "DRAFT_SAVED",
                 "DRAFT", newStatus, screenName, username, "Employee",
-                submit ? "Application submitted for HOD approval." : "Draft saved.", ip);
+                submit ? "Submitted to the Head of Department." : "Draft saved.", ip);
         }
 
         Response.Write("{\"ok\":true,\"id\":" + appId + "}");
@@ -1057,21 +988,22 @@ public partial class COOPERP_NewScreens_LeaveApplicationForm : System.Web.UI.Pag
         DateTime dtFrom, DateTime dtTo, string newStatus,
         string supUser, string supName, string username, bool submit)
     {
+        HttpRequest rq = HttpContext.Current.Request;
         cmd.Parameters.AddWithValue("@en",     empName);
-        cmd.Parameters.AddWithValue("@ec",     HttpContext.Current.Request.Form["emp_code"] ?? "");
-        cmd.Parameters.AddWithValue("@fd",     HttpContext.Current.Request.Form["faculty_dept"] ?? "");
-        cmd.Parameters.AddWithValue("@ol",     HttpContext.Current.Request.Form["office_location"] ?? "");
-        cmd.Parameters.AddWithValue("@ph",     HttpContext.Current.Request.Form["position_held"] ?? "");
-        cmd.Parameters.AddWithValue("@ra",     HttpContext.Current.Request.Form["residence_address"] ?? "");
-        cmd.Parameters.AddWithValue("@mc",     HttpContext.Current.Request.Form["mobile_contact"] ?? "");
-        cmd.Parameters.AddWithValue("@nn",     HttpContext.Current.Request.Form["nok_name"] ?? "");
-        cmd.Parameters.AddWithValue("@na",     HttpContext.Current.Request.Form["nok_address"] ?? "");
-        cmd.Parameters.AddWithValue("@nm",     HttpContext.Current.Request.Form["nok_mobile"] ?? "");
-        cmd.Parameters.AddWithValue("@lt",     HttpContext.Current.Request.Form["leave_type"] ?? "annual");
+        cmd.Parameters.AddWithValue("@ec",     rq.Form["emp_code"] ?? "");
+        cmd.Parameters.AddWithValue("@fd",     rq.Form["faculty_dept"] ?? "");
+        cmd.Parameters.AddWithValue("@ol",     rq.Form["office_location"] ?? "");
+        cmd.Parameters.AddWithValue("@ph",     rq.Form["position_held"] ?? "");
+        cmd.Parameters.AddWithValue("@ra",     rq.Form["residence_address"] ?? "");
+        cmd.Parameters.AddWithValue("@mc",     rq.Form["mobile_contact"] ?? "");
+        cmd.Parameters.AddWithValue("@nn",     rq.Form["nok_name"] ?? "");
+        cmd.Parameters.AddWithValue("@na",     rq.Form["nok_address"] ?? "");
+        cmd.Parameters.AddWithValue("@nm",     rq.Form["nok_mobile"] ?? "");
+        cmd.Parameters.AddWithValue("@lt",     rq.Form["leave_type"] ?? "annual");
         cmd.Parameters.AddWithValue("@lf",     dtFrom.ToString("yyyy-MM-dd"));
         cmd.Parameters.AddWithValue("@lt2",    dtTo.ToString("yyyy-MM-dd"));
         cmd.Parameters.AddWithValue("@nd",     numDays);
-        cmd.Parameters.AddWithValue("@sa",     HttpContext.Current.Request.Form["substitute_arrangement"] ?? "");
+        cmd.Parameters.AddWithValue("@sa",     rq.Form["substitute_arrangement"] ?? "");
         cmd.Parameters.AddWithValue("@su",     supUser);
         cmd.Parameters.AddWithValue("@sn",     supName);
         cmd.Parameters.AddWithValue("@st",     newStatus);
@@ -1081,33 +1013,33 @@ public partial class COOPERP_NewScreens_LeaveApplicationForm : System.Web.UI.Pag
 
     // ── HOD Approve ────────────────────────────────────────────────────────────
 
-    private void AjaxHodApprove(string username, string screenName, string ip, bool isAdmin, bool isHod)
+    private void AjaxHodApprove(string username, string screenName, string ip, bool isAdmin)
     {
         // No role gate here: the assigned Supervisor / HOD (whatever their role) or an
-        // admin may act - enforced by the supervisor_username check below.
+        // admin may act, enforced by the supervisor_username check below.
         int    appId      = FormInt("id");
         string handoverTo = FormStr("hod_handover_to");
         string notes      = FormStr("hod_notes");
 
-        using (var conn = new MySqlConnection(ConnStr()))
+        using (MySqlConnection conn = new MySqlConnection(ConnStr()))
         {
             conn.Open();
             string status = "", supUser = "";
-            using (var cmd = new MySqlCommand(
+            using (MySqlCommand cmd = new MySqlCommand(
                 "SELECT status,supervisor_username FROM hrm_leave_applications WHERE id=@id AND is_active=1", conn))
             {
                 cmd.Parameters.AddWithValue("@id", appId);
-                using (var dr = cmd.ExecuteReader())
+                using (MySqlDataReader dr = cmd.ExecuteReader())
                 {
-                    if (!dr.Read()) { Err("Application not found."); return; }
+                    if (!dr.Read()) { Err("This application was not found."); return; }
                     status = dr[0].ToString(); supUser = dr[1].ToString();
                 }
             }
-            if (status != "SUBMITTED") { Err("Application is not in SUBMITTED status."); return; }
+            if (status != "SUBMITTED") { Err("This application is no longer awaiting the Head of Department."); return; }
             if (!isAdmin && !string.Equals(supUser, username, StringComparison.OrdinalIgnoreCase))
-            { Err("You are not the assigned supervisor for this application."); return; }
+            { Err("Only the Head of Department chosen on this application can approve it."); return; }
 
-            using (var cmd = new MySqlCommand(@"
+            using (MySqlCommand cmd = new MySqlCommand(@"
                 UPDATE hrm_leave_applications SET
                     status='HOD_APPROVED',hod_action='APPROVED',
                     hod_handover_to=@ht,hod_notes=@no,
@@ -1130,33 +1062,33 @@ public partial class COOPERP_NewScreens_LeaveApplicationForm : System.Web.UI.Pag
 
     // ── HOD Decline ────────────────────────────────────────────────────────────
 
-    private void AjaxHodDecline(string username, string screenName, string ip, bool isAdmin, bool isHod)
+    private void AjaxHodDecline(string username, string screenName, string ip, bool isAdmin)
     {
         // No role gate here: the assigned Supervisor / HOD (whatever their role) or an
-        // admin may act - enforced by the supervisor_username check below.
+        // admin may act, enforced by the supervisor_username check below.
         int    appId  = FormInt("id");
         string reason = FormStr("reason");
-        if (string.IsNullOrEmpty(reason)) { Err("A reason is required."); return; }
+        if (string.IsNullOrEmpty(reason)) { Err("Give a reason for declining."); return; }
 
-        using (var conn = new MySqlConnection(ConnStr()))
+        using (MySqlConnection conn = new MySqlConnection(ConnStr()))
         {
             conn.Open();
             string status = "", supUser = "";
-            using (var cmd = new MySqlCommand(
+            using (MySqlCommand cmd = new MySqlCommand(
                 "SELECT status,supervisor_username FROM hrm_leave_applications WHERE id=@id AND is_active=1", conn))
             {
                 cmd.Parameters.AddWithValue("@id", appId);
-                using (var dr = cmd.ExecuteReader())
+                using (MySqlDataReader dr = cmd.ExecuteReader())
                 {
-                    if (!dr.Read()) { Err("Application not found."); return; }
+                    if (!dr.Read()) { Err("This application was not found."); return; }
                     status = dr[0].ToString(); supUser = dr[1].ToString();
                 }
             }
-            if (status != "SUBMITTED") { Err("Application is not in SUBMITTED status."); return; }
+            if (status != "SUBMITTED") { Err("This application is no longer awaiting the Head of Department."); return; }
             if (!isAdmin && !string.Equals(supUser, username, StringComparison.OrdinalIgnoreCase))
-            { Err("You are not the assigned supervisor."); return; }
+            { Err("Only the Head of Department chosen on this application can decline it."); return; }
 
-            using (var cmd = new MySqlCommand(@"
+            using (MySqlCommand cmd = new MySqlCommand(@"
                 UPDATE hrm_leave_applications SET
                     status='HOD_DECLINED',hod_action='DECLINED',
                     hod_notes=@no,hod_actor=@ac,hod_actor_name=@an,
@@ -1179,24 +1111,24 @@ public partial class COOPERP_NewScreens_LeaveApplicationForm : System.Web.UI.Pag
 
     private void AjaxHrApprove(string username, string screenName, string ip, bool isAdmin, bool isHr)
     {
-        if (!isAdmin && !isHr) { Err("Access denied."); return; }
-        int    appId  = FormInt("id");
+        if (!isAdmin && !isHr) { Err("Only HR can approve at this stage."); return; }
+        int    appId   = FormInt("id");
         string effFrom = FormStr("hr_effective_from");
         string effTo   = FormStr("hr_effective_to");
         string notes   = FormStr("hr_notes");
 
         DateTime dtFrom, dtTo;
         if (!DateTime.TryParse(effFrom, out dtFrom) || !DateTime.TryParse(effTo, out dtTo))
-        { Err("Effective dates are required."); return; }
+        { Err("Enter both leave dates."); return; }
 
-        using (var conn = new MySqlConnection(ConnStr()))
+        using (MySqlConnection conn = new MySqlConnection(ConnStr()))
         {
             conn.Open();
             string status = GetStatus(conn, appId);
-            if (status == null) { Err("Application not found."); return; }
-            if (status != "HOD_APPROVED") { Err("Application must be in HOD_APPROVED status."); return; }
+            if (status == null) { Err("This application was not found."); return; }
+            if (status != "HOD_APPROVED") { Err("This application is not awaiting HR."); return; }
 
-            using (var cmd = new MySqlCommand(@"
+            using (MySqlCommand cmd = new MySqlCommand(@"
                 UPDATE hrm_leave_applications SET
                     status='HR_APPROVED',hr_action='APPROVED',
                     hr_effective_from=@ef,hr_effective_to=@et,hr_notes=@no,
@@ -1222,19 +1154,19 @@ public partial class COOPERP_NewScreens_LeaveApplicationForm : System.Web.UI.Pag
 
     private void AjaxHrDecline(string username, string screenName, string ip, bool isAdmin, bool isHr)
     {
-        if (!isAdmin && !isHr) { Err("Access denied."); return; }
+        if (!isAdmin && !isHr) { Err("Only HR can decline at this stage."); return; }
         int    appId  = FormInt("id");
         string reason = FormStr("reason");
-        if (string.IsNullOrEmpty(reason)) { Err("A reason is required."); return; }
+        if (string.IsNullOrEmpty(reason)) { Err("Give a reason for declining."); return; }
 
-        using (var conn = new MySqlConnection(ConnStr()))
+        using (MySqlConnection conn = new MySqlConnection(ConnStr()))
         {
             conn.Open();
             string status = GetStatus(conn, appId);
-            if (status == null) { Err("Application not found."); return; }
-            if (status != "HOD_APPROVED") { Err("Application must be HOD_APPROVED."); return; }
+            if (status == null) { Err("This application was not found."); return; }
+            if (status != "HOD_APPROVED") { Err("This application is not awaiting HR."); return; }
 
-            using (var cmd = new MySqlCommand(@"
+            using (MySqlCommand cmd = new MySqlCommand(@"
                 UPDATE hrm_leave_applications SET
                     status='HR_DECLINED',hr_action='DECLINED',
                     hr_notes=@no,hr_actor=@ac,hr_actor_name=@an,
@@ -1255,10 +1187,9 @@ public partial class COOPERP_NewScreens_LeaveApplicationForm : System.Web.UI.Pag
 
     // ── VC Decision ────────────────────────────────────────────────────────────
 
-    private void AjaxVcDecision(string username, string screenName, string roleCode,
-        string ip, bool isAdmin, bool isVc)
+    private void AjaxVcDecision(string username, string screenName, string ip, bool isAdmin, bool isVc)
     {
-        if (!isAdmin && !isVc) { Err("Access denied."); return; }
+        if (!isAdmin && !isVc) { Err("Only the Vice Chancellor can decide at this stage."); return; }
         int    appId    = FormInt("id");
         string decision = FormStr("vc_decision").ToUpper();
         string reason   = FormStr("vc_reason");
@@ -1266,20 +1197,20 @@ public partial class COOPERP_NewScreens_LeaveApplicationForm : System.Web.UI.Pag
         int    taken    = FormInt("vc_days_taken");
 
         string[] valid = { "GRANTED", "NOT_GRANTED", "POSTPONED" };
-        if (Array.IndexOf(valid, decision) < 0) { Err("Invalid decision value."); return; }
+        if (Array.IndexOf(valid, decision) < 0) { Err("Choose Grant, Not grant or Postpone."); return; }
         if (decision != "GRANTED" && string.IsNullOrEmpty(reason))
-        { Err("A reason is required for this decision."); return; }
+        { Err("Give a reason for this decision."); return; }
 
         string newStatus = "VC_" + decision;
 
-        using (var conn = new MySqlConnection(ConnStr()))
+        using (MySqlConnection conn = new MySqlConnection(ConnStr()))
         {
             conn.Open();
             string status = GetStatus(conn, appId);
-            if (status == null) { Err("Application not found."); return; }
-            if (status != "HR_APPROVED") { Err("Application must be HR_APPROVED."); return; }
+            if (status == null) { Err("This application was not found."); return; }
+            if (status != "HR_APPROVED") { Err("This application is not awaiting the Vice Chancellor."); return; }
 
-            using (var cmd = new MySqlCommand(@"
+            using (MySqlCommand cmd = new MySqlCommand(@"
                 UPDATE hrm_leave_applications SET
                     status=@ns,vc_decision=@vd,vc_reason=@vr,
                     vc_accumulated_days=@va,vc_days_taken=@vt,
@@ -1308,17 +1239,17 @@ public partial class COOPERP_NewScreens_LeaveApplicationForm : System.Web.UI.Pag
     private void AjaxCancel(string username, string screenName, string roleCode,
         string ip, bool isAdmin, bool isHr)
     {
-        if (!isAdmin && !isHr) { Err("Only Admin or HR can cancel applications."); return; }
+        if (!isAdmin && !isHr) { Err("Only HR can cancel an application."); return; }
         int appId = FormInt("id");
 
-        using (var conn = new MySqlConnection(ConnStr()))
+        using (MySqlConnection conn = new MySqlConnection(ConnStr()))
         {
             conn.Open();
             string status = GetStatus(conn, appId);
-            if (status == null) { Err("Application not found."); return; }
-            if (status == "CANCELLED") { Err("Already cancelled."); return; }
+            if (status == null) { Err("This application was not found."); return; }
+            if (status == "CANCELLED") { Err("This application is already cancelled."); return; }
 
-            using (var cmd = new MySqlCommand(
+            using (MySqlCommand cmd = new MySqlCommand(
                 "UPDATE hrm_leave_applications SET status='CANCELLED',updated_at=NOW() WHERE id=@id", conn))
             {
                 cmd.Parameters.AddWithValue("@id", appId);
@@ -1337,14 +1268,13 @@ public partial class COOPERP_NewScreens_LeaveApplicationForm : System.Web.UI.Pag
     private const string ApproverRolesSql = "'dean','registrar','hr_manager','admin','hod'";
 
     // Everyone who can be chosen as Supervisor / HOD: [0]=login username, [1]=display name, [2]=role label.
-    // (The previous version joined hrm_employee.username, a column that does not exist, so it
-    //  always fell back to bare usernames. The staff login column is hrm_employee.usernames.)
+    // The staff login column is hrm_employee.usernames.
     private List<string[]> LoadSupervisors()
     {
-        var list = new List<string[]>();
+        List<string[]> list = new List<string[]>();
         try
         {
-            using (var conn = new MySqlConnection(ConnStr()))
+            using (MySqlConnection conn = new MySqlConnection(ConnStr()))
             {
                 conn.Open();
                 string sql = @"
@@ -1357,8 +1287,8 @@ public partial class COOPERP_NewScreens_LeaveApplicationForm : System.Web.UI.Pag
                     WHERE ur.is_active = 1
                       AND (ur.expires_at IS NULL OR ur.expires_at > NOW())
                     GROUP BY ur.username";
-                using (var cmd = new MySqlCommand(sql, conn))
-                using (var dr  = cmd.ExecuteReader())
+                using (MySqlCommand cmd = new MySqlCommand(sql, conn))
+                using (MySqlDataReader dr = cmd.ExecuteReader())
                 {
                     while (dr.Read())
                     {
@@ -1371,7 +1301,7 @@ public partial class COOPERP_NewScreens_LeaveApplicationForm : System.Web.UI.Pag
                 }
             }
         }
-        catch { /* an empty list still lets a saved choice render */ }
+        catch (Exception ex) { System.Diagnostics.Trace.TraceWarning("LeaveApplicationForm approvers: " + ex.Message); }
         list.Sort(delegate(string[] a, string[] b) { return string.Compare(a[1], b[1], StringComparison.OrdinalIgnoreCase); });
         return list;
     }
@@ -1387,14 +1317,14 @@ public partial class COOPERP_NewScreens_LeaveApplicationForm : System.Web.UI.Pag
     }
 
     // Renders the <option>s. The option text carries the role; data-name carries the plain
-    // name that is posted as supervisor_name (unchanged contract).
+    // name that is posted as supervisor_name.
     private static string BuildSupervisorOptions(List<string[]> list, string selUser, string selName,
         bool forceSelected, string currentUser, out bool found)
     {
         found = false;
         string sel = (selUser ?? "").Trim();
         string me  = (currentUser ?? "").Trim();
-        var sb = new StringBuilder();
+        StringBuilder sb = new StringBuilder();
         foreach (string[] s in list)
         {
             bool isSel = sel.Length > 0 && string.Equals(s[0], sel, StringComparison.OrdinalIgnoreCase);
@@ -1416,7 +1346,7 @@ public partial class COOPERP_NewScreens_LeaveApplicationForm : System.Web.UI.Pag
         return string.Format("<option value=\"{0}\" data-name=\"{1}\"{2}>{3}</option>",
             HttpUtility.HtmlAttributeEncode(user),
             HttpUtility.HtmlAttributeEncode(name),
-            selected ? " selected" : "",
+            selected ? " selected=\"selected\"" : "",
             HttpUtility.HtmlEncode(string.IsNullOrEmpty(role) ? name : name + " (" + role + ")"));
     }
 
@@ -1434,15 +1364,15 @@ public partial class COOPERP_NewScreens_LeaveApplicationForm : System.Web.UI.Pag
     }
 
     // Matches the login to hrm_employee: usernames (case-insensitive, trimmed), else
-    // EMP_CODE, else emp_email - each only when it identifies exactly one employee.
+    // EMP_CODE, else emp_email, each only when it identifies exactly one employee.
     private StaffProfile LoadStaffProfile(string username)
     {
-        var p = new StaffProfile();
+        StaffProfile p = new StaffProfile();
         string u = (username ?? "").Trim();
         if (u.Length == 0) return p;
         try
         {
-            using (var conn = new MySqlConnection(ConnStr()))
+            using (MySqlConnection conn = new MySqlConnection(ConnStr()))
             {
                 conn.Open();
                 int empId = UniqueEmpId(conn, "LOWER(TRIM(usernames)) = LOWER(@u)", u);
@@ -1466,10 +1396,10 @@ public partial class COOPERP_NewScreens_LeaveApplicationForm : System.Web.UI.Pag
                     LEFT JOIN hrm_departments hd ON hd.ID = e.dept_id
                     LEFT JOIN hrm_employee    s  ON s.empID = e.supervisorID AND s.empID <> e.empID
                     WHERE e.empID = @id";
-                using (var cmd = new MySqlCommand(sql, conn))
+                using (MySqlCommand cmd = new MySqlCommand(sql, conn))
                 {
                     cmd.Parameters.AddWithValue("@id", empId);
-                    using (var dr = cmd.ExecuteReader())
+                    using (MySqlDataReader dr = cmd.ExecuteReader())
                     {
                         if (dr.Read())
                         {
@@ -1498,7 +1428,7 @@ public partial class COOPERP_NewScreens_LeaveApplicationForm : System.Web.UI.Pag
 
                 if (p.SupUsername.Length > 0)
                 {
-                    using (var cmd = new MySqlCommand(@"
+                    using (MySqlCommand cmd = new MySqlCommand(@"
                         SELECT COUNT(*) FROM sys_user_roles ur
                         JOIN sys_roles r ON r.id = ur.role_id AND r.is_active = 1
                         WHERE ur.username = @u AND ur.is_active = 1
@@ -1510,17 +1440,17 @@ public partial class COOPERP_NewScreens_LeaveApplicationForm : System.Web.UI.Pag
                 }
             }
         }
-        catch { /* pre-fill is a convenience; never break the form */ }
+        catch (Exception ex) { System.Diagnostics.Trace.TraceWarning("LeaveApplicationForm profile: " + ex.Message); }
         return p;
     }
 
     private static int UniqueEmpId(MySqlConnection conn, string where, string u)
     {
-        using (var cmd = new MySqlCommand("SELECT empID FROM hrm_employee WHERE " + where + " LIMIT 2", conn))
+        using (MySqlCommand cmd = new MySqlCommand("SELECT empID FROM hrm_employee WHERE " + where + " LIMIT 2", conn))
         {
             cmd.Parameters.AddWithValue("@u", u);
             int id = 0, n = 0;
-            using (var dr = cmd.ExecuteReader())
+            using (MySqlDataReader dr = cmd.ExecuteReader())
                 while (dr.Read()) { n++; id = Convert.ToInt32(dr[0]); }
             return n == 1 ? id : 0;
         }
@@ -1553,7 +1483,7 @@ public partial class COOPERP_NewScreens_LeaveApplicationForm : System.Web.UI.Pag
     private static string JsStr(string s)
     {
         if (s == null) return "\"\"";
-        var sb = new StringBuilder("\"");
+        StringBuilder sb = new StringBuilder("\"");
         foreach (char c in s)
         {
             switch (c)
@@ -1583,17 +1513,17 @@ public partial class COOPERP_NewScreens_LeaveApplicationForm : System.Web.UI.Pag
     {
         try
         {
-            using (var conn = new MySqlConnection(ConnStr()))
+            using (MySqlConnection conn = new MySqlConnection(ConnStr()))
             {
                 conn.Open();
-                using (var cmd = new MySqlCommand(
+                using (MySqlCommand cmd = new MySqlCommand(
                     "SELECT * FROM hrm_leave_applications WHERE id=@id AND is_active=1", conn))
                 {
                     cmd.Parameters.AddWithValue("@id", appId);
-                    using (var dr = cmd.ExecuteReader())
+                    using (MySqlDataReader dr = cmd.ExecuteReader())
                     {
                         if (!dr.Read()) return null;
-                        var d = new Dictionary<string, object>(StringComparer.OrdinalIgnoreCase);
+                        Dictionary<string, object> d = new Dictionary<string, object>(StringComparer.OrdinalIgnoreCase);
                         for (int i = 0; i < dr.FieldCount; i++)
                             d[dr.GetName(i)] = dr.IsDBNull(i) ? null : dr.GetValue(i);
                         return d;
@@ -1601,16 +1531,20 @@ public partial class COOPERP_NewScreens_LeaveApplicationForm : System.Web.UI.Pag
                 }
             }
         }
-        catch { return null; }
+        catch (Exception ex)
+        {
+            System.Diagnostics.Trace.TraceError("LeaveApplicationForm load: " + ex);
+            return null;
+        }
     }
 
     private static string GetStatus(MySqlConnection conn, int appId)
     {
-        using (var cmd = new MySqlCommand(
+        using (MySqlCommand cmd = new MySqlCommand(
             "SELECT status FROM hrm_leave_applications WHERE id=@id AND is_active=1", conn))
         {
             cmd.Parameters.AddWithValue("@id", appId);
-            using (var dr = cmd.ExecuteReader())
+            using (MySqlDataReader dr = cmd.ExecuteReader())
                 return dr.Read() ? dr[0].ToString() : null;
         }
     }
@@ -1626,7 +1560,7 @@ public partial class COOPERP_NewScreens_LeaveApplicationForm : System.Web.UI.Pag
                     (application_id,action_code,old_status,new_status,
                      actor_name,actor_username,actor_role,remarks,ip_address,created_at)
                 VALUES(@ai,@ac,@os,@ns,@an,@au,@ar,@rm,@ip,NOW())";
-            using (var cmd = new MySqlCommand(sql, conn))
+            using (MySqlCommand cmd = new MySqlCommand(sql, conn))
             {
                 cmd.Parameters.AddWithValue("@ai", appId);
                 cmd.Parameters.AddWithValue("@ac", actionCode);
@@ -1640,95 +1574,59 @@ public partial class COOPERP_NewScreens_LeaveApplicationForm : System.Web.UI.Pag
                 cmd.ExecuteNonQuery();
             }
         }
-        catch { /* audit must never break main flow */ }
+        catch (Exception ex) { System.Diagnostics.Trace.TraceWarning("LeaveApplicationForm audit: " + ex.Message); }
     }
 
     // ══════════════════════════════════════════════════════════════════════════
-    //  HTML HELPERS
+    //  LABELS
     // ══════════════════════════════════════════════════════════════════════════
 
-    private static string LfField(string label, string id, string type, string value, string placeholder)
+    private static string StatusLabel(string status)
     {
-        return string.Format(
-            "<div class=\"lf-field\"><label>{0}</label>" +
-            "<input type=\"{1}\" id=\"{2}\" value=\"{3}\" placeholder=\"{4}\" /></div>",
-            HttpUtility.HtmlEncode(label), type, id,
-            HttpUtility.HtmlAttributeEncode(value ?? ""),
-            HttpUtility.HtmlAttributeEncode(placeholder ?? ""));
+        switch (status)
+        {
+            case "DRAFT":          return "Draft";
+            case "SUBMITTED":      return "Awaiting HOD";
+            case "HOD_APPROVED":   return "Awaiting HR";
+            case "HOD_DECLINED":   return "Declined by HOD";
+            case "HR_APPROVED":    return "Awaiting Vice Chancellor";
+            case "HR_DECLINED":    return "Declined by HR";
+            case "VC_GRANTED":     return "Granted";
+            case "VC_NOT_GRANTED": return "Not granted";
+            case "VC_POSTPONED":   return "Postponed";
+            case "CANCELLED":      return "Cancelled";
+            default:               return status;
+        }
     }
-
-    private static string LfTextarea(string label, string id, string value, string placeholder)
-    {
-        return string.Format(
-            "<div class=\"lf-field\"><label>{0}</label>" +
-            "<textarea id=\"{1}\" placeholder=\"{2}\">{3}</textarea></div>",
-            HttpUtility.HtmlEncode(label), id,
-            HttpUtility.HtmlAttributeEncode(placeholder ?? ""),
-            HttpUtility.HtmlEncode(value ?? ""));
-    }
-
-    private static string RoField(string label, string value)
-    {
-        bool empty = string.IsNullOrWhiteSpace(value);
-        return string.Format(
-            "<div class=\"lf-field\"><label>{0}</label>" +
-            "<div class=\"lf-read-val{1}\">{2}</div></div>",
-            HttpUtility.HtmlEncode(label),
-            empty ? " lf-read-val--empty" : "",
-            empty ? "&mdash;" : HttpUtility.HtmlEncode(value));
-    }
-
-    private static string SectionLocked(string num, string title, string reason)
-    {
-        return string.Format(
-            "<div class=\"lf-section lf-section--locked\">" +
-            "<div class=\"lf-section__head\">" +
-            "<div class=\"lf-section__num\">{0}</div>" +
-            "<div class=\"lf-section__title\">{1}</div>" +
-            "<span class=\"lf-section__badge badge--locked\">Locked</span>" +
-            "</div>" +
-            "<div class=\"lf-section__body\">" +
-            "<p style=\"font-size:12px;color:var(--muted);margin:0;\">{2}</p>" +
-            "</div></div>",
-            num, HttpUtility.HtmlEncode(title), HttpUtility.HtmlEncode(reason));
-    }
-
-    // ══════════════════════════════════════════════════════════════════════════
-    //  BADGE / LABEL HELPERS
-    // ══════════════════════════════════════════════════════════════════════════
 
     private static string StatusBadge(string status)
     {
-        string cls, label;
+        string kind;
         switch (status)
         {
-            case "DRAFT":          cls = "draft";           label = "Draft";        break;
-            case "SUBMITTED":      cls = "submitted";       label = "Pending HOD";  break;
-            case "HOD_APPROVED":   cls = "hod_approved";   label = "Pending HR";   break;
-            case "HOD_DECLINED":   cls = "hod_declined";   label = "HOD Declined"; break;
-            case "HR_APPROVED":    cls = "hr_approved";    label = "Pending VC";   break;
-            case "HR_DECLINED":    cls = "hr_declined";    label = "HR Declined";  break;
-            case "VC_GRANTED":     cls = "vc_granted";     label = "Granted";      break;
-            case "VC_NOT_GRANTED": cls = "vc_not_granted"; label = "Not Granted";  break;
-            case "VC_POSTPONED":   cls = "vc_postponed";   label = "Postponed";    break;
-            case "CANCELLED":      cls = "cancelled";      label = "Cancelled";    break;
-            default:               cls = "draft";           label = status;         break;
+            case "SUBMITTED": case "HOD_APPROVED": case "HR_APPROVED": kind = "info"; break;
+            case "VC_GRANTED": kind = "ok"; break;
+            case "VC_POSTPONED": kind = "warn"; break;
+            case "HOD_DECLINED": case "HR_DECLINED": case "VC_NOT_GRANTED": kind = "bad"; break;
+            default: kind = "neutral"; break;
         }
-        return string.Format("<span class=\"lf-status lf-status--{0}\">{1}</span>", cls, label);
+        return "<span class=\"hr-badge hr-badge--" + kind + "\">" + HttpUtility.HtmlEncode(StatusLabel(status)) + "</span>";
     }
 
     private static string LeaveTypeLabel(string type)
     {
         switch (type)
         {
-            case "annual":      return "Annual Leave";
-            case "study":       return "Study Leave";
-            case "sick":        return "Sick Leave";
-            case "maternity":   return "Maternity Leave";
-            case "bereavement": return "Family Bereavement";
+            case "annual":      return "Annual leave";
+            case "study":       return "Study leave";
+            case "sick":        return "Sick leave";
+            case "maternity":   return "Maternity leave";
+            case "bereavement": return "Family bereavement";
             default:            return type;
         }
     }
+
+    private static string Ref(int appId) { return "LV-" + appId.ToString("0000"); }
 
     // ══════════════════════════════════════════════════════════════════════════
     //  DATA UTILITIES
@@ -1758,7 +1656,7 @@ public partial class COOPERP_NewScreens_LeaveApplicationForm : System.Web.UI.Pag
         if (!d.TryGetValue(key, out v) || v == null || v is DBNull) return "";
         DateTime dt; if (v is DateTime) dt = (DateTime)v;
         else if (!DateTime.TryParse(v.ToString(), out dt)) return "";
-        return dt.ToString("dd MMM yyyy");
+        return dt.ToString("d MMM yyyy", CultureInfo.InvariantCulture);
     }
     private static string FormatDateTime(Dictionary<string, object> d, string key)
     {
@@ -1766,8 +1664,12 @@ public partial class COOPERP_NewScreens_LeaveApplicationForm : System.Web.UI.Pag
         if (!d.TryGetValue(key, out v) || v == null || v is DBNull) return "";
         DateTime dt; if (v is DateTime) dt = (DateTime)v;
         else if (!DateTime.TryParse(v.ToString(), out dt)) return "";
-        return dt.ToString("dd MMM yyyy, h:mm tt");
+        return dt.ToString("d MMM yyyy, HH:mm", CultureInfo.InvariantCulture);
     }
+
+    private static string Or(string v, string fallback) { return string.IsNullOrWhiteSpace(v) ? fallback : v.Trim(); }
+    private static string Enc(string s) { return HttpUtility.HtmlEncode(HrExport.Clean(s ?? "")); }
+    private static string Multiline(string s) { return Enc(s).Replace("\r\n", "<br/>").Replace("\n", "<br/>"); }
 
     private string FormStr(string key) { return (Request.Form[key] ?? "").Trim(); }
     private int    FormInt(string key) { int v = 0; int.TryParse(FormStr(key), out v); return v; }
@@ -1786,7 +1688,7 @@ public partial class COOPERP_NewScreens_LeaveApplicationForm : System.Web.UI.Pag
 
     private static string ConnStr()
     {
-        var cs = ConfigurationManager.ConnectionStrings["vacConnectionString"];
+        ConnectionStringSettings cs = ConfigurationManager.ConnectionStrings["vacConnectionString"];
         if (cs != null && !string.IsNullOrEmpty(cs.ConnectionString)) return cs.ConnectionString;
         cs = ConfigurationManager.ConnectionStrings["DefaultConnection"];
         if (cs != null) return cs.ConnectionString;
