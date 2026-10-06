@@ -233,14 +233,17 @@ public partial class COOPERP_NewScreens_HREmployees : System.Web.UI.Page
             body.Append("<tr class='is-click' onclick=\"openEmployeeProfile(").Append(empID).Append(")\">");
             body.Append("<td><strong>").Append(Enc(r["emp_name"])).Append("</strong><span class='hr-sub'>").Append(Enc(sub)).Append("</span></td>");
             body.Append("<td style='white-space:nowrap'>").Append(Enc(empCode))
-                .Append(isDup ? " <span class='hr-badge hr-badge--warn' title='Another employee has the same staff number'>Duplicate</span>" : "").Append("</td>");
+                .Append(isDup ? "<div style='margin-top:3px'><span class='hr-badge hr-badge--warn' title='Another employee has the same staff number'>Duplicate</span></div>" : "").Append("</td>");
             body.Append("<td>").Append(Enc(r["EmpType"])).Append("</td>");
             body.Append("<td>").Append(Enc(r["dept_name"])).Append("</td>");
             body.Append("<td>").Append(Enc(r["jobname"])).Append("</td>");
             body.Append("<td>").Append(ContractBadge(r["contractID"], r["contractStatus"], r["contractEnd"]))
                 .Append(r["contractEnd"] != DBNull.Value ? "<span class='hr-sub'>Ends " + FormatDate(r["contractEnd"]) + "</span>" : "").Append("</td>");
             body.Append("<td class='hr-num'>").Append(FormatAmount(r["basicpay"])).Append("</td>");
-            body.Append("<td class='hr-right'><button type='button' class='hr-btn hr-btn--secondary hr-btn--sm' onclick=\"event.stopPropagation();openEmployeeProfile(")
+            body.Append("<td class='hr-right' style='white-space:nowrap'><button type='button' class='hr-btn hr-btn--secondary hr-btn--sm' title='Create, unlock or reset the login of this employee'")
+                .Append(" data-name=\"").Append(Enc(r["emp_name"])).Append("\" data-email=\"").Append(Enc(UsableEmail(r["emp_email"])))
+                .Append("\" onclick=\"event.stopPropagation();fixAccountFromRow(this,").Append(empID).Append(")\">Fix account</button> ")
+                .Append("<button type='button' class='hr-btn hr-btn--secondary hr-btn--sm' onclick=\"event.stopPropagation();openEmployeeProfile(")
                 .Append(empID).Append(")\">Open</button></td>");
             body.Append("</tr>");
         }

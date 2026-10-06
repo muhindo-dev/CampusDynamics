@@ -163,7 +163,7 @@ a.hr-kpi.em-kpi--on { border-color: var(--hr-navy); }
         <div class="hr-modal__foot">
             <button type="button" class="hr-btn hr-btn--danger" onclick="confirmDelete()">Delete employee</button>
             <span class="hr-spacer"></span>
-            <button type="button" class="hr-btn hr-btn--secondary" onclick="openResetLogin()">Reset login</button>
+            <button type="button" class="hr-btn hr-btn--secondary" onclick="openResetLogin()">Fix account</button>
             <button type="button" class="hr-btn hr-btn--secondary" onclick="openSetPhotoModal()">Change photo</button>
             <button type="button" class="hr-btn hr-btn--primary" onclick="openEditModal(PROFILE.id)">Edit</button>
         </div>
@@ -306,10 +306,10 @@ a.hr-kpi.em-kpi--on { border-color: var(--hr-navy); }
     </div>
 </div>
 
-<!-- Reset login -->
+<!-- Fix account -->
 <div class="hr-modal" id="fixLoginModal">
     <div class="hr-modal__box">
-        <div class="hr-modal__head"><span>Reset login</span><button type="button" class="hr-modal__close" onclick="closeModal('fixLoginModal')" aria-label="Close">&times;</button></div>
+        <div class="hr-modal__head"><span>Fix account</span><button type="button" class="hr-modal__close" onclick="closeModal('fixLoginModal')" aria-label="Close">&times;</button></div>
         <div class="hr-modal__body">
             <p style="margin:0 0 12px" id="fixLoginUserInfo"></p>
             <div class="hr-field">
@@ -335,7 +335,7 @@ a.hr-kpi.em-kpi--on { border-color: var(--hr-navy); }
         </div>
         <div class="hr-modal__foot">
             <button type="button" class="hr-btn hr-btn--secondary" onclick="closeModal('fixLoginModal')">Close</button>
-            <button type="button" id="fixLoginSubmitBtn" class="hr-btn hr-btn--primary" onclick="submitFixLogin()">Reset login</button>
+            <button type="button" id="fixLoginSubmitBtn" class="hr-btn hr-btn--primary" onclick="submitFixLogin()">Fix account</button>
         </div>
     </div>
 </div>
@@ -639,11 +639,20 @@ function confirmDelete(){
     });
 }
 
-/* Reset login */
+/* Fix account (login): opened from a list row or from the profile */
+var LOGIN_TARGET = { id: 0, name: '' };
+function fixAccountFromRow(btn, id){
+    openFixAccount(id, btn.getAttribute('data-name') || '', btn.getAttribute('data-email') || '');
+}
 function openResetLogin(){
     if(!PROFILE.id) return;
-    el('fixLoginUserInfo').innerHTML = 'Reset the login of <strong>' + escHtml(PROFILE.name || '') + '</strong>' +
-        (PROFILE.email ? '. The username will be ' + escHtml(PROFILE.email) + '.' : '.');
+    openFixAccount(PROFILE.id, PROFILE.name || '', PROFILE.email || '');
+}
+function openFixAccount(id, name, email){
+    LOGIN_TARGET = { id: id, name: name };
+    el('fixLoginUserInfo').innerHTML = 'Fix the login account of <strong>' + escHtml(name) + '</strong>' +
+        (email ? '. The username will be ' + escHtml(email) + '.' : '.') +
+        ' This creates the account if it is missing, unlocks it and sets a new password.';
     el('fixLoginResult').textContent = '';
     el('fixLoginPassword').value = '';
     el('fixLoginLogWrap').style.display = 'none';
@@ -653,20 +662,20 @@ function openResetLogin(){
     openModal('fixLoginModal');
 }
 function submitFixLogin(){
-    if(!PROFILE.id) return;
+    if(!LOGIN_TARGET.id) return;
     var pwd = el('fixLoginPassword').value || '';
     if(pwd && pwd.length < 6){ el('fixLoginResult').textContent = 'Use at least 6 characters, or leave the password blank.'; return; }
     var btn = el('fixLoginSubmitBtn');
     btn.disabled = true; btn.textContent = 'Working';
     el('fixLoginResult').textContent = '';
-    fetch('HREmployees.aspx?ajax=fix_login&id=' + encodeURIComponent(PROFILE.id), {
+    fetch('HREmployees.aspx?ajax=fix_login&id=' + encodeURIComponent(LOGIN_TARGET.id), {
         method: 'POST', credentials: 'same-origin',
         headers: { 'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8' },
         body: 'new_password=' + encodeURIComponent(pwd)
     })
     .then(function(r){ return r.json(); })
     .then(function(d){
-        btn.disabled = false; btn.textContent = 'Reset login';
+        btn.disabled = false; btn.textContent = 'Fix account';
         if(d.log && d.log.length){
             var ul = el('fixLoginLog'); ul.innerHTML = '';
             for(var i = 0; i < d.log.length; i++){ var li = document.createElement('li'); li.textContent = d.log[i]; ul.appendChild(li); }
@@ -676,14 +685,14 @@ function submitFixLogin(){
             el('fixLoginUsername').textContent = d.username || '';
             el('fixLoginPwdValue').textContent = d.password || '';
             el('fixLoginPwdWrap').style.display = '';
-            showToast('Login reset for ' + (PROFILE.name || d.username) + '.');
+            showToast('Account fixed for ' + (LOGIN_TARGET.name || d.username) + '.');
         } else {
-            el('fixLoginResult').textContent = d.error || 'The login could not be reset.';
+            el('fixLoginResult').textContent = d.error || 'The account could not be fixed.';
         }
     })
     .catch(function(){
-        btn.disabled = false; btn.textContent = 'Reset login';
-        el('fixLoginResult').textContent = 'The login could not be reset. Check your connection and try again.';
+        btn.disabled = false; btn.textContent = 'Fix account';
+        el('fixLoginResult').textContent = 'The account could not be fixed. Check your connection and try again.';
     });
 }
 function copyCredentials(){
