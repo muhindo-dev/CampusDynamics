@@ -94,7 +94,12 @@ public partial class COOPERP_NewScreens_HREmployees : System.Web.UI.Page
 
         if (!string.IsNullOrEmpty(action))
         {
-            if (string.Equals(action, "export_employees", StringComparison.OrdinalIgnoreCase))
+            // These handlers run before SidebarMaster's login check: HR access is required here
+            // (they include password resets and an export with pay data).
+            bool isExport = string.Equals(action, "export_employees", StringComparison.OrdinalIgnoreCase);
+            if (!HrAccess.RequireHr(!isExport)) return;
+
+            if (isExport)
             {
                 WriteEmployeesExportCsv();
                 return;

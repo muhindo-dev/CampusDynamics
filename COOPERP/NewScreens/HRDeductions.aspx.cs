@@ -43,6 +43,7 @@ public partial class COOPERP_NewScreens_HRDeductions : System.Web.UI.Page
         // Handle AJAX search requests
         if (Request.QueryString["ajax"] == "search_emp")
         {
+            if (!HrAccess.RequireHr(true)) return;
             HandleEmployeeSearch();
             return;
         }
