@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Configuration;
 using System.Data;
@@ -7,10 +7,9 @@ using System.Web.UI;
 using MySql.Data.MySqlClient;
 
 /// <summary>
-/// HRConfig - manages the single-row hrm_config table.
-/// All payroll calculations (PAYE, NSSF, Kabaka, Local Tax) derive
-/// their rates from this page at runtime; changes here are immediately
-/// reflected the next time payroll is generated.
+/// Payroll and tax settings: the single-row hrm_config table. Payroll generation reads PAYE bands,
+/// NSSF, Kabaka contribution and local service tax from here. Save and reset are recorded in
+/// last_updated / updated_by and in acad_activity_log. Reset needs the word RESET typed in a dialog.
 /// </summary>
 public partial class COOPERP_NewScreens_HRConfig : System.Web.UI.Page
 {
@@ -31,6 +30,7 @@ public partial class COOPERP_NewScreens_HRConfig : System.Web.UI.Page
 
     protected void Page_Load(object sender, EventArgs e)
     {
+        if (!HrAccess.RequireHr(false)) return;
         EnsureTableExists();
         if (!IsPostBack)
             LoadConfig();
@@ -97,7 +97,8 @@ public partial class COOPERP_NewScreens_HRConfig : System.Web.UI.Page
         }
         catch (Exception ex)
         {
-            ShowBanner("Database error: " + ex.Message, false);
+            Log("Error", "Load: " + ex.Message);
+            ShowBanner("The settings could not be loaded. Please refresh the page.", false);
             btnSave.Enabled = false;
             return;
         }
@@ -156,17 +157,13 @@ public partial class COOPERP_NewScreens_HRConfig : System.Web.UI.Page
         txtWorkingDays.Text  = SafeInt(r["working_days_per_month"]).ToString();
         txtWorkingHours.Text = SafeInt(r["working_hours_per_day"]).ToString();
 
-        // Audit banner
+        // Last change
         if (r["last_updated"] != DBNull.Value && r["updated_by"] != DBNull.Value
             && !string.IsNullOrEmpty(r["updated_by"].ToString()))
         {
-            DateTime updAt  = Convert.ToDateTime(r["last_updated"]);
-            string   updBy  = r["updated_by"].ToString();
-            litLastUpdated.Text    = string.Format(
-                "Configuration last saved on <strong>{0}</strong> by <strong>{1}</strong>.",
-                updAt.ToString("dd MMM yyyy, hh:mm tt"),
-                HttpUtility.HtmlEncode(updBy));
-            pnlLastUpdated.Visible = true;
+            DateTime updAt = Convert.ToDateTime(r["last_updated"]);
+            litLastUpdated.Text = "Last saved " + updAt.ToString("d MMM yyyy, HH:mm", System.Globalization.CultureInfo.InvariantCulture) +
+                " by " + HttpUtility.HtmlEncode(r["updated_by"].ToString());
         }
     }
 
@@ -182,34 +179,34 @@ public partial class COOPERP_NewScreens_HRConfig : System.Web.UI.Page
         decimal        b4max, b4rate;
         decimal        b5rate;
 
-        if (!TryRate(txtPayeB1Rate.Text, "Bracket 1 rate",   0,   0, errors, out b1rate))  { }
-        if (!TryAmount(txtPayeB1Max.Text, "Bracket 1 Max",        errors, out b1max))       { }
+        if (!TryRate(txtPayeB1Rate.Text, "Band 1 rate",   0,   0, errors, out b1rate))  { }
+        if (!TryAmount(txtPayeB1Max.Text, "Band 1 upper limit",        errors, out b1max))       { }
         b1min = 0; // always 0
 
-        if (!TryRate(txtPayeB2Rate.Text, "Bracket 2 rate",   0, 100, errors, out b2rate))  { }
-        if (!TryAmount(txtPayeB2Max.Text, "Bracket 2 Max",        errors, out b2max))       { }
+        if (!TryRate(txtPayeB2Rate.Text, "Band 2 rate",   0, 100, errors, out b2rate))  { }
+        if (!TryAmount(txtPayeB2Max.Text, "Band 2 upper limit",        errors, out b2max))       { }
 
-        if (!TryRate(txtPayeB3Rate.Text, "Bracket 3 rate",   0, 100, errors, out b3rate))  { }
-        if (!TryAmount(txtPayeB3Max.Text, "Bracket 3 Max",        errors, out b3max))       { }
+        if (!TryRate(txtPayeB3Rate.Text, "Band 3 rate",   0, 100, errors, out b3rate))  { }
+        if (!TryAmount(txtPayeB3Max.Text, "Band 3 upper limit",        errors, out b3max))       { }
 
-        if (!TryRate(txtPayeB4Rate.Text, "Bracket 4 rate",   0, 100, errors, out b4rate))  { }
-        if (!TryAmount(txtPayeB4Max.Text, "Bracket 4 Max",        errors, out b4max))       { }
+        if (!TryRate(txtPayeB4Rate.Text, "Band 4 rate",   0, 100, errors, out b4rate))  { }
+        if (!TryAmount(txtPayeB4Max.Text, "Band 4 upper limit",        errors, out b4max))       { }
 
-        if (!TryRate(txtPayeB5Rate.Text, "Bracket 5 rate",   0, 100, errors, out b5rate))  { }
+        if (!TryRate(txtPayeB5Rate.Text, "Band 5 rate",   0, 100, errors, out b5rate))  { }
 
         // Derived "Min" values for brackets 2-5 (from previous Max + 1)
         decimal b2min = 0, b3min = 0, b4min = 0, b5min = 0;
         if (errors.Count == 0)
         {
-            if (b2max <= b1max) errors.Add("Bracket 2 Max must be greater than Bracket 1 Max.");
+            if (b2max <= b1max) errors.Add("The band 2 upper limit must be above the band 1 upper limit.");
             else
             {
                 b2min = b1max + 1;
-                if (b3max <= b2max) errors.Add("Bracket 3 Max must be greater than Bracket 2 Max.");
+                if (b3max <= b2max) errors.Add("The band 3 upper limit must be above the band 2 upper limit.");
                 else
                 {
                     b3min = b2max + 1;
-                    if (b4max <= b3max) errors.Add("Bracket 4 Max must be greater than Bracket 3 Max.");
+                    if (b4max <= b3max) errors.Add("The band 4 upper limit must be above the band 3 upper limit.");
                     else
                     {
                         b4min = b3max + 1;
@@ -221,15 +218,15 @@ public partial class COOPERP_NewScreens_HRConfig : System.Web.UI.Page
 
         // -- Parse & validate statutory rates --------------------------------
         decimal nssfEmp, nssfEmpr, kabakaRate, localRate;
-        if (!TryRate(txtNssfEmployee.Text, "Employee NSSF rate", 0, 50,  errors, out nssfEmp))   { }
-        if (!TryRate(txtNssfEmployer.Text, "Employer NSSF rate", 0, 50,  errors, out nssfEmpr))  { }
-        if (!TryRate(txtKabakaRate.Text,   "Kabaka rate",        0, 20,  errors, out kabakaRate)) { }
-        if (!TryRate(txtLocalTaxRate.Text, "Local tax rate",     0, 20,  errors, out localRate))  { }
+        if (!TryRate(txtNssfEmployee.Text, "NSSF employee rate", 0, 50,  errors, out nssfEmp))   { }
+        if (!TryRate(txtNssfEmployer.Text, "NSSF employer rate", 0, 50,  errors, out nssfEmpr))  { }
+        if (!TryRate(txtKabakaRate.Text,   "Kabaka contribution rate",        0, 20,  errors, out kabakaRate)) { }
+        if (!TryRate(txtLocalTaxRate.Text, "Local service tax rate",     0, 20,  errors, out localRate))  { }
 
         string chargeKabaka   = ddlChargeKabaka.SelectedValue;
         string chargeLocalTax = ddlChargeLocalTax.SelectedValue;
-        if (chargeKabaka   != "Yes" && chargeKabaka   != "No") errors.Add("Invalid Kabaka charge flag.");
-        if (chargeLocalTax != "Yes" && chargeLocalTax != "No") errors.Add("Invalid local tax flag.");
+        if (chargeKabaka   != "Yes" && chargeKabaka   != "No") errors.Add("Select whether to charge the Kabaka contribution.");
+        if (chargeLocalTax != "Yes" && chargeLocalTax != "No") errors.Add("Select whether to charge local service tax.");
 
         // -- Leave ------------------------------------------------------------
         int annualLeave, maternityLeave, paternityLeave, sickLeave;
@@ -243,21 +240,21 @@ public partial class COOPERP_NewScreens_HRConfig : System.Web.UI.Page
         decimal overtime, gratuity;
 
         if (!int.TryParse(ddlFYStartMonth.SelectedValue, out fyMonth) || fyMonth < 1 || fyMonth > 12)
-            errors.Add("Invalid financial year start month.");
+            errors.Add("Select the month the financial year starts.");
 
-        if (!TryDays(txtProbation.Text, "Probation (months)", 0, 12, errors, out probation))  { }
+        if (!TryDays(txtProbation.Text, "Probation", 0, 12, errors, out probation))  { }
         if (!TryDays(txtNotice.Text,    "Notice period",      0, 365, errors, out noticeDays)) { }
-        if (!TryDays(txtWorkingDays.Text, "Working days/month", 1, 31, errors, out workDays))  { }
-        if (!TryDays(txtWorkingHours.Text,"Working hours/day",  1, 24, errors, out workHours)) { }
+        if (!TryDays(txtWorkingDays.Text, "Working days per month", 1, 31, errors, out workDays))  { }
+        if (!TryDays(txtWorkingHours.Text,"Working hours per day",  1, 24, errors, out workHours)) { }
 
         if (!decimal.TryParse(txtOvertime.Text, out overtime) || overtime < 1m || overtime > 10m)
-            errors.Add("Overtime multiplier must be between 1.0 and 10.0.");
+            errors.Add("Overtime rate must be between 1 and 10.");
         if (!TryRate(txtGratuity.Text, "Gratuity rate", 0, 100, errors, out gratuity)) { }
 
         // -- Abort on validation errors ---------------------------------------
         if (errors.Count > 0)
         {
-            ShowBanner("Please fix the following: " + string.Join(" | ", errors), false);
+            ShowBanner(string.Join(" ", errors.ToArray()), false);
             return;
         }
 
@@ -335,18 +332,28 @@ public partial class COOPERP_NewScreens_HRConfig : System.Web.UI.Page
                 P("@workDays",  workDays),     P("@workHours", workHours),
                 P("@now",  DateTime.Now),      P("@user", user));
 
-            ShowBanner("Configuration saved successfully. Payroll calculations will use the new rates from the next run.", true);
-            LoadConfig(); // refresh audit banner
+            Log("Settings saved", string.Format(System.Globalization.CultureInfo.InvariantCulture,
+                "PAYE {0}/{1}/{2}/{3}/{4}% to {5}/{6}/{7}/{8}; NSSF {9}%; Kabaka {10} {11}%; LST {12} {13}%",
+                b1rate, b2rate, b3rate, b4rate, b5rate, b1max, b2max, b3max, b4max, nssfEmp, chargeKabaka, kabakaRate, chargeLocalTax, localRate));
+            ShowBanner("Settings saved. The next payroll run uses them.", true);
+            LoadConfig();
         }
         catch (Exception ex)
         {
-            ShowBanner("Save failed: " + ex.Message, false);
+            Log("Error", "Save: " + ex.Message);
+            ShowBanner("The settings could not be saved. Please try again.", false);
         }
     }
 
     // -- Reset to factory defaults ---------------------------------------------
     protected void btnReset_Click(object sender, EventArgs e)
     {
+        if (hdnResetConfirm.Value != "RESET")
+        {
+            ShowBanner("Type RESET in the dialog to reset the settings.", false);
+            return;
+        }
+        hdnResetConfirm.Value = "";
         string user = (HttpContext.Current.Session["ScreenName"] ?? "").ToString();
         if (string.IsNullOrEmpty(user))
             user = (HttpContext.Current.Session["username"] ?? "System").ToString();
@@ -374,12 +381,14 @@ public partial class COOPERP_NewScreens_HRConfig : System.Web.UI.Page
                 P("@now",  DateTime.Now),
                 P("@user", user));
 
-            ShowBanner("All settings have been reset to factory defaults.", true);
+            Log("Settings reset to defaults", "All payroll, tax and leave settings reset to defaults");
+            ShowBanner("Settings reset to the defaults.", true);
             LoadConfig();
         }
         catch (Exception ex)
         {
-            ShowBanner("Reset failed: " + ex.Message, false);
+            Log("Error", "Reset: " + ex.Message);
+            ShowBanner("The settings could not be reset. Please try again.", false);
         }
     }
 
@@ -427,12 +436,22 @@ public partial class COOPERP_NewScreens_HRConfig : System.Web.UI.Page
     // -- Display helpers -------------------------------------------------------
     private void ShowBanner(string message, bool success)
     {
-        string css = success ? "hrc-result hrc-result--ok" : "hrc-result hrc-result--err";
-        divResult.Attributes["class"] = css;
-        litResult.Text = HttpUtility.HtmlEncode(message);
+        litResult.Text = "<div class=\"hr-notice " + (success ? "hr-notice--ok" : "hr-notice--bad") + "\" role=\"status\">" +
+            HttpUtility.HtmlEncode(message) + "</div>";
+        ScriptManager.RegisterStartupScript(this, GetType(), "scrollTop", "window.scrollTo(0,0);", true);
+    }
 
-        ScriptManager.RegisterStartupScript(this, GetType(), "scrollTop",
-            "window.scrollTo({top:0,behavior:'smooth'});", true);
+    private void Log(string what, string detail)
+    {
+        try
+        {
+            string u = HrAccess.Username();
+            ExecuteNonQuery("INSERT INTO acad_activity_log (user_id, page_function, par, comments, access_date) VALUES (@u, 'HR Payroll settings', @p, @c, NOW())",
+                P("@u", u.Length > 100 ? u.Substring(0, 100) : u),
+                P("@p", detail.Length > 300 ? detail.Substring(0, 300) : detail),
+                P("@c", what.Length > 200 ? what.Substring(0, 200) : what));
+        }
+        catch { }
     }
 
     private string Fmt(object val)

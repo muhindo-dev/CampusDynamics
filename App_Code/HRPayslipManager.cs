@@ -412,7 +412,7 @@ public static class HRPayslipManager
 
             // ── Header ────────────────────────────────────────────────────
             html.Append("<div class=\"payslip-print__header\">");
-            html.Append("<h2>Mutesa I Royal University</h2>");
+            html.Append("<h2>Muteesa I Royal University</h2>");
             html.AppendFormat("<h3>PAYSLIP &mdash; {0} {1}</h3>", monthName, year);
             html.Append("<div class=\"payslip-emp-info\">");
             html.AppendFormat("<div><strong>Employee:</strong> {0}</div>",

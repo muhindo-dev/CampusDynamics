@@ -1,291 +1,270 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Configuration;
 using System.Data;
+using System.Globalization;
 using System.Text;
 using System.Web;
-using System.Web.UI;
-using System.Web.UI.WebControls;
+using System.Web.Script.Serialization;
 using MySql.Data.MySqlClient;
-using DevExpress.Web;
 
+/// <summary>
+/// Payroll runs: list, run detail with a read-only register, generation, approval and the
+/// payroll exports and register print.
+///
+/// One-off allowances and deductions (hrm_allowance_records / hrm_deduction_records):
+///   generation reserves them for the run (payroll_id = run, status stays PENDING);
+///   approve and lock settles them (SETTLED, payment_date);
+///   regeneration, cancel and delete release them (payroll_id = NULL, PENDING) first,
+///   so a regenerated run includes them again and a cancelled run frees them.
+/// The register is read-only: pay changes go through allowances, deductions or the employee's
+/// contract and are applied by regenerating the run (same formulas for every payslip).
+/// Every write that touches several rows runs in one transaction.
+/// </summary>
 public partial class COOPERP_NewScreens_HRPayroll : System.Web.UI.Page
 {
-    // -----------------------------------------------------------------
-    // Section 1: Infrastructure
-    // -----------------------------------------------------------------
+    private static readonly string[] MONTH_NAMES = {
+        "", "JANUARY", "FEBRUARY", "MARCH", "APRIL", "MAY", "JUNE",
+        "JULY", "AUGUST", "SEPTEMBER", "OCTOBER", "NOVEMBER", "DECEMBER"
+    };
+    private static readonly CultureInfo IC = CultureInfo.InvariantCulture;
+
+    /// <summary>An error whose message is written for the user.</summary>
+    private class UserError : Exception { public UserError(string m) : base(m) { } }
+
+    // =================================================================
+    //  Infrastructure
+    // =================================================================
 
     private string ConnStr
     {
         get { return ConfigurationManager.ConnectionStrings["vacConnectionString"].ConnectionString; }
     }
 
-    private static readonly string[] MONTH_NAMES = {
-        "", "JANUARY", "FEBRUARY", "MARCH", "APRIL", "MAY", "JUNE",
-        "JULY", "AUGUST", "SEPTEMBER", "OCTOBER", "NOVEMBER", "DECEMBER"
-    };
+    private static MySqlParameter P(string name, object value) { return new MySqlParameter(name, value ?? DBNull.Value); }
 
-    private DataTable ExecuteQuery(string sql, params MySqlParameter[] parms)
+    private DataTable Q(string sql, params MySqlParameter[] parms)
+    {
+        using (MySqlConnection c = new MySqlConnection(ConnStr))
+        {
+            c.Open();
+            return Q(c, null, sql, parms);
+        }
+    }
+
+    private static DataTable Q(MySqlConnection c, MySqlTransaction tx, string sql, params MySqlParameter[] parms)
     {
         DataTable dt = new DataTable();
-        try
+        using (MySqlCommand cmd = new MySqlCommand(sql, c, tx))
         {
-            using (MySqlConnection conn = new MySqlConnection(ConnStr))
-            {
-                conn.Open();
-                using (MySqlCommand cmd = new MySqlCommand(sql, conn))
-                {
-                    if (parms != null)
-                        foreach (MySqlParameter p in parms) cmd.Parameters.Add(p);
-                    using (MySqlDataAdapter da = new MySqlDataAdapter(cmd))
-                        da.Fill(dt);
-                }
-            }
+            if (parms != null) foreach (MySqlParameter p in parms) cmd.Parameters.Add(p);
+            using (MySqlDataAdapter da = new MySqlDataAdapter(cmd)) da.Fill(dt);
         }
-        catch { /* return empty DataTable on error */ }
         return dt;
     }
 
-    private int ExecuteNonQuery(string sql, params MySqlParameter[] parms)
+    private int X(string sql, params MySqlParameter[] parms)
     {
-        using (MySqlConnection conn = new MySqlConnection(ConnStr))
+        using (MySqlConnection c = new MySqlConnection(ConnStr))
         {
-            conn.Open();
-            using (MySqlCommand cmd = new MySqlCommand(sql, conn))
-            {
-                if (parms != null)
-                    foreach (MySqlParameter p in parms) cmd.Parameters.Add(p);
-                return cmd.ExecuteNonQuery();
-            }
+            c.Open();
+            return X(c, null, sql, parms);
         }
     }
 
-    private int ExecuteNonQueryWithConn(MySqlConnection conn, string sql, params MySqlParameter[] parms)
+    private static int X(MySqlConnection c, MySqlTransaction tx, string sql, params MySqlParameter[] parms)
     {
-        using (MySqlCommand cmd = new MySqlCommand(sql, conn))
+        using (MySqlCommand cmd = new MySqlCommand(sql, c, tx))
         {
-            if (parms != null)
-                foreach (MySqlParameter p in parms) cmd.Parameters.Add(p);
+            if (parms != null) foreach (MySqlParameter p in parms) cmd.Parameters.Add(p);
             return cmd.ExecuteNonQuery();
         }
     }
 
-    private string GetCurrentUser()
-    {
-        if (Session["ScreenName"] != null) return Session["ScreenName"].ToString();
-        if (Session["username"] != null) return Session["username"].ToString();
-        return "";
-    }
-
-    private int GetCurrentEmployeeId()
-    {
-        string user = GetCurrentUser();
-        if (string.IsNullOrEmpty(user)) return 0;
-        using (var conn = new MySqlConnection(ConnStr))
-        {
-            conn.Open();
-            using (var cmd = new MySqlCommand("SELECT empID FROM hrm_employee WHERE usernames = @u LIMIT 1", conn))
-            {
-                cmd.Parameters.AddWithValue("@u", user);
-                object result = cmd.ExecuteScalar();
-                int id;
-                if (result != null && result != DBNull.Value && int.TryParse(result.ToString(), out id))
-                    return id;
-            }
-        }
-        return 0;
-    }
-
-    private decimal SafeDecimal(object val)
+    private static decimal SafeDecimal(object val)
     {
         if (val == null || val == DBNull.Value) return 0m;
         decimal d;
-        return decimal.TryParse(val.ToString(), out d) ? d : 0m;
+        return decimal.TryParse(val.ToString(), NumberStyles.Any, IC, out d) ? d : 0m;
     }
 
-    private int SafeInt(object val)
+    private static int SafeInt(object val)
     {
         if (val == null || val == DBNull.Value) return 0;
         int i;
         return int.TryParse(val.ToString(), out i) ? i : 0;
     }
 
-    // -----------------------------------------------------------------
-    // Section 2: PayrollConfig (PRESERVED EXACTLY from existing code)
-    // -----------------------------------------------------------------
+    private static string Str(object v) { return v == null || v == DBNull.Value ? "" : v.ToString().Trim(); }
 
-    private struct PayrollConfig
+    private static string E(object s) { return HttpUtility.HtmlEncode(HrExport.Clean(Str(s))); }
+
+    private static string A(object s) { return HttpUtility.HtmlAttributeEncode(Str(s)); }
+
+    private static string Money(object v) { return SafeDecimal(v).ToString("#,##0", IC); }
+
+    private static string ShortDate(object v)
     {
-        public decimal PayeB1Max,  PayeB1Rate;
-        public decimal PayeB2Max,  PayeB2Rate;
-        public decimal PayeB3Max,  PayeB3Rate;
-        public decimal PayeB4Max,  PayeB4Rate;
-        public decimal             PayeB5Rate;
-        public decimal NssfEmployeeRate;
-        public bool    ChargeKabaka;
-        public decimal KabakaRate;
-        public bool    ChargeLocalTax;
-        public decimal LocalTaxRate;
+        if (v == null || v == DBNull.Value) return "";
+        DateTime d;
+        return DateTime.TryParse(v.ToString(), out d) && d.Year > 1900 ? d.ToString("d MMM yyyy", IC) : "";
     }
 
-    private PayrollConfig LoadPayrollConfig()
-    {
-        var def = new PayrollConfig
-        {
-            PayeB1Max = 235000m,   PayeB1Rate = 0m,
-            PayeB2Max = 335000m,   PayeB2Rate = 10m,
-            PayeB3Max = 410000m,   PayeB3Rate = 20m,
-            PayeB4Max = 10000000m, PayeB4Rate = 30m,
-                                   PayeB5Rate = 40m,
-            NssfEmployeeRate = 5m,
-            ChargeKabaka   = true,  KabakaRate   = 1m,
-            ChargeLocalTax = false, LocalTaxRate = 1m
-        };
+    private static string Trunc(string s, int n) { s = s ?? ""; return s.Length <= n ? s : s.Substring(0, n); }
 
+    private string CurrentUser() { return HrAccess.Username(); }
+
+    private int GetCurrentEmployeeId()
+    {
+        string user = CurrentUser();
+        if (string.IsNullOrEmpty(user)) return 0;
+        DataTable dt = Q("SELECT empID FROM hrm_employee WHERE usernames = @u LIMIT 1", P("@u", user));
+        return dt.Rows.Count > 0 ? SafeInt(dt.Rows[0]["empID"]) : 0;
+    }
+
+    private void Log(string what, string detail)
+    {
         try
         {
-            DataTable dt = ExecuteQuery(@"
-                SELECT paye_b1_max, paye_b1_rate,
-                       paye_b2_max, paye_b2_rate,
-                       paye_b3_max, paye_b3_rate,
-                       paye_b4_max, paye_b4_rate,
-                       paye_b5_rate,
-                       nssf_employee_rate,
-                       should_charge_kabaka, kabaka_rate,
-                       should_charge_local_tax, local_tax_rate
-                FROM hrm_config WHERE id = 1");
-
-            if (dt.Rows.Count == 0) return def;
-
-            DataRow r = dt.Rows[0];
-            def.PayeB1Max  = ToDecimal(r["paye_b1_max"],  def.PayeB1Max);
-            def.PayeB1Rate = ToDecimal(r["paye_b1_rate"], def.PayeB1Rate);
-            def.PayeB2Max  = ToDecimal(r["paye_b2_max"],  def.PayeB2Max);
-            def.PayeB2Rate = ToDecimal(r["paye_b2_rate"], def.PayeB2Rate);
-            def.PayeB3Max  = ToDecimal(r["paye_b3_max"],  def.PayeB3Max);
-            def.PayeB3Rate = ToDecimal(r["paye_b3_rate"], def.PayeB3Rate);
-            def.PayeB4Max  = ToDecimal(r["paye_b4_max"],  def.PayeB4Max);
-            def.PayeB4Rate = ToDecimal(r["paye_b4_rate"], def.PayeB4Rate);
-            def.PayeB5Rate = ToDecimal(r["paye_b5_rate"], def.PayeB5Rate);
-            def.NssfEmployeeRate = ToDecimal(r["nssf_employee_rate"], def.NssfEmployeeRate);
-            def.ChargeKabaka     = r["should_charge_kabaka"].ToString().ToUpper() == "YES";
-            def.KabakaRate       = ToDecimal(r["kabaka_rate"], def.KabakaRate);
-            def.ChargeLocalTax   = r["should_charge_local_tax"].ToString().ToUpper() == "YES";
-            def.LocalTaxRate     = ToDecimal(r["local_tax_rate"], def.LocalTaxRate);
+            X("INSERT INTO acad_activity_log (user_id, page_function, par, comments, access_date) VALUES (@u, 'HR Payroll', @p, @c, NOW())",
+                P("@u", Trunc(CurrentUser(), 100)), P("@p", Trunc(detail, 300)), P("@c", Trunc(what, 200)));
         }
-        catch
-        {
-            // hrm_config not yet created - use defaults
-        }
-        return def;
+        catch { /* logging must never break payroll */ }
     }
 
-    private static decimal ToDecimal(object val, decimal fallback)
+    private static string MonthTitle(object monthObj)
     {
-        if (val == null || val == DBNull.Value) return fallback;
-        decimal d;
-        return decimal.TryParse(val.ToString(), out d) ? d : fallback;
+        int m = SafeInt(monthObj);
+        if (m >= 1 && m <= 12) return CultureInfo.InvariantCulture.TextInfo.ToTitleCase(MONTH_NAMES[m].ToLowerInvariant());
+        string raw = Str(monthObj);
+        return raw == "" ? "" : CultureInfo.InvariantCulture.TextInfo.ToTitleCase(raw.ToLowerInvariant());
     }
 
-    private decimal CalculatePAYE(decimal taxableMonthly, PayrollConfig cfg)
+    private static string Period(object month, object year) { return (MonthTitle(month) + " " + Str(year)).Trim(); }
+
+    private static string StatusWord(string s)
     {
-        if (taxableMonthly <= 0 || cfg.PayeB1Rate == 100) return 0;
-
-        decimal paye = 0;
-
-        decimal inB1 = Math.Min(taxableMonthly, cfg.PayeB1Max);
-        paye += inB1 * cfg.PayeB1Rate / 100;
-
-        if (taxableMonthly > cfg.PayeB1Max)
+        switch ((s ?? "").ToUpperInvariant())
         {
-            decimal inB2 = Math.Min(taxableMonthly, cfg.PayeB2Max) - cfg.PayeB1Max;
-            if (inB2 > 0) paye += inB2 * cfg.PayeB2Rate / 100;
+            case "PENDING": return "Pending";
+            case "PROCESSED": return "Approved";
+            case "CANCELLED": return "Cancelled";
+            case "APPROVED": return "Approved";
+            case "REJECTED": return "Rejected";
+            default: return s ?? "";
         }
-        if (taxableMonthly > cfg.PayeB2Max)
-        {
-            decimal inB3 = Math.Min(taxableMonthly, cfg.PayeB3Max) - cfg.PayeB2Max;
-            if (inB3 > 0) paye += inB3 * cfg.PayeB3Rate / 100;
-        }
-        if (taxableMonthly > cfg.PayeB3Max)
-        {
-            decimal inB4 = Math.Min(taxableMonthly, cfg.PayeB4Max) - cfg.PayeB3Max;
-            if (inB4 > 0) paye += inB4 * cfg.PayeB4Rate / 100;
-        }
-        if (taxableMonthly > cfg.PayeB4Max)
-        {
-            decimal inB5 = taxableMonthly - cfg.PayeB4Max;
-            paye += inB5 * cfg.PayeB5Rate / 100;
-        }
-
-        return Math.Round(paye, 0);
     }
 
-    // -----------------------------------------------------------------
-    // Section 3: Page_Load
-    // -----------------------------------------------------------------
+    private static string Badge(string status)
+    {
+        string s = (status ?? "").ToUpperInvariant();
+        string kind = s == "PROCESSED" || s == "APPROVED" ? "ok" : s == "PENDING" ? "warn" : s == "REJECTED" ? "bad" : "neutral";
+        return "<span class=\"hr-badge hr-badge--" + kind + "\">" + E(StatusWord(s)) + "</span>";
+    }
+
+    private static string Coverage(object type, object ids)
+    {
+        string t = Str(type).ToUpperInvariant();
+        string list = Str(ids);
+        int n = list == "" ? 0 : list.Split(new[] { ',' }, StringSplitOptions.RemoveEmptyEntries).Length;
+        if (t == "DEPARTMENT") return n == 1 ? "1 department" : n + " departments";
+        if (t == "EMPLOYEE") return n == 1 ? "1 selected employee" : n + " selected employees";
+        return "All staff";
+    }
+
+    // =================================================================
+    //  Page load and dispatch
+    // =================================================================
 
     protected void Page_Load(object sender, EventArgs e)
     {
-        EnsureTablesExist();
-
-        // Always repopulate year dropdown (ViewState disabled on master page).
-        // Restore whatever the user had selected via the posted form value.
-        string postedYear = Request.Form[ddlPayrollYear.UniqueID];
-        LoadYearDropdown(postedYear);
-
-        // Always repopulate create-modal dropdowns (ViewState is disabled,
-        // so Items won't survive postback otherwise).
-        LoadCreateModalDropdowns();
-        LoadCreateYearDropdown();
-
-        if (!IsPostBack)
+        string action = Request.QueryString["action"];
+        if (!string.IsNullOrEmpty(action))
         {
-            ddlPayrollMonth.SelectedValue = DateTime.Today.Month.ToString();
-        }
-        else
-        {
-            // Restore posted selections for create-modal dropdowns
-            RestorePostedSelection(ddlPayrollMonth);
-            RestorePostedSelection(ddlCreateYear);
-            RestorePostedSelection(ddlTargetType);
-            RestorePostedSelection(ddlIncludeDeductions);
-            RestorePostedSelection(ddlIncludeAllowances);
-        }
-        BindPayrollGrid();
-        LoadStats();
-    }
-
-    /// <summary>
-    /// Restores the selected value of a DropDownList from the posted form data.
-    /// Needed because ViewState is disabled on the master page.
-    /// </summary>
-    private void RestorePostedSelection(DropDownList ddl)
-    {
-        string posted = Request.Form[ddl.UniqueID];
-        if (!string.IsNullOrEmpty(posted))
-        {
-            ListItem item = ddl.Items.FindByValue(posted);
-            if (item != null)
+            bool file = action == "export" || action == "print";
+            if (!HrAccess.RequireHr(!file)) return;
+            if (file)
             {
-                ddl.ClearSelection();
-                item.Selected = true;
+                HandleFile(action);
+                Response.End();
+                return;
             }
+            string json;
+            try { json = HandleAction(action); }
+            catch (UserError ue) { json = Result(false, ue.Message); }
+            catch (Exception ex)
+            {
+                Log("Error", action + ": " + ex.Message);
+                json = Result(false, "The action could not be completed. Please try again.");
+            }
+            Response.Clear();
+            Response.ContentType = "application/json";
+            Response.Write(json);
+            Response.End();
+            return;
+        }
+
+        if (!HrAccess.RequireHr(false)) return;
+        EnsureTablesExist();
+        try
+        {
+            int runId = SafeInt(Request.QueryString["run"]);
+            if (runId > 0) RenderDetail(runId);
+            else RenderList();
+            RenderCreateLists();
+        }
+        catch (Exception ex)
+        {
+            Log("Error", "Page load: " + ex.Message);
+            litBody.Text = "<div class=\"hr-notice hr-notice--bad\">Payroll could not be loaded. Please refresh the page.</div>";
         }
     }
 
-    // -----------------------------------------------------------------
-    // Auto-create all HR payroll tables on first use
-    // -----------------------------------------------------------------
+    private static string Result(bool ok, string message)
+    {
+        Dictionary<string, object> d = new Dictionary<string, object>();
+        d["ok"] = ok;
+        d["message"] = message;
+        return new JavaScriptSerializer().Serialize(d);
+    }
+
+    private string HandleAction(string action)
+    {
+        if (Request.HttpMethod != "POST") throw new UserError("Invalid request.");
+        int id = SafeInt(Request.Form["id"]);
+        switch (action)
+        {
+            case "create": return CreateRun();
+            case "preview": return Preview(id);
+            case "generate":
+                GenerateRun(id);
+                return Result(true, "Payslips generated.");
+            case "approve":
+                ApproveRun(id);
+                return Result(true, "Payroll run approved and locked.");
+            case "cancel":
+                CancelRun(id);
+                return Result(true, "Payroll run cancelled.");
+            case "delete":
+                return Result(true, DeleteRun(id));
+            case "bulk": return Bulk();
+        }
+        throw new UserError("Unknown action.");
+    }
+
+    // =================================================================
+    //  Schema (unchanged from the previous version; runs once per app start)
+    // =================================================================
+
     private void EnsureTablesExist()
     {
+        if (Application["hr_payroll_schema_ok"] != null) return;
         try
         {
             using (MySqlConnection conn = new MySqlConnection(ConnStr))
             {
                 conn.Open();
-
-                // hrm_config
-                ExecuteNonQueryWithConn(conn, @"
+                X(conn, null, @"
                     CREATE TABLE IF NOT EXISTS hrm_config (
                         id INT NOT NULL DEFAULT 1,
                         paye_b1_min DECIMAL(15,2) NOT NULL DEFAULT 0,
@@ -324,10 +303,8 @@ public partial class COOPERP_NewScreens_HRPayroll : System.Web.UI.Page
                         updated_by VARCHAR(100) NULL,
                         PRIMARY KEY (id)
                     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
-                ExecuteNonQueryWithConn(conn, "INSERT IGNORE INTO hrm_config (id) VALUES (1)");
-
-                // hrm_payslips
-                ExecuteNonQueryWithConn(conn, @"
+                X(conn, null, "INSERT IGNORE INTO hrm_config (id) VALUES (1)");
+                X(conn, null, @"
                     CREATE TABLE IF NOT EXISTS hrm_payslips (
                         ID INT NOT NULL AUTO_INCREMENT,
                         payroll_id INT NOT NULL,
@@ -361,9 +338,7 @@ public partial class COOPERP_NewScreens_HRPayroll : System.Web.UI.Page
                         INDEX idx_ps_status (status),
                         INDEX idx_ps_period (payroll_year, payroll_month)
                     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
-
-                // hrm_deduction_records
-                ExecuteNonQueryWithConn(conn, @"
+                X(conn, null, @"
                     CREATE TABLE IF NOT EXISTS hrm_deduction_records (
                         id INT NOT NULL AUTO_INCREMENT,
                         empID INT NOT NULL,
@@ -384,9 +359,7 @@ public partial class COOPERP_NewScreens_HRPayroll : System.Web.UI.Page
                         INDEX idx_ded_status (status),
                         INDEX idx_ded_payroll (payroll_id)
                     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
-
-                // hrm_allowance_records
-                ExecuteNonQueryWithConn(conn, @"
+                X(conn, null, @"
                     CREATE TABLE IF NOT EXISTS hrm_allowance_records (
                         id INT NOT NULL AUTO_INCREMENT,
                         empID INT NOT NULL,
@@ -407,1485 +380,1154 @@ public partial class COOPERP_NewScreens_HRPayroll : System.Web.UI.Page
                         INDEX idx_alw_status (status),
                         INDEX idx_alw_payroll (payroll_id)
                     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
-
-                // Extend hrm_payroll with new columns (safe per-column checks)
                 AddColumnIfMissing(conn, "hrm_payroll", "payroll_status",
                     "ENUM('PENDING','PROCESSED','CANCELLED') NOT NULL DEFAULT 'PENDING' AFTER payroll_date");
-                AddColumnIfMissing(conn, "hrm_payroll", "target_type",
-                    "ENUM('ALL','DEPARTMENT','EMPLOYEE') NOT NULL DEFAULT 'ALL'");
+                AddColumnIfMissing(conn, "hrm_payroll", "target_type", "ENUM('ALL','DEPARTMENT','EMPLOYEE') NOT NULL DEFAULT 'ALL'");
                 AddColumnIfMissing(conn, "hrm_payroll", "target_ids", "TEXT NULL");
-                AddColumnIfMissing(conn, "hrm_payroll", "should_include_deductions",
-                    "ENUM('YES','NO') NOT NULL DEFAULT 'YES'");
-                AddColumnIfMissing(conn, "hrm_payroll", "should_include_allowances",
-                    "ENUM('YES','NO') NOT NULL DEFAULT 'YES'");
+                AddColumnIfMissing(conn, "hrm_payroll", "should_include_deductions", "ENUM('YES','NO') NOT NULL DEFAULT 'YES'");
+                AddColumnIfMissing(conn, "hrm_payroll", "should_include_allowances", "ENUM('YES','NO') NOT NULL DEFAULT 'YES'");
                 AddColumnIfMissing(conn, "hrm_payroll", "date_processed", "DATETIME NULL");
                 AddColumnIfMissing(conn, "hrm_payroll", "processed_by", "VARCHAR(100) NULL");
                 AddColumnIfMissing(conn, "hrm_payroll", "payroll_comments", "TEXT NULL");
             }
+            Application["hr_payroll_schema_ok"] = true;
         }
-        catch { /* silently ignore — tables will cause SQL errors on first use if truly missing */ }
+        catch { /* the queries below report a missing table */ }
     }
 
-    private void AddColumnIfMissing(MySqlConnection conn, string table, string column, string definition)
+    private static void AddColumnIfMissing(MySqlConnection conn, string table, string column, string definition)
     {
         try
         {
-            using (MySqlCommand check = new MySqlCommand(
-                "SELECT COUNT(*) FROM information_schema.COLUMNS " +
-                "WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = @t AND COLUMN_NAME = @c", conn))
-            {
-                check.Parameters.AddWithValue("@t", table);
-                check.Parameters.AddWithValue("@c", column);
-                long exists = Convert.ToInt64(check.ExecuteScalar());
-                if (exists == 0)
-                {
-                    using (MySqlCommand alter = new MySqlCommand(
-                        "ALTER TABLE `" + table + "` ADD COLUMN `" + column + "` " + definition, conn))
-                        alter.ExecuteNonQuery();
-                }
-            }
+            DataTable dt = Q(conn, null, "SELECT COUNT(*) AS n FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = @t AND COLUMN_NAME = @c",
+                P("@t", table), P("@c", column));
+            if (dt.Rows.Count > 0 && SafeInt(dt.Rows[0]["n"]) == 0)
+                X(conn, null, "ALTER TABLE `" + table + "` ADD COLUMN `" + column + "` " + definition);
         }
         catch { }
     }
 
-    // -----------------------------------------------------------------
-    // Section 4: LoadYearDropdown
-    // -----------------------------------------------------------------
+    // =================================================================
+    //  Payroll configuration and PAYE (calculations unchanged)
+    // =================================================================
 
-    private void LoadYearDropdown(string restoreValue = null)
+    private struct PayrollConfig
     {
-        int currentYear = DateTime.Today.Year;
-        DataTable dt = ExecuteQuery("SELECT DISTINCT payroll_year FROM hrm_payroll ORDER BY payroll_year DESC");
-
-        var years = new List<int>();
-        foreach (DataRow r in dt.Rows)
-        {
-            int y = SafeInt(r["payroll_year"]);
-            if (y > 0) years.Add(y);
-        }
-        if (!years.Contains(currentYear))
-            years.Add(currentYear);
-        years.Sort((a, b) => b.CompareTo(a));
-
-        ddlPayrollYear.Items.Clear();
-        ddlPayrollYear.Items.Add(new ListItem("All Years", ""));
-        foreach (int y in years)
-            ddlPayrollYear.Items.Add(new ListItem(y.ToString(), y.ToString()));
-
-        // Restore posted selection (null = first load → default to current year;
-        // empty string = user chose "All Years" → keep empty)
-        string selectVal = (restoreValue == null) ? currentYear.ToString() : restoreValue;
-        ListItem toSelect = ddlPayrollYear.Items.FindByValue(selectVal);
-        if (toSelect != null) toSelect.Selected = true;
+        public decimal PayeB1Max,  PayeB1Rate;
+        public decimal PayeB2Max,  PayeB2Rate;
+        public decimal PayeB3Max,  PayeB3Rate;
+        public decimal PayeB4Max,  PayeB4Rate;
+        public decimal             PayeB5Rate;
+        public decimal NssfEmployeeRate;
+        public bool    ChargeKabaka;
+        public decimal KabakaRate;
+        public bool    ChargeLocalTax;
+        public decimal LocalTaxRate;
     }
 
-    // -----------------------------------------------------------------
-    // Section 5: LoadStats
-    // -----------------------------------------------------------------
-
-    private void LoadStats()
+    private PayrollConfig LoadPayrollConfig()
     {
+        PayrollConfig def = new PayrollConfig
+        {
+            PayeB1Max = 235000m,   PayeB1Rate = 0m,
+            PayeB2Max = 335000m,   PayeB2Rate = 10m,
+            PayeB3Max = 410000m,   PayeB3Rate = 20m,
+            PayeB4Max = 10000000m, PayeB4Rate = 30m,
+                                   PayeB5Rate = 40m,
+            NssfEmployeeRate = 5m,
+            ChargeKabaka   = true,  KabakaRate   = 1m,
+            ChargeLocalTax = false, LocalTaxRate = 1m
+        };
         try
         {
-            string yearFilter = ddlPayrollYear.SelectedValue;
-            string whereClause = string.IsNullOrEmpty(yearFilter) ? "" : "WHERE p.payroll_year = @yr";
-
-            string sql = @"
-                SELECT COUNT(DISTINCT p.ID) AS total,
-                       SUM(CASE WHEN p.payroll_status='PROCESSED' THEN 1 ELSE 0 END) AS processed_cnt,
-                       COALESCE(SUM(ps.gross_salary),0) AS total_gross,
-                       COALESCE(SUM(ps.net_salary),0) AS total_net
-                FROM hrm_payroll p
-                LEFT JOIN hrm_payslips ps ON ps.payroll_id = p.ID
-                " + whereClause;
-
-            DataTable dt;
-            if (string.IsNullOrEmpty(yearFilter))
-                dt = ExecuteQuery(sql);
-            else
-                dt = ExecuteQuery(sql, new MySqlParameter("@yr", yearFilter));
-
-            if (dt.Rows.Count > 0)
-            {
-                DataRow r = dt.Rows[0];
-                litTotalPayrolls.Text = SafeInt(r["total"]).ToString();
-                litTotalGross.Text    = SafeDecimal(r["total_gross"]).ToString("N0");
-                litTotalNet.Text      = SafeDecimal(r["total_net"]).ToString("N0");
-                litProcessed.Text     = SafeInt(r["processed_cnt"]).ToString();
-            }
+            DataTable dt = Q(@"
+                SELECT paye_b1_max, paye_b1_rate, paye_b2_max, paye_b2_rate, paye_b3_max, paye_b3_rate,
+                       paye_b4_max, paye_b4_rate, paye_b5_rate, nssf_employee_rate,
+                       should_charge_kabaka, kabaka_rate, should_charge_local_tax, local_tax_rate
+                FROM hrm_config WHERE id = 1");
+            if (dt.Rows.Count == 0) return def;
+            DataRow r = dt.Rows[0];
+            def.PayeB1Max  = ToDecimal(r["paye_b1_max"],  def.PayeB1Max);
+            def.PayeB1Rate = ToDecimal(r["paye_b1_rate"], def.PayeB1Rate);
+            def.PayeB2Max  = ToDecimal(r["paye_b2_max"],  def.PayeB2Max);
+            def.PayeB2Rate = ToDecimal(r["paye_b2_rate"], def.PayeB2Rate);
+            def.PayeB3Max  = ToDecimal(r["paye_b3_max"],  def.PayeB3Max);
+            def.PayeB3Rate = ToDecimal(r["paye_b3_rate"], def.PayeB3Rate);
+            def.PayeB4Max  = ToDecimal(r["paye_b4_max"],  def.PayeB4Max);
+            def.PayeB4Rate = ToDecimal(r["paye_b4_rate"], def.PayeB4Rate);
+            def.PayeB5Rate = ToDecimal(r["paye_b5_rate"], def.PayeB5Rate);
+            def.NssfEmployeeRate = ToDecimal(r["nssf_employee_rate"], def.NssfEmployeeRate);
+            def.ChargeKabaka     = r["should_charge_kabaka"].ToString().ToUpper() == "YES";
+            def.KabakaRate       = ToDecimal(r["kabaka_rate"], def.KabakaRate);
+            def.ChargeLocalTax   = r["should_charge_local_tax"].ToString().ToUpper() == "YES";
+            def.LocalTaxRate     = ToDecimal(r["local_tax_rate"], def.LocalTaxRate);
         }
-        catch
-        {
-            litTotalPayrolls.Text = "0";
-            litTotalGross.Text    = "0";
-            litTotalNet.Text      = "0";
-            litProcessed.Text     = "0";
-        }
+        catch { /* hrm_config missing: defaults */ }
+        return def;
     }
 
-    // -----------------------------------------------------------------
-    // Section 6: LoadCreateModalDropdowns
-    // -----------------------------------------------------------------
-
-    private void LoadCreateModalDropdowns()
+    private static decimal ToDecimal(object val, decimal fallback)
     {
-        // Departments
-        DataTable dtDepts = ExecuteQuery("SELECT ID, dept_name FROM hrm_departments ORDER BY dept_name");
-        lstTargetDepts.Items.Clear();
-        foreach (DataRow r in dtDepts.Rows)
-            lstTargetDepts.Items.Add(new ListItem(r["dept_name"].ToString(), r["ID"].ToString()));
-
-        // Active employees with valid contracts
-        DataTable dtEmps = ExecuteQuery(@"
-            SELECT DISTINCT e.empID, CONCAT(e.emp_name,' [',IFNULL(e.EMP_CODE,''),']') AS display
-            FROM hrm_employee e
-            JOIN hrm_emp_contracts c ON c.empID = e.empID
-            WHERE c.contractStatus = 'VALID' AND c.contractEnd >= CURDATE()
-            ORDER BY e.emp_name");
-        lstTargetEmps.Items.Clear();
-        foreach (DataRow r in dtEmps.Rows)
-            lstTargetEmps.Items.Add(new ListItem(r["display"].ToString(), r["empID"].ToString()));
+        if (val == null || val == DBNull.Value) return fallback;
+        decimal d;
+        return decimal.TryParse(val.ToString(), out d) ? d : fallback;
     }
 
-    private void LoadCreateYearDropdown()
+    private static decimal CalculatePAYE(decimal taxableMonthly, PayrollConfig cfg)
     {
-        int currentYear = DateTime.Today.Year;
-        ddlCreateYear.Items.Clear();
-        for (int y = currentYear; y >= currentYear - 10; y--)
-            ddlCreateYear.Items.Add(new ListItem(y.ToString(), y.ToString()));
-        ddlCreateYear.SelectedValue = currentYear.ToString();
+        if (taxableMonthly <= 0 || cfg.PayeB1Rate == 100) return 0;
+        decimal paye = 0;
+        decimal inB1 = Math.Min(taxableMonthly, cfg.PayeB1Max);
+        paye += inB1 * cfg.PayeB1Rate / 100;
+        if (taxableMonthly > cfg.PayeB1Max)
+        {
+            decimal inB2 = Math.Min(taxableMonthly, cfg.PayeB2Max) - cfg.PayeB1Max;
+            if (inB2 > 0) paye += inB2 * cfg.PayeB2Rate / 100;
+        }
+        if (taxableMonthly > cfg.PayeB2Max)
+        {
+            decimal inB3 = Math.Min(taxableMonthly, cfg.PayeB3Max) - cfg.PayeB2Max;
+            if (inB3 > 0) paye += inB3 * cfg.PayeB3Rate / 100;
+        }
+        if (taxableMonthly > cfg.PayeB3Max)
+        {
+            decimal inB4 = Math.Min(taxableMonthly, cfg.PayeB4Max) - cfg.PayeB3Max;
+            if (inB4 > 0) paye += inB4 * cfg.PayeB4Rate / 100;
+        }
+        if (taxableMonthly > cfg.PayeB4Max)
+        {
+            decimal inB5 = taxableMonthly - cfg.PayeB4Max;
+            paye += inB5 * cfg.PayeB5Rate / 100;
+        }
+        return Math.Round(paye, 0);
     }
 
-    // -----------------------------------------------------------------
-    // Section 7: BindPayrollGrid
-    // -----------------------------------------------------------------
+    // =================================================================
+    //  Create, preview, generate
+    // =================================================================
 
-    private void BindPayrollGrid()
+    private string CreateRun()
     {
-        var whereParts = new List<string>();
-        var parms      = new List<MySqlParameter>();
+        string title = (Request.Form["title"] ?? "").Trim();
+        int month = SafeInt(Request.Form["month"]);
+        int year = SafeInt(Request.Form["year"]);
+        string targetType = (Request.Form["target"] ?? "ALL").ToUpperInvariant();
+        string comments = (Request.Form["comments"] ?? "").Trim();
+        string inclAllow = Request.Form["allowances"] == "NO" ? "NO" : "YES";
+        string inclDed = Request.Form["deductions"] == "NO" ? "NO" : "YES";
 
-        string yearVal   = ddlPayrollYear.SelectedValue;
-        string statusVal = ddlPayrollStatus.SelectedValue;
+        if (title == "") throw new UserError("Enter a title for the payroll run.");
+        if (title.Length > 45) throw new UserError("The title can have at most 45 characters.");
+        if (comments.Length > 45) throw new UserError("Notes can have at most 45 characters.");
+        if (month < 1 || month > 12) throw new UserError("Select the month.");
+        if (year < 2000 || year > 2099) throw new UserError("Select the year.");
+        if (targetType != "ALL" && targetType != "DEPARTMENT" && targetType != "EMPLOYEE") targetType = "ALL";
 
-        if (!string.IsNullOrEmpty(yearVal))
-        {
-            whereParts.Add("p.payroll_year = @yr");
-            parms.Add(new MySqlParameter("@yr", yearVal));
-        }
-        if (!string.IsNullOrEmpty(statusVal))
-        {
-            whereParts.Add("p.payroll_status = @status");
-            parms.Add(new MySqlParameter("@status", statusVal));
-        }
-
-        string where = whereParts.Count > 0 ? "WHERE " + string.Join(" AND ", whereParts) : "";
-
-        string sql = @"
-            SELECT p.ID, p.payroll_title, p.payroll_month, p.payroll_year, p.payroll_date,
-                   p.payroll_status, p.target_type, p.total_amount, p.prepared_by,
-                   COUNT(DISTINCT ps.ID) AS staff_count
-            FROM hrm_payroll p
-            LEFT JOIN hrm_payslips ps ON ps.payroll_id = p.ID
-            " + where + @"
-            GROUP BY p.ID, p.payroll_title, p.payroll_month, p.payroll_year, p.payroll_date,
-                     p.payroll_status, p.target_type, p.total_amount, p.prepared_by
-            ORDER BY p.payroll_year DESC, p.payroll_month DESC, p.ID DESC";
-
-        DataTable dt = ExecuteQuery(sql, parms.ToArray());
-
-        litFilterCount.Text = dt.Rows.Count.ToString();
-        gvPayrolls.DataSource = dt;
-        gvPayrolls.DataBind();
-    }
-
-    // -----------------------------------------------------------------
-    // Section 8: btnCreatePayroll_Click
-    // -----------------------------------------------------------------
-
-    protected void btnCreatePayroll_Click(object sender, EventArgs e)
-    {
-        string title = txtPayrollTitle.Text.Trim();
-        if (string.IsNullOrEmpty(title))
-        {
-            ShowModalError("createPayrollModal", "addResult", "Payroll title is required.");
-            return;
-        }
-
-        // Read from Request.Form because ViewState is disabled — SelectedValue may be empty.
-        int month = SafeInt(Request.Form[ddlPayrollMonth.UniqueID]);
-        int year  = SafeInt(Request.Form[ddlCreateYear.UniqueID]);
-
-        if (month < 1 || month > 12)
-        {
-            ShowModalError("createPayrollModal", "addResult", "Please select a valid month.");
-            return;
-        }
-        if (year < 2000 || year > 2099)
-        {
-            ShowModalError("createPayrollModal", "addResult", "Please select a valid year.");
-            return;
-        }
-
-        string targetType = Request.Form[ddlTargetType.UniqueID];
-        if (string.IsNullOrEmpty(targetType)) targetType = "ALL";
-
-        // Build target_ids — read via Request.Form because listboxes are only
-        // populated on !IsPostBack and Items will be empty on submit postback.
         string targetIds = "";
-        if (targetType == "DEPARTMENT")
+        if (targetType != "ALL")
         {
-            string[] posted = Request.Form.GetValues(lstTargetDepts.UniqueID);
-            targetIds = posted != null ? string.Join(",", posted) : "";
-            if (string.IsNullOrEmpty(targetIds))
+            List<string> ids = new List<string>();
+            foreach (string s in (Request.Form["ids"] ?? "").Split(new[] { ',' }, StringSplitOptions.RemoveEmptyEntries))
             {
-                ShowModalError("createPayrollModal", "addResult", "Please select at least one department.");
-                return;
+                int v;
+                if (int.TryParse(s.Trim(), out v) && v > 0 && !ids.Contains(v.ToString(IC))) ids.Add(v.ToString(IC));
             }
-        }
-        else if (targetType == "EMPLOYEE")
-        {
-            string[] posted = Request.Form.GetValues(lstTargetEmps.UniqueID);
-            targetIds = posted != null ? string.Join(",", posted) : "";
-            if (string.IsNullOrEmpty(targetIds))
-            {
-                ShowModalError("createPayrollModal", "addResult", "Please select at least one employee.");
-                return;
-            }
+            if (ids.Count == 0)
+                throw new UserError(targetType == "DEPARTMENT" ? "Select at least one department." : "Select at least one employee.");
+            targetIds = string.Join(",", ids.ToArray());
         }
 
-        string inclDed   = Request.Form[ddlIncludeDeductions.UniqueID] ?? "YES";
-        string inclAllow = Request.Form[ddlIncludeAllowances.UniqueID] ?? "YES";
-        string comments  = txtPayrollComments.Text.Trim();
-        int empId        = GetCurrentEmployeeId();
-
-        try
-        {
-            ExecuteNonQuery(@"
-                INSERT INTO hrm_payroll (payroll_title, payroll_month, payroll_year, payroll_comments,
-                    prepared_by, checked_by, approved_by, total_amount,
-                    payroll_date, lockStatus, payroll_status, target_type, target_ids,
-                    should_include_deductions, should_include_allowances)
-                VALUES (@title, @month, @year, @comments, @prepBy, @checkBy, 0, 0,
-                        NOW(), 0, 'PENDING',
-                        @targetType, @targetIds, @inclDed, @inclAllow)",
-                new MySqlParameter("@title",      title),
-                new MySqlParameter("@month",      month),
-                new MySqlParameter("@year",       year),
-                new MySqlParameter("@comments",   comments),
-                new MySqlParameter("@prepBy",     empId),
-                new MySqlParameter("@checkBy",    empId),
-                new MySqlParameter("@targetType", targetType),
-                new MySqlParameter("@targetIds",  targetIds),
-                new MySqlParameter("@inclDed",    inclDed),
-                new MySqlParameter("@inclAllow",  inclAllow));
-
-            txtPayrollTitle.Text    = "";
-            txtPayrollComments.Text = "";
-            BindPayrollGrid();
-            LoadStats();
-
-            ScriptManager.RegisterStartupScript(this, GetType(), "closeCreate",
-                "if(typeof closeCreateModal==='function') closeCreateModal();" +
-                "showToast('Payroll created successfully.','success');", true);
-        }
-        catch (Exception ex)
-        {
-            ShowModalError("createPayrollModal", "addResult",
-                "Error creating payroll: " + ex.Message);
-        }
+        int empId = GetCurrentEmployeeId();
+        X(@"INSERT INTO hrm_payroll (payroll_title, payroll_month, payroll_year, payroll_comments,
+                prepared_by, checked_by, approved_by, total_amount,
+                payroll_date, lockStatus, payroll_status, target_type, target_ids,
+                should_include_deductions, should_include_allowances)
+            VALUES (@title, @month, @year, @comments, @prepBy, @checkBy, 0, 0,
+                NOW(), 0, 'PENDING', @targetType, @targetIds, @inclDed, @inclAllow)",
+            P("@title", title), P("@month", month), P("@year", year), P("@comments", comments),
+            P("@prepBy", empId), P("@checkBy", empId), P("@targetType", targetType),
+            P("@targetIds", targetIds), P("@inclDed", inclDed), P("@inclAllow", inclAllow));
+        Log("Payroll run created", title + " (" + Period(month, year) + ")");
+        return Result(true, "Payroll run created.");
     }
 
-    // -----------------------------------------------------------------
-    // Section 9: btnBatchAction_Click
-    // -----------------------------------------------------------------
-
-    protected void btnBatchAction_Click(object sender, EventArgs e)
+    private string Preview(int payrollID)
     {
-        string rawIDs = hdnBatchIDs.Value.Trim();
-        string action = hdnBatchAction.Value.Trim().ToUpper();
-        if (string.IsNullOrEmpty(rawIDs) || string.IsNullOrEmpty(action)) return;
+        DataTable dt = Q("SELECT payroll_title, payroll_month, payroll_year, payroll_status, target_type, target_ids, should_include_deductions, should_include_allowances FROM hrm_payroll WHERE ID=@id", P("@id", payrollID));
+        if (dt.Rows.Count == 0) throw new UserError("Payroll run not found.");
+        DataRow pr = dt.Rows[0];
+        if (Str(pr["payroll_status"]) != "PENDING") throw new UserError("Only a pending payroll run can be generated.");
+        int staff;
+        using (MySqlConnection c = new MySqlConnection(ConnStr)) { c.Open(); staff = ResolveTargetEmployees(c, null, payrollID).Count; }
+        DataTable cnt = Q("SELECT COUNT(*) AS n, COALESCE(SUM(status='APPROVED'),0) AS a FROM hrm_payslips WHERE payroll_id=@id", P("@id", payrollID));
+        int existing = SafeInt(cnt.Rows[0]["n"]), approved = SafeInt(cnt.Rows[0]["a"]);
 
-        string[] idArr = rawIDs.Split(new char[]{','}, StringSplitOptions.RemoveEmptyEntries);
-        int processed = 0, skipped = 0;
-        var errors = new List<string>();
-        PayrollConfig cfg = action == "GENERATE" ? LoadPayrollConfig() : default(PayrollConfig);
-
-        foreach (string idStr in idArr)
-        {
-            int pid;
-            if (!int.TryParse(idStr.Trim(), out pid)) continue;
-            try
-            {
-                DataTable dtSt = ExecuteQuery(
-                    "SELECT payroll_status FROM hrm_payroll WHERE ID=@id",
-                    new MySqlParameter("@id", pid));
-                if (dtSt.Rows.Count == 0 ||
-                    dtSt.Rows[0]["payroll_status"].ToString().ToUpper() != "PENDING")
-                { skipped++; continue; }
-
-                switch (action)
-                {
-                    case "GENERATE":
-                        GeneratePayslipsForPayroll(pid, cfg);
-                        processed++;
-                        break;
-                    case "CANCEL":
-                        ExecuteNonQuery(
-                            "UPDATE hrm_payroll SET payroll_status='CANCELLED' WHERE ID=@id AND payroll_status='PENDING'",
-                            new MySqlParameter("@id", pid));
-                        processed++;
-                        break;
-                    case "DELETE":
-                        ExecuteNonQuery(
-                            "DELETE FROM hrm_payslips WHERE payroll_id=@id AND status!='APPROVED'",
-                            new MySqlParameter("@id", pid));
-                        ExecuteNonQuery(
-                            "DELETE FROM hrm_payroll WHERE ID=@id AND payroll_status='PENDING'",
-                            new MySqlParameter("@id", pid));
-                        processed++;
-                        break;
-                }
-            }
-            catch (Exception ex) { errors.Add("#" + pid + ": " + ex.Message); }
-        }
-
-        BindPayrollGrid();
-        LoadStats();
-        pnlPayrollDetails.Visible = false;
-
-        string summary = processed + " processed" + (skipped > 0 ? ", " + skipped + " skipped" : "");
-        string toastType = errors.Count > 0 ? "warning" : "success";
-        ScriptManager.RegisterStartupScript(this, GetType(), "batchDone",
-            "showToast('" + HttpUtility.JavaScriptStringEncode("Batch " + action.ToLower() + ": " + summary) + "','" + toastType + "');clearBatchSelection();",
-            true);
+        Dictionary<string, object> d = new Dictionary<string, object>();
+        d["ok"] = true;
+        d["title"] = Str(pr["payroll_title"]);
+        d["period"] = Period(pr["payroll_month"], pr["payroll_year"]);
+        d["coverage"] = Coverage(pr["target_type"], pr["target_ids"]);
+        d["staff"] = staff;
+        d["allowances"] = Str(pr["should_include_allowances"]).ToUpperInvariant() == "YES" ? "Included" : "Not included";
+        d["deductions"] = Str(pr["should_include_deductions"]).ToUpperInvariant() == "YES" ? "Included" : "Not included";
+        d["replace"] = existing - approved;
+        d["keep"] = approved;
+        return new JavaScriptSerializer().Serialize(d);
     }
 
-    // -----------------------------------------------------------------
-    // Section 10: btnViewPayroll_Click
-    // -----------------------------------------------------------------
-
-    protected void btnViewPayroll_Click(object sender, EventArgs e)
+    private void GenerateRun(int payrollID)
     {
-        int payrollID;
-        if (!int.TryParse(hdnSelectedPayrollID.Value, out payrollID)) return;
-
-        ShowPayrollDetails(payrollID);
-        pnlPayrollDetails.Visible = true;
-
-        ScriptManager.RegisterStartupScript(this, GetType(), "scrollToDetails",
-            "setTimeout(function(){ var el=document.getElementById('pnlPayrollDetails'); if(el) el.scrollIntoView({behavior:'smooth',block:'start'}); },150);",
-            true);
+        PayrollConfig cfg = LoadPayrollConfig();
+        string title;
+        using (MySqlConnection c = new MySqlConnection(ConnStr))
+        {
+            c.Open();
+            using (MySqlTransaction tx = c.BeginTransaction())
+            {
+                title = GeneratePayslips(c, tx, payrollID, cfg);
+                tx.Commit();
+            }
+        }
+        Log("Payslips generated", title + " (run " + payrollID + ")");
     }
 
-    // -----------------------------------------------------------------
-    // Section 11: ShowPayrollDetails
-    // -----------------------------------------------------------------
-
-    private void ShowPayrollDetails(int payrollID)
+    /// <summary>
+    /// Builds the payslips of a pending run. Approved payslips are kept; pending and rejected ones
+    /// are rebuilt. The pay formulas are the ones used before the redesign, unchanged.
+    /// </summary>
+    private string GeneratePayslips(MySqlConnection c, MySqlTransaction tx, int payrollID, PayrollConfig cfg)
     {
-        try
-        {
-            // Load payroll header
-            DataTable dtHeader = ExecuteQuery(
-                "SELECT payroll_title, payroll_status, payroll_month, payroll_year FROM hrm_payroll WHERE ID=@id",
-                new MySqlParameter("@id", payrollID));
+        DataTable dtPayroll = Q(c, tx,
+            @"SELECT payroll_title, payroll_month, payroll_year, payroll_status, should_include_deductions, should_include_allowances
+              FROM hrm_payroll WHERE ID=@id FOR UPDATE", P("@id", payrollID));
+        if (dtPayroll.Rows.Count == 0) throw new UserError("Payroll run not found.");
 
-            if (dtHeader.Rows.Count == 0) return;
-            DataRow hdr = dtHeader.Rows[0];
+        DataRow pr = dtPayroll.Rows[0];
+        if (Str(pr["payroll_status"]) != "PENDING") throw new UserError("Only a pending payroll run can be generated.");
+        int payrollMonth = SafeInt(pr["payroll_month"]);
+        int payrollYear = SafeInt(pr["payroll_year"]);
+        bool inclDeductions = pr["should_include_deductions"].ToString().ToUpper() == "YES";
+        bool inclAllowances = pr["should_include_allowances"].ToString().ToUpper() == "YES";
+        string payrollMonthName = (payrollMonth >= 1 && payrollMonth <= 12) ? MONTH_NAMES[payrollMonth] : "";
 
-            string status = hdr["payroll_status"].ToString();
-            litPayrollTitle.Text      = HttpUtility.HtmlEncode(hdr["payroll_title"].ToString());
-            litPayrollStatusBadge.Text = GetStatusBadge(status);
+        // Free the one-off items this run held, except those of payslips that stay (approved).
+        ReleaseItems(c, tx, payrollID, true);
 
-            lnkViewPayslips.NavigateUrl = "~/COOPERP/NewScreens/HRPayslips.aspx?payroll_id=" + payrollID;
+        X(c, tx, "DELETE FROM hrm_payslips WHERE payroll_id=@id AND status IN ('PENDING','REJECTED')", P("@id", payrollID));
+        X(c, tx, "DELETE FROM hrm_payroll_details WHERE payrollID=@id", P("@id", payrollID));
 
-            // Payslip summary aggregates
-            DataTable dtSum = ExecuteQuery(@"
-                SELECT COALESCE(SUM(basic_pay),0)              AS sum_basic,
-                       COALESCE(SUM(gross_salary),0)           AS sum_gross,
-                       COALESCE(SUM(total_allowances),0)       AS sum_allow,
-                       COALESCE(SUM(paye),0)                   AS sum_paye,
-                       COALESCE(SUM(nssf),0)                   AS sum_nssf,
-                       COALESCE(SUM(kabaka_contribution),0)    AS sum_kabaka,
-                       COALESCE(SUM(local_tax),0)              AS sum_localtax,
-                       COALESCE(SUM(total_deductions),0)       AS sum_ded,
-                       COALESCE(SUM(net_salary),0)             AS sum_net,
-                       COUNT(*)                                AS payslip_count
-                FROM hrm_payslips
-                WHERE payroll_id = @id",
-                new MySqlParameter("@id", payrollID));
-
-            bool hasPayslips = false;
-            if (dtSum.Rows.Count > 0)
-            {
-                DataRow s = dtSum.Rows[0];
-                hasPayslips = SafeInt(s["payslip_count"]) > 0;
-
-                decimal sumDed     = SafeDecimal(s["sum_ded"]);
-                decimal sumPaye    = SafeDecimal(s["sum_paye"]);
-                decimal sumNssf    = SafeDecimal(s["sum_nssf"]);
-                decimal sumKabaka  = SafeDecimal(s["sum_kabaka"]);
-                decimal sumLocal   = SafeDecimal(s["sum_localtax"]);
-                decimal otherDed   = sumDed - sumPaye - sumNssf - sumKabaka - sumLocal;
-                if (otherDed < 0) otherDed = 0;
-
-                litDetBasic.Text       = SafeDecimal(s["sum_basic"]).ToString("N0");
-                litDetGross.Text       = SafeDecimal(s["sum_gross"]).ToString("N0");
-                litDetAllowances.Text  = SafeDecimal(s["sum_allow"]).ToString("N0");
-                litDetPAYE.Text        = sumPaye.ToString("N0");
-                litDetNSSF.Text        = sumNssf.ToString("N0");
-                litDetKabaka.Text      = sumKabaka.ToString("N0");
-                litDetLocalTax.Text    = sumLocal.ToString("N0");
-                litDetOtherDed.Text    = otherDed.ToString("N0");
-                litDetNet.Text         = SafeDecimal(s["sum_net"]).ToString("N0");
-            }
-
-            // Unapproved payslips
-            DataTable dtUnapproved = ExecuteQuery(
-                "SELECT COUNT(*) AS cnt FROM hrm_payslips WHERE payroll_id=@id AND status!='APPROVED'",
-                new MySqlParameter("@id", payrollID));
-
-            int unapproved = dtUnapproved.Rows.Count > 0 ? SafeInt(dtUnapproved.Rows[0]["cnt"]) : 0;
-
-            litUnapprovedInfo.Text = unapproved > 0
-                ? "<span class='text-warning'>\u26a0 " + unapproved + " payslip(s) pending approval</span>"
-                : "<span class='text-success'>\u2713 All payslips approved</span>";
-
-            // Button visibility
-            if (btnApprovePayroll != null)
-                btnApprovePayroll.Visible = (status == "PENDING" && unapproved == 0 && hasPayslips);
-            if (btnCancelPayroll != null)
-                btnCancelPayroll.Visible = (status == "PENDING");
-
-            BindPayrollDetailsGrid(payrollID);
-        }
-        catch (Exception ex)
-        {
-            litAlert.Text = "<div class='alert alert-danger'>Error loading payroll details: " +
-                HttpUtility.HtmlEncode(ex.Message) + "</div>";
-        }
-    }
-
-    // -----------------------------------------------------------------
-    // Section 12: BindPayrollDetailsGrid
-    // -----------------------------------------------------------------
-
-    private void BindPayrollDetailsGrid(int payrollID)
-    {
-        DataTable dt = ExecuteQuery(@"
-            SELECT ps.ID, ps.empID, e.EMP_CODE, e.emp_name,
-                   ps.basic_pay, ps.total_allowances,
-                   ps.gross_salary  AS gross_pay,
-                   ps.paye, ps.nssf, ps.total_deductions,
-                   ps.net_salary    AS net_pay,
-                   ps.status
-            FROM hrm_payslips ps
-            JOIN hrm_employee e ON e.empID = ps.empID
-            WHERE ps.payroll_id = @pid
-            ORDER BY e.emp_name",
-            new MySqlParameter("@pid", payrollID));
-
-        gvPayrollDetails.DataSource = dt;
-        gvPayrollDetails.DataBind();
-    }
-
-    // -----------------------------------------------------------------
-    // Section 13: btnGenPayroll_Click - opens the process confirm modal
-    // -----------------------------------------------------------------
-
-    protected void btnGenPayroll_Click(object sender, EventArgs e)
-    {
-        int payrollID;
-        if (!int.TryParse(hdnGeneratePayrollID.Value, out payrollID)) return;
-
-        try
-        {
-            DataTable dtPayroll = ExecuteQuery(
-                @"SELECT payroll_title, payroll_month, payroll_year, payroll_status,
-                         target_type, target_ids, should_include_deductions, should_include_allowances
-                  FROM hrm_payroll WHERE ID=@id",
-                new MySqlParameter("@id", payrollID));
-
-            if (dtPayroll.Rows.Count == 0) return;
-            DataRow pr = dtPayroll.Rows[0];
-
-            string status = pr["payroll_status"].ToString();
-            if (status != "PENDING")
-            {
-                ShowAlert("Only PENDING payrolls can be processed.", "danger");
-                return;
-            }
-
-            int payrollMonth = SafeInt(pr["payroll_month"]);
-            int payrollYear  = SafeInt(pr["payroll_year"]);
-            string monthName = (payrollMonth >= 1 && payrollMonth <= 12)
-                ? MONTH_NAMES[payrollMonth] : payrollMonth.ToString();
-
-            string targetType = pr["target_type"].ToString();
-            string targetIds  = pr["target_ids"] == null || pr["target_ids"] == DBNull.Value ? "" : pr["target_ids"].ToString();
-            string inclDed    = pr["should_include_deductions"].ToString();
-            string inclAllow  = pr["should_include_allowances"].ToString();
-
-            // Count target employees
-            List<int> targetEmps = ResolveTargetEmployees(payrollID);
-            int empCount = targetEmps.Count;
-
-            // Count existing payslips
-            DataTable dtExisting = ExecuteQuery(
-                "SELECT COUNT(*) AS cnt FROM hrm_payslips WHERE payroll_id=@id",
-                new MySqlParameter("@id", payrollID));
-            int existingCount = dtExisting.Rows.Count > 0 ? SafeInt(dtExisting.Rows[0]["cnt"]) : 0;
-
-            // Count approved payslips (will be preserved)
-            DataTable dtApproved = ExecuteQuery(
-                "SELECT COUNT(*) AS cnt FROM hrm_payslips WHERE payroll_id=@id AND status='APPROVED'",
-                new MySqlParameter("@id", payrollID));
-            int approvedCount = dtApproved.Rows.Count > 0 ? SafeInt(dtApproved.Rows[0]["cnt"]) : 0;
-            int regenerateCount = existingCount - approvedCount;
-
-            // Target label
-            string targetLabel;
-            if (targetType == "ALL")
-                targetLabel = "All Active Staff";
-            else if (targetType == "DEPARTMENT")
-            {
-                int deptCount = string.IsNullOrEmpty(targetIds) ? 0 : targetIds.Split(',').Length;
-                targetLabel = deptCount + " Department(s)";
-            }
-            else
-            {
-                int empSelCount = string.IsNullOrEmpty(targetIds) ? 0 : targetIds.Split(',').Length;
-                targetLabel = empSelCount + " Specific Employee(s)";
-            }
-
-            var sb = new StringBuilder();
-            sb.Append("<table class='confirm-table' style='width:100%;border-collapse:collapse;font-size:13px;'>");
-            sb.Append("<tr><td style='padding:4px 8px;color:#666;width:160px;'>Period:</td>");
-            sb.Append("<td style='padding:4px 8px;font-weight:600;'>" + monthName + " " + payrollYear + "</td></tr>");
-            sb.Append("<tr><td style='padding:4px 8px;color:#666;'>Target:</td>");
-            sb.Append("<td style='padding:4px 8px;'>" + HttpUtility.HtmlEncode(targetLabel) + "</td></tr>");
-            sb.Append("<tr><td style='padding:4px 8px;color:#666;'>Staff to process:</td>");
-            sb.Append("<td style='padding:4px 8px;font-weight:600;'>" + empCount + " employee(s)</td></tr>");
-            sb.Append("<tr><td style='padding:4px 8px;color:#666;'>Include Allowances:</td>");
-            sb.Append("<td style='padding:4px 8px;'>" + (inclAllow == "YES" ? "Yes" : "No") + "</td></tr>");
-            sb.Append("<tr><td style='padding:4px 8px;color:#666;'>Include Deductions:</td>");
-            sb.Append("<td style='padding:4px 8px;'>" + (inclDed == "YES" ? "Yes" : "No") + "</td></tr>");
-            if (regenerateCount > 0)
-            {
-                sb.Append("<tr><td colspan='2' style='padding:8px;background:#fff8e1;color:#856404;border-radius:4px;margin-top:8px;'>");
-                sb.Append("\u26a0 " + regenerateCount + " existing payslip(s) will be deleted and regenerated");
-                if (approvedCount > 0)
-                    sb.Append(" (" + approvedCount + " approved payslip(s) will be preserved)");
-                sb.Append(".</td></tr>");
-            }
-            sb.Append("</table>");
-
-            litProcessConfirmBody.Text = sb.ToString();
-
-            ScriptManager.RegisterStartupScript(this, GetType(), "showProcessModal",
-                "document.getElementById('processConfirmModal').style.display='flex';", true);
-        }
-        catch (Exception ex)
-        {
-            ShowAlert("Error preparing payroll: " + ex.Message, "danger");
-        }
-    }
-
-    // -----------------------------------------------------------------
-    // Section 14: btnConfirmProcess_Click
-    // -----------------------------------------------------------------
-
-    protected void btnConfirmProcess_Click(object sender, EventArgs e)
-    {
-        int payrollID;
-        if (!int.TryParse(hdnGeneratePayrollID.Value, out payrollID)) return;
-
-        try
-        {
-            PayrollConfig cfg = LoadPayrollConfig();
-            GeneratePayslipsForPayroll(payrollID, cfg);
-
-            BindPayrollGrid();
-            LoadStats();
-            ShowPayrollDetails(payrollID);
-            pnlPayrollDetails.Visible = true;
-
-            ScriptManager.RegisterStartupScript(this, GetType(), "closeProcessModal",
-                "document.getElementById('processConfirmModal').style.display='none';" +
-                "showToast('Payslips generated successfully.','success');", true);
-        }
-        catch (Exception ex)
-        {
-            ScriptManager.RegisterStartupScript(this, GetType(), "processError",
-                "document.getElementById('processConfirmModal').style.display='none';" +
-                "showToast('Error: " + HttpUtility.JavaScriptStringEncode(ex.Message) + "','danger');", true);
-        }
-    }
-
-    // -----------------------------------------------------------------
-    // Section 15: GeneratePayslipsForPayroll
-    // -----------------------------------------------------------------
-
-    private void GeneratePayslipsForPayroll(int payrollID, PayrollConfig cfg)
-    {
-        // Load payroll record
-        DataTable dtPayroll = ExecuteQuery(
-            @"SELECT payroll_month, payroll_year, target_type, target_ids,
-                     should_include_deductions, should_include_allowances
-              FROM hrm_payroll WHERE ID=@id",
-            new MySqlParameter("@id", payrollID));
-
-        if (dtPayroll.Rows.Count == 0)
-            throw new Exception("Payroll record not found.");
-
-        DataRow pr           = dtPayroll.Rows[0];
-        int payrollMonth     = SafeInt(pr["payroll_month"]);
-        int payrollYear      = SafeInt(pr["payroll_year"]);
-        bool inclDeductions  = pr["should_include_deductions"].ToString().ToUpper() == "YES";
-        bool inclAllowances  = pr["should_include_allowances"].ToString().ToUpper() == "YES";
-
-        string payrollMonthName = (payrollMonth >= 1 && payrollMonth <= 12)
-            ? MONTH_NAMES[payrollMonth] : "";
-
-        // Delete PENDING/REJECTED payslips - preserve APPROVED
-        ExecuteNonQuery(
-            "DELETE FROM hrm_payslips WHERE payroll_id=@id AND status IN ('PENDING','REJECTED')",
-            new MySqlParameter("@id", payrollID));
-
-        // Delete legacy detail records (will be rebuilt)
-        ExecuteNonQuery("DELETE FROM hrm_payroll_details WHERE payrollID=@id",
-            new MySqlParameter("@id", payrollID));
-
-        List<int> targetEmps = ResolveTargetEmployees(payrollID);
+        List<int> targetEmps = ResolveTargetEmployees(c, tx, payrollID);
         decimal totalNet = 0m;
 
         foreach (int empID in targetEmps)
         {
-            // Check for existing APPROVED payslip - preserve it
-            DataTable dtApproved = ExecuteQuery(
-                "SELECT ID, basic_pay, gross_salary, total_allowances, paye, nssf, " +
-                "kabaka_contribution, local_tax, total_deductions, net_salary " +
+            DataTable dtApproved = Q(c, tx,
+                "SELECT ID, basic_pay, gross_salary, total_allowances, paye, nssf, kabaka_contribution, local_tax, total_deductions, net_salary " +
                 "FROM hrm_payslips WHERE payroll_id=@pid AND empID=@eid AND status='APPROVED'",
-                new MySqlParameter("@pid", payrollID),
-                new MySqlParameter("@eid", empID));
-
+                P("@pid", payrollID), P("@eid", empID));
             if (dtApproved.Rows.Count > 0)
             {
-                // Use existing approved values for totalNet and write to legacy table
                 DataRow ap = dtApproved.Rows[0];
                 decimal apNetSalary = SafeDecimal(ap["net_salary"]);
                 totalNet += apNetSalary;
-
-                // Write to hrm_payroll_details for backward compat
                 try
                 {
-                    ExecuteNonQuery(@"
-                        INSERT INTO hrm_payroll_details
-                            (payrollID, empID, basic_pay, paye, nssf, total_allowances, total_deductions, gross_pay, net_pay)
-                        VALUES (@pid, @eid, @basic, @paye, @nssf, @allow, @ded, @gross, @net)",
-                        new MySqlParameter("@pid",   payrollID),
-                        new MySqlParameter("@eid",   empID),
-                        new MySqlParameter("@basic", SafeDecimal(ap["basic_pay"])),
-                        new MySqlParameter("@paye",  SafeDecimal(ap["paye"])),
-                        new MySqlParameter("@nssf",  SafeDecimal(ap["nssf"])),
-                        new MySqlParameter("@allow", SafeDecimal(ap["total_allowances"])),
-                        new MySqlParameter("@ded",   SafeDecimal(ap["total_deductions"])),
-                        new MySqlParameter("@gross", SafeDecimal(ap["gross_salary"])),
-                        new MySqlParameter("@net",   apNetSalary));
+                    X(c, tx, @"INSERT INTO hrm_payroll_details (payrollID, empID, basic_pay, paye, nssf, total_allowances, total_deductions, gross_pay, net_pay)
+                               VALUES (@pid, @eid, @basic, @paye, @nssf, @allow, @ded, @gross, @net)",
+                        P("@pid", payrollID), P("@eid", empID), P("@basic", SafeDecimal(ap["basic_pay"])),
+                        P("@paye", SafeDecimal(ap["paye"])), P("@nssf", SafeDecimal(ap["nssf"])),
+                        P("@allow", SafeDecimal(ap["total_allowances"])), P("@ded", SafeDecimal(ap["total_deductions"])),
+                        P("@gross", SafeDecimal(ap["gross_salary"])), P("@net", apNetSalary));
                 }
-                catch { /* non-critical */ }
+                catch { /* legacy table, not critical */ }
                 continue;
             }
 
-            // Get basic pay from most recent valid contract
             decimal basicPay = 0m;
-            DataTable dtContract = ExecuteQuery(@"
+            DataTable dtContract = Q(c, tx, @"
                 SELECT IFNULL(ps.basicpay, c.fixedamount) AS basic_pay
                 FROM hrm_emp_contracts c
                 LEFT JOIN hrm_payscales ps ON ps.ID = c.payscale
                 WHERE c.empID = @eid
-                ORDER BY c.ID DESC LIMIT 1",
-                new MySqlParameter("@eid", empID));
-
-            if (dtContract.Rows.Count > 0)
-                basicPay = SafeDecimal(dtContract.Rows[0]["basic_pay"]);
-
+                ORDER BY c.ID DESC LIMIT 1", P("@eid", empID));
+            if (dtContract.Rows.Count > 0) basicPay = SafeDecimal(dtContract.Rows[0]["basic_pay"]);
             if (basicPay <= 0) continue;
 
-            // -- Standard allowances ---------------------------------
+            // Standard allowances
             decimal stdAllowances = 0m;
-            var allowanceDetails  = new List<string>();
-
-            DataTable dtAllow = ExecuteQuery(@"
+            List<string> allowanceDetails = new List<string>();
+            DataTable dtAllow = Q(c, tx, @"
                 SELECT ad.dedall_name, IFNULL(das.custom_amount, ad.dedall_amount) AS amount, ad.computation_by
                 FROM hrm_allowance_deductions ad
                 JOIN hrm_ded_allowance_stafflist das ON das.ded_allID = ad.ID
                 LEFT JOIN hrm_exemptions ex ON ex.empID = @eid AND ex.ded_allID = ad.ID
-                WHERE das.empID = @eid AND ad.ded_allowance = 'ALLOWANCE' AND ex.ID IS NULL",
-                new MySqlParameter("@eid", empID));
-
+                WHERE das.empID = @eid AND ad.ded_allowance = 'ALLOWANCE' AND ex.ID IS NULL", P("@eid", empID));
             foreach (DataRow a in dtAllow.Rows)
             {
-                decimal amt   = SafeDecimal(a["amount"]);
+                decimal amt = SafeDecimal(a["amount"]);
                 string compBy = a["computation_by"] == null || a["computation_by"] == DBNull.Value ? "" : a["computation_by"].ToString();
                 decimal final = compBy.ToUpper() == "PERCENTAGE" ? basicPay * amt / 100 : amt;
                 stdAllowances += final;
                 allowanceDetails.Add(a["dedall_name"].ToString() + ":" + Math.Round(final, 0).ToString("F0"));
             }
 
-            // -- Ad-hoc allowances -----------------------------------
+            // One-off allowances for the period (not held by another run)
             decimal adHocAllowanceAmount = 0m;
             if (inclAllowances && !string.IsNullOrEmpty(payrollMonthName))
             {
-                try
+                DataTable dtAdAllow = Q(c, tx, @"
+                    SELECT allowance_type, amount FROM hrm_allowance_records
+                    WHERE empID=@eid AND to_add_month=@month AND to_add_year=@year AND status='PENDING'
+                      AND (payroll_id IS NULL OR payroll_id=@pid)",
+                    P("@eid", empID), P("@month", payrollMonthName), P("@year", payrollYear), P("@pid", payrollID));
+                foreach (DataRow ar in dtAdAllow.Rows)
                 {
-                    DataTable dtAdAllow = ExecuteQuery(@"
-                        SELECT allowance_type, amount FROM hrm_allowance_records
-                        WHERE empID=@eid AND to_add_month=@month AND to_add_year=@year AND status='PENDING'",
-                        new MySqlParameter("@eid",   empID),
-                        new MySqlParameter("@month", payrollMonthName),
-                        new MySqlParameter("@year",  payrollYear));
-
-                    foreach (DataRow ar in dtAdAllow.Rows)
-                    {
-                        decimal amt = SafeDecimal(ar["amount"]);
-                        adHocAllowanceAmount += amt;
-                        allowanceDetails.Add(ar["allowance_type"].ToString() + ":" + Math.Round(amt, 0).ToString("F0"));
-                    }
+                    decimal amt = SafeDecimal(ar["amount"]);
+                    adHocAllowanceAmount += amt;
+                    allowanceDetails.Add(ar["allowance_type"].ToString() + ":" + Math.Round(amt, 0).ToString("F0"));
                 }
-                catch { /* table may not exist */ }
             }
-
             decimal totalAllowances = stdAllowances + adHocAllowanceAmount;
 
-            // -- Standard deductions ---------------------------------
+            // Standard deductions
             decimal nonStatDeductions = 0m;
-            var deductionDetails      = new List<string>();
-
-            DataTable dtDed = ExecuteQuery(@"
+            List<string> deductionDetails = new List<string>();
+            DataTable dtDed = Q(c, tx, @"
                 SELECT ad.dedall_name, IFNULL(das.custom_amount, ad.dedall_amount) AS amount, ad.computation_by
                 FROM hrm_allowance_deductions ad
                 JOIN hrm_ded_allowance_stafflist das ON das.ded_allID = ad.ID
                 LEFT JOIN hrm_exemptions ex ON ex.empID = @eid AND ex.ded_allID = ad.ID
-                WHERE das.empID = @eid AND ad.ded_allowance = 'DEDUCTION' AND ex.ID IS NULL",
-                new MySqlParameter("@eid", empID));
-
+                WHERE das.empID = @eid AND ad.ded_allowance = 'DEDUCTION' AND ex.ID IS NULL", P("@eid", empID));
             foreach (DataRow d in dtDed.Rows)
             {
-                decimal amt   = SafeDecimal(d["amount"]);
+                decimal amt = SafeDecimal(d["amount"]);
                 string compBy = d["computation_by"] == null || d["computation_by"] == DBNull.Value ? "" : d["computation_by"].ToString();
                 decimal final = compBy.ToUpper() == "PERCENTAGE" ? basicPay * amt / 100 : amt;
                 nonStatDeductions += final;
                 deductionDetails.Add(d["dedall_name"].ToString() + ":" + Math.Round(final, 0).ToString("F0"));
             }
 
-            // -- Ad-hoc deductions -----------------------------------
+            // One-off deductions for the period (not held by another run)
             decimal adHocDeductionAmount = 0m;
             if (inclDeductions && !string.IsNullOrEmpty(payrollMonthName))
             {
-                try
+                DataTable dtAdDed = Q(c, tx, @"
+                    SELECT deduction_type, amount FROM hrm_deduction_records
+                    WHERE empID=@eid AND to_deduct_month=@month AND to_deduct_year=@year AND status='PENDING'
+                      AND (payroll_id IS NULL OR payroll_id=@pid)",
+                    P("@eid", empID), P("@month", payrollMonthName), P("@year", payrollYear), P("@pid", payrollID));
+                foreach (DataRow dr in dtAdDed.Rows)
                 {
-                    DataTable dtAdDed = ExecuteQuery(@"
-                        SELECT deduction_type, amount FROM hrm_deduction_records
-                        WHERE empID=@eid AND to_deduct_month=@month AND to_deduct_year=@year AND status='PENDING'",
-                        new MySqlParameter("@eid",   empID),
-                        new MySqlParameter("@month", payrollMonthName),
-                        new MySqlParameter("@year",  payrollYear));
-
-                    foreach (DataRow dr in dtAdDed.Rows)
-                    {
-                        decimal amt = SafeDecimal(dr["amount"]);
-                        adHocDeductionAmount += amt;
-                        deductionDetails.Add(dr["deduction_type"].ToString() + ":" + Math.Round(amt, 0).ToString("F0"));
-                    }
+                    decimal amt = SafeDecimal(dr["amount"]);
+                    adHocDeductionAmount += amt;
+                    deductionDetails.Add(dr["deduction_type"].ToString() + ":" + Math.Round(amt, 0).ToString("F0"));
                 }
-                catch { /* table may not exist */ }
             }
 
-            // -- Statutory calculations ------------------------------
+            // Statutory calculations (unchanged; see plan section 5 item 1)
             decimal grossPay = basicPay + totalAllowances;
             decimal nssf     = Math.Round(basicPay * cfg.NssfEmployeeRate / 100, 0);
             decimal kabaka   = cfg.ChargeKabaka   ? Math.Round(basicPay * cfg.KabakaRate   / 100, 0) : 0m;
             decimal localTax = cfg.ChargeLocalTax ? Math.Round(basicPay * cfg.LocalTaxRate / 100, 0) : 0m;
-
-            decimal taxableIncome  = grossPay - nssf;
-            decimal paye           = CalculatePAYE(taxableIncome, cfg);
-
+            decimal taxableIncome = grossPay - nssf;
+            decimal paye = CalculatePAYE(taxableIncome, cfg);
             decimal totalDeductions = paye + nssf + kabaka + localTax + nonStatDeductions + adHocDeductionAmount;
-            decimal netSalary       = Math.Max(0, grossPay - totalDeductions);
+            decimal netSalary = Math.Max(0, grossPay - totalDeductions);
 
-            string allowDetailsStr  = string.Join("|", allowanceDetails);
+            string allowDetailsStr = string.Join("|", allowanceDetails);
             string deductDetailsStr = string.Join("|", deductionDetails);
-
             totalNet += netSalary;
 
-            // Insert hrm_payslips
-            ExecuteNonQuery(@"
+            X(c, tx, @"
                 INSERT INTO hrm_payslips
                     (payroll_id, empID, payroll_year, payroll_month, payroll_month_name,
                      basic_pay, gross_salary, total_allowances, allowance_amount, allowance_details,
                      total_deductions, deduction_amount, deduction_details,
-                     paye, nssf, kabaka_contribution, local_tax, net_salary,
-                     status, date_generated)
+                     paye, nssf, kabaka_contribution, local_tax, net_salary, status, date_generated)
                 VALUES
                     (@pid, @eid, @yr, @mo, @moname,
                      @basic, @gross, @totAllow, @allowAmt, @allowDet,
                      @totDed, @dedAmt, @dedDet,
-                     @paye, @nssf, @kabaka, @localtax, @net,
-                     'PENDING', NOW())",
-                new MySqlParameter("@pid",      payrollID),
-                new MySqlParameter("@eid",      empID),
-                new MySqlParameter("@yr",       payrollYear),
-                new MySqlParameter("@mo",       payrollMonth),
-                new MySqlParameter("@moname",   payrollMonthName),
-                new MySqlParameter("@basic",    basicPay),
-                new MySqlParameter("@gross",    grossPay),
-                new MySqlParameter("@totAllow", totalAllowances),
-                new MySqlParameter("@allowAmt", adHocAllowanceAmount),
-                new MySqlParameter("@allowDet", allowDetailsStr),
-                new MySqlParameter("@totDed",   totalDeductions),
-                new MySqlParameter("@dedAmt",   adHocDeductionAmount),
-                new MySqlParameter("@dedDet",   deductDetailsStr),
-                new MySqlParameter("@paye",     paye),
-                new MySqlParameter("@nssf",     nssf),
-                new MySqlParameter("@kabaka",   kabaka),
-                new MySqlParameter("@localtax", localTax),
-                new MySqlParameter("@net",      netSalary));
+                     @paye, @nssf, @kabaka, @localtax, @net, 'PENDING', NOW())",
+                P("@pid", payrollID), P("@eid", empID), P("@yr", payrollYear), P("@mo", payrollMonth),
+                P("@moname", payrollMonthName), P("@basic", basicPay), P("@gross", grossPay),
+                P("@totAllow", totalAllowances), P("@allowAmt", adHocAllowanceAmount), P("@allowDet", allowDetailsStr),
+                P("@totDed", totalDeductions), P("@dedAmt", adHocDeductionAmount), P("@dedDet", deductDetailsStr),
+                P("@paye", paye), P("@nssf", nssf), P("@kabaka", kabaka), P("@localtax", localTax), P("@net", netSalary));
 
-            // Insert hrm_payroll_details for backward compat
             try
             {
-                ExecuteNonQuery(@"
-                    INSERT INTO hrm_payroll_details
-                        (payrollID, empID, basic_pay, paye, nssf, total_allowances, total_deductions, gross_pay, net_pay)
-                    VALUES (@pid, @eid, @basic, @paye, @nssf, @allow, @ded, @gross, @net)",
-                    new MySqlParameter("@pid",   payrollID),
-                    new MySqlParameter("@eid",   empID),
-                    new MySqlParameter("@basic", basicPay),
-                    new MySqlParameter("@paye",  paye),
-                    new MySqlParameter("@nssf",  nssf),
-                    new MySqlParameter("@allow", totalAllowances),
-                    new MySqlParameter("@ded",   totalDeductions),
-                    new MySqlParameter("@gross", grossPay),
-                    new MySqlParameter("@net",   netSalary));
+                X(c, tx, @"INSERT INTO hrm_payroll_details (payrollID, empID, basic_pay, paye, nssf, total_allowances, total_deductions, gross_pay, net_pay)
+                           VALUES (@pid, @eid, @basic, @paye, @nssf, @allow, @ded, @gross, @net)",
+                    P("@pid", payrollID), P("@eid", empID), P("@basic", basicPay), P("@paye", paye), P("@nssf", nssf),
+                    P("@allow", totalAllowances), P("@ded", totalDeductions), P("@gross", grossPay), P("@net", netSalary));
             }
-            catch { /* non-critical */ }
+            catch { /* legacy table, not critical */ }
 
-            // Settle ad-hoc records
+            // Hold the one-off items for this run. They are settled when the run is approved.
             if (!string.IsNullOrEmpty(payrollMonthName))
             {
                 if (inclAllowances)
-                {
-                    try
-                    {
-                        ExecuteNonQuery(@"
-                            UPDATE hrm_allowance_records
-                            SET status='SETTLED', payment_date=NOW(), payroll_id=@pid
-                            WHERE empID=@eid AND to_add_month=@month AND to_add_year=@year AND status='PENDING'",
-                            new MySqlParameter("@pid",   payrollID),
-                            new MySqlParameter("@eid",   empID),
-                            new MySqlParameter("@month", payrollMonthName),
-                            new MySqlParameter("@year",  payrollYear));
-                    }
-                    catch { }
-                }
-
+                    X(c, tx, @"UPDATE hrm_allowance_records SET payroll_id=@pid
+                               WHERE empID=@eid AND to_add_month=@month AND to_add_year=@year AND status='PENDING'
+                                 AND (payroll_id IS NULL OR payroll_id=@pid)",
+                        P("@pid", payrollID), P("@eid", empID), P("@month", payrollMonthName), P("@year", payrollYear));
                 if (inclDeductions)
-                {
-                    try
-                    {
-                        ExecuteNonQuery(@"
-                            UPDATE hrm_deduction_records
-                            SET status='SETTLED', payment_date=NOW(), payroll_id=@pid
-                            WHERE empID=@eid AND to_deduct_month=@month AND to_deduct_year=@year AND status='PENDING'",
-                            new MySqlParameter("@pid",   payrollID),
-                            new MySqlParameter("@eid",   empID),
-                            new MySqlParameter("@month", payrollMonthName),
-                            new MySqlParameter("@year",  payrollYear));
-                    }
-                    catch { }
-                }
+                    X(c, tx, @"UPDATE hrm_deduction_records SET payroll_id=@pid
+                               WHERE empID=@eid AND to_deduct_month=@month AND to_deduct_year=@year AND status='PENDING'
+                                 AND (payroll_id IS NULL OR payroll_id=@pid)",
+                        P("@pid", payrollID), P("@eid", empID), P("@month", payrollMonthName), P("@year", payrollYear));
             }
         }
 
-        // Update payroll total
-        ExecuteNonQuery("UPDATE hrm_payroll SET total_amount=@total WHERE ID=@pid",
-            new MySqlParameter("@total", totalNet),
-            new MySqlParameter("@pid",   payrollID));
+        X(c, tx, "UPDATE hrm_payroll SET total_amount=@total WHERE ID=@pid", P("@total", totalNet), P("@pid", payrollID));
+        return Str(pr["payroll_title"]);
     }
 
-    // -----------------------------------------------------------------
-    // Section 16: ResolveTargetEmployees
-    // -----------------------------------------------------------------
-
-    private List<int> ResolveTargetEmployees(int payrollID)
+    /// <summary>
+    /// Returns one-off items held by a run that is not approved to PENDING with no run.
+    /// SETTLED items of an unapproved run come from the earlier rule that settled on generation.
+    /// keepApproved leaves the items of employees whose payslip in the run is approved.
+    /// </summary>
+    private static void ReleaseItems(MySqlConnection c, MySqlTransaction tx, int payrollID, bool keepApproved)
     {
-        var result = new List<int>();
+        string keep = keepApproved
+            ? " AND empID NOT IN (SELECT ps.empID FROM hrm_payslips ps WHERE ps.payroll_id=@pid AND ps.status='APPROVED')"
+            : "";
+        X(c, tx, "UPDATE hrm_allowance_records SET status='PENDING', payroll_id=NULL, payment_date=NULL " +
+                 "WHERE payroll_id=@pid AND status IN ('PENDING','SETTLED')" + keep, P("@pid", payrollID));
+        X(c, tx, "UPDATE hrm_deduction_records SET status='PENDING', payroll_id=NULL, payment_date=NULL " +
+                 "WHERE payroll_id=@pid AND status IN ('PENDING','SETTLED')" + keep, P("@pid", payrollID));
+    }
 
-        DataTable dtPayroll = ExecuteQuery(
-            "SELECT target_type, target_ids FROM hrm_payroll WHERE ID=@id",
-            new MySqlParameter("@id", payrollID));
-
+    private static List<int> ResolveTargetEmployees(MySqlConnection c, MySqlTransaction tx, int payrollID)
+    {
+        List<int> result = new List<int>();
+        DataTable dtPayroll = Q(c, tx, "SELECT target_type, target_ids FROM hrm_payroll WHERE ID=@id", P("@id", payrollID));
         if (dtPayroll.Rows.Count == 0) return result;
 
         string targetType = dtPayroll.Rows[0]["target_type"].ToString();
-        string targetIds  = dtPayroll.Rows[0]["target_ids"] == null || dtPayroll.Rows[0]["target_ids"] == DBNull.Value ? "" : dtPayroll.Rows[0]["target_ids"].ToString();
+        string targetIds = Str(dtPayroll.Rows[0]["target_ids"]);
+        const string baseSql = @"
+            SELECT DISTINCT e.empID
+            FROM hrm_employee e
+            JOIN hrm_emp_contracts c ON c.empID = e.empID AND c.ID = (
+                SELECT MAX(c2.ID) FROM hrm_emp_contracts c2 WHERE c2.empID = e.empID)
+            LEFT JOIN hrm_payscales ps ON ps.ID = c.payscale
+            WHERE c.contractStatus = 'VALID'
+              AND c.contractEnd >= CURDATE()
+              AND IFNULL(ps.basicpay, c.fixedamount) > 0";
 
         DataTable dtEmps;
-
         if (targetType == "ALL")
         {
-            dtEmps = ExecuteQuery(@"
-                SELECT DISTINCT e.empID
-                FROM hrm_employee e
-                JOIN hrm_emp_contracts c ON c.empID = e.empID AND c.ID = (
-                    SELECT MAX(c2.ID) FROM hrm_emp_contracts c2 WHERE c2.empID = e.empID
-                )
-                LEFT JOIN hrm_payscales ps ON ps.ID = c.payscale
-                WHERE c.contractStatus = 'VALID'
-                  AND c.contractEnd >= CURDATE()
-                  AND IFNULL(ps.basicpay, c.fixedamount) > 0");
+            dtEmps = Q(c, tx, baseSql);
         }
-        else if (targetType == "DEPARTMENT" && !string.IsNullOrEmpty(targetIds))
+        else if ((targetType == "DEPARTMENT" || targetType == "EMPLOYEE") && targetIds != "")
         {
-            string[] deptArr = targetIds.Split(',');
-            var deptParms    = new List<MySqlParameter>();
-            var deptIn       = new List<string>();
-            for (int i = 0; i < deptArr.Length; i++)
+            string[] arr = targetIds.Split(',');
+            List<MySqlParameter> parms = new List<MySqlParameter>();
+            List<string> names = new List<string>();
+            for (int i = 0; i < arr.Length; i++)
             {
-                string pname = "@d" + i;
-                deptIn.Add(pname);
-                deptParms.Add(new MySqlParameter(pname, deptArr[i].Trim()));
+                names.Add("@t" + i);
+                parms.Add(P("@t" + i, arr[i].Trim()));
             }
-            deptParms.Add(new MySqlParameter("@dummy", 0)); // ensure array not empty
-
-            dtEmps = ExecuteQuery(@"
-                SELECT DISTINCT e.empID
-                FROM hrm_employee e
-                JOIN hrm_emp_contracts c ON c.empID = e.empID AND c.ID = (
-                    SELECT MAX(c2.ID) FROM hrm_emp_contracts c2 WHERE c2.empID = e.empID
-                )
-                LEFT JOIN hrm_payscales ps ON ps.ID = c.payscale
-                WHERE c.contractStatus = 'VALID'
-                  AND c.contractEnd >= CURDATE()
-                  AND IFNULL(ps.basicpay, c.fixedamount) > 0
-                  AND c.departmentID IN (" + string.Join(",", deptIn) + ")",
-                deptParms.ToArray());
+            string col = targetType == "DEPARTMENT" ? "c.departmentID" : "e.empID";
+            dtEmps = Q(c, tx, baseSql + " AND " + col + " IN (" + string.Join(",", names.ToArray()) + ")", parms.ToArray());
         }
-        else if (targetType == "EMPLOYEE" && !string.IsNullOrEmpty(targetIds))
-        {
-            string[] empArr = targetIds.Split(',');
-            var empParms    = new List<MySqlParameter>();
-            var empIn       = new List<string>();
-            for (int i = 0; i < empArr.Length; i++)
-            {
-                string pname = "@e" + i;
-                empIn.Add(pname);
-                empParms.Add(new MySqlParameter(pname, empArr[i].Trim()));
-            }
+        else return result;
 
-            dtEmps = ExecuteQuery(@"
-                SELECT DISTINCT e.empID
-                FROM hrm_employee e
-                JOIN hrm_emp_contracts c ON c.empID = e.empID AND c.ID = (
-                    SELECT MAX(c2.ID) FROM hrm_emp_contracts c2 WHERE c2.empID = e.empID
-                )
-                LEFT JOIN hrm_payscales ps ON ps.ID = c.payscale
-                WHERE e.empID IN (" + string.Join(",", empIn) + @")
-                  AND c.contractStatus = 'VALID'
-                  AND c.contractEnd >= CURDATE()
-                  AND IFNULL(ps.basicpay, c.fixedamount) > 0",
-                empParms.ToArray());
-        }
-        else
-        {
-            return result;
-        }
-
-        foreach (DataRow r in dtEmps.Rows)
-            result.Add(SafeInt(r["empID"]));
-
+        foreach (DataRow r in dtEmps.Rows) result.Add(SafeInt(r["empID"]));
         return result;
     }
 
-    // -----------------------------------------------------------------
-    // Section 17: btnDoAction_Click
-    // -----------------------------------------------------------------
+    // =================================================================
+    //  Approve, cancel, delete, bulk
+    // =================================================================
 
-    protected void btnDoAction_Click(object sender, EventArgs e)
+    private void ApproveRun(int payrollID)
     {
-        int id;
-        if (!int.TryParse(hdnActionPayrollID.Value, out id)) return;
-
-        string action = hdnActionType.Value.ToUpper();
-
-        switch (action)
+        string title;
+        using (MySqlConnection c = new MySqlConnection(ConnStr))
         {
-            case "APPROVE":
-                ApprovePayroll(id);
-                break;
-            case "CANCEL":
-                CancelPayroll(id);
-                break;
-            case "DELETE":
-                DeletePayroll(id);
-                break;
-            case "REGENERATE":
-                try
-                {
-                    PayrollConfig cfg = LoadPayrollConfig();
-                    GeneratePayslipsForPayroll(id, cfg);
-                    BindPayrollGrid();
-                    LoadStats();
-                    ShowPayrollDetails(id);
-                    pnlPayrollDetails.Visible = true;
-                    ShowAlert("Payslips regenerated successfully.", "success");
-                }
-                catch (Exception ex)
-                {
-                    ShowAlert("Regeneration failed: " + ex.Message, "danger");
-                }
-                break;
+            c.Open();
+            using (MySqlTransaction tx = c.BeginTransaction())
+            {
+                DataTable st = Q(c, tx, "SELECT payroll_title, payroll_status FROM hrm_payroll WHERE ID=@id FOR UPDATE", P("@id", payrollID));
+                if (st.Rows.Count == 0) throw new UserError("Payroll run not found.");
+                if (Str(st.Rows[0]["payroll_status"]) != "PENDING") throw new UserError("Only a pending payroll run can be approved.");
+                title = Str(st.Rows[0]["payroll_title"]);
+
+                DataTable cnt = Q(c, tx, "SELECT COUNT(*) AS n, COALESCE(SUM(status<>'APPROVED'),0) AS u FROM hrm_payslips WHERE payroll_id=@id", P("@id", payrollID));
+                int total = SafeInt(cnt.Rows[0]["n"]), unapproved = SafeInt(cnt.Rows[0]["u"]);
+                if (total == 0) throw new UserError("Generate the payslips before approving the run.");
+                if (unapproved > 0) throw new UserError(unapproved == 1 ? "1 payslip is not approved yet." : unapproved + " payslips are not approved yet.");
+
+                int stale = StaleCount(c, tx, payrollID);
+                if (stale > 0)
+                    throw new UserError((stale == 1 ? "1 payslip does" : stale + " payslips do") +
+                        " not match the current allowances and deductions. Reject " + (stale == 1 ? "it" : "them") + " and regenerate the run.");
+
+                X(c, tx, @"UPDATE hrm_payroll SET payroll_status='PROCESSED', lockStatus=1, date_processed=NOW(), processed_by=@user
+                           WHERE ID=@id AND payroll_status='PENDING'", P("@user", CurrentUser()), P("@id", payrollID));
+                X(c, tx, "UPDATE hrm_allowance_records SET status='SETTLED', payment_date=CURDATE() WHERE payroll_id=@id AND status='PENDING'", P("@id", payrollID));
+                X(c, tx, "UPDATE hrm_deduction_records SET status='SETTLED', payment_date=CURDATE() WHERE payroll_id=@id AND status='PENDING'", P("@id", payrollID));
+                tx.Commit();
+            }
         }
+        Log("Payroll run approved", title + " (run " + payrollID + ")");
     }
 
-    // -----------------------------------------------------------------
-    // Section 18: ApprovePayroll
-    // -----------------------------------------------------------------
-
-    private void ApprovePayroll(int payrollID)
+    /// <summary>Payslips whose one-off amounts differ from the items the run holds.</summary>
+    private static int StaleCount(MySqlConnection c, MySqlTransaction tx, int payrollID)
     {
-        try
-        {
-            DataTable dtStatus = ExecuteQuery(
-                "SELECT payroll_status FROM hrm_payroll WHERE ID=@id",
-                new MySqlParameter("@id", payrollID));
-
-            if (dtStatus.Rows.Count == 0) { ShowAlert("Payroll not found.", "danger"); return; }
-
-            string status = dtStatus.Rows[0]["payroll_status"].ToString();
-            if (status != "PENDING")
-            {
-                ShowAlert("Only PENDING payrolls can be approved.", "danger");
-                return;
-            }
-
-            DataTable dtUnapproved = ExecuteQuery(
-                "SELECT COUNT(*) AS cnt FROM hrm_payslips WHERE payroll_id=@id AND status!='APPROVED'",
-                new MySqlParameter("@id", payrollID));
-
-            int unapprovedCount = dtUnapproved.Rows.Count > 0 ? SafeInt(dtUnapproved.Rows[0]["cnt"]) : 0;
-            if (unapprovedCount > 0)
-            {
-                ShowAlert("Cannot approve: " + unapprovedCount + " payslip(s) not yet approved.", "danger");
-                return;
-            }
-
-            string user = GetCurrentUser();
-            ExecuteNonQuery(@"
-                UPDATE hrm_payroll
-                SET payroll_status='PROCESSED', lockStatus='LOCKED',
-                    date_processed=NOW(), processed_by=@user
-                WHERE ID=@id",
-                new MySqlParameter("@user", user),
-                new MySqlParameter("@id",   payrollID));
-
-            BindPayrollGrid();
-            LoadStats();
-            ShowPayrollDetails(payrollID);
-            ShowAlert("Payroll approved and locked successfully.", "success");
-        }
-        catch (Exception ex)
-        {
-            ShowAlert("Error approving payroll: " + ex.Message, "danger");
-        }
+        DataTable dt = Q(c, tx, @"
+            SELECT COUNT(*) AS n FROM hrm_payslips ps
+            WHERE ps.payroll_id=@pid AND (
+                ROUND(ps.allowance_amount,0) <> ROUND((SELECT IFNULL(SUM(a.amount),0) FROM hrm_allowance_records a
+                    WHERE a.payroll_id=@pid AND a.empID=ps.empID AND a.status IN ('PENDING','SETTLED')),0)
+             OR ROUND(ps.deduction_amount,0) <> ROUND((SELECT IFNULL(SUM(d.amount),0) FROM hrm_deduction_records d
+                    WHERE d.payroll_id=@pid AND d.empID=ps.empID AND d.status IN ('PENDING','SETTLED')),0))",
+            P("@pid", payrollID));
+        return dt.Rows.Count > 0 ? SafeInt(dt.Rows[0]["n"]) : 0;
     }
 
-    // -----------------------------------------------------------------
-    // Section 19: CancelPayroll
-    // -----------------------------------------------------------------
-
-    private void CancelPayroll(int payrollID)
+    private void CancelRun(int payrollID)
     {
-        try
+        string title;
+        using (MySqlConnection c = new MySqlConnection(ConnStr))
         {
-            DataTable dtStatus = ExecuteQuery(
-                "SELECT payroll_status FROM hrm_payroll WHERE ID=@id",
-                new MySqlParameter("@id", payrollID));
-
-            if (dtStatus.Rows.Count == 0) { ShowAlert("Payroll not found.", "danger"); return; }
-
-            string status = dtStatus.Rows[0]["payroll_status"].ToString();
-            if (status != "PENDING")
+            c.Open();
+            using (MySqlTransaction tx = c.BeginTransaction())
             {
-                ShowAlert("Only PENDING payrolls can be cancelled.", "danger");
-                return;
+                DataTable st = Q(c, tx, "SELECT payroll_title, payroll_status FROM hrm_payroll WHERE ID=@id FOR UPDATE", P("@id", payrollID));
+                if (st.Rows.Count == 0) throw new UserError("Payroll run not found.");
+                if (Str(st.Rows[0]["payroll_status"]) != "PENDING") throw new UserError("Only a pending payroll run can be cancelled.");
+                title = Str(st.Rows[0]["payroll_title"]);
+                X(c, tx, "UPDATE hrm_payroll SET payroll_status='CANCELLED' WHERE ID=@id AND payroll_status='PENDING'", P("@id", payrollID));
+                ReleaseItems(c, tx, payrollID, false);
+                tx.Commit();
             }
-
-            ExecuteNonQuery(
-                "UPDATE hrm_payroll SET payroll_status='CANCELLED' WHERE ID=@id AND payroll_status='PENDING'",
-                new MySqlParameter("@id", payrollID));
-
-            BindPayrollGrid();
-            LoadStats();
-            pnlPayrollDetails.Visible = false;
-            ShowAlert("Payroll cancelled.", "warning");
         }
-        catch (Exception ex)
-        {
-            ShowAlert("Error cancelling payroll: " + ex.Message, "danger");
-        }
+        Log("Payroll run cancelled", title + " (run " + payrollID + ")");
     }
 
-    // -----------------------------------------------------------------
-    // Section 20: DeletePayroll
-    // -----------------------------------------------------------------
-
-    private void DeletePayroll(int payrollID)
+    private string DeleteRun(int payrollID)
     {
-        try
+        string title;
+        int remaining;
+        using (MySqlConnection c = new MySqlConnection(ConnStr))
         {
-            DataTable dtStatus = ExecuteQuery(
-                "SELECT payroll_status FROM hrm_payroll WHERE ID=@id",
-                new MySqlParameter("@id", payrollID));
-
-            if (dtStatus.Rows.Count == 0) { ShowAlert("Payroll not found.", "danger"); return; }
-
-            string status = dtStatus.Rows[0]["payroll_status"].ToString();
-            if (status != "PENDING")
+            c.Open();
+            using (MySqlTransaction tx = c.BeginTransaction())
             {
-                ShowAlert("Only PENDING payrolls can be deleted.", "danger");
-                return;
+                DataTable st = Q(c, tx, "SELECT payroll_title, payroll_status FROM hrm_payroll WHERE ID=@id FOR UPDATE", P("@id", payrollID));
+                if (st.Rows.Count == 0) throw new UserError("Payroll run not found.");
+                if (Str(st.Rows[0]["payroll_status"]) != "PENDING") throw new UserError("Only a pending payroll run can be deleted.");
+                title = Str(st.Rows[0]["payroll_title"]);
+
+                ReleaseItems(c, tx, payrollID, true);
+                X(c, tx, "DELETE FROM hrm_payslips WHERE payroll_id=@id AND status <> 'APPROVED'", P("@id", payrollID));
+                X(c, tx, "DELETE FROM hrm_payroll_details WHERE payrollID=@id", P("@id", payrollID));
+                try { X(c, tx, "DELETE FROM hrm_monthly_ded_allowance WHERE payrollID=@id", P("@id", payrollID)); } catch { }
+
+                DataTable rem = Q(c, tx, "SELECT COUNT(*) AS n FROM hrm_payslips WHERE payroll_id=@id", P("@id", payrollID));
+                remaining = SafeInt(rem.Rows[0]["n"]);
+                if (remaining == 0) X(c, tx, "DELETE FROM hrm_payroll WHERE ID=@id", P("@id", payrollID));
+                tx.Commit();
             }
+        }
+        Log(remaining == 0 ? "Payroll run deleted" : "Payroll run payslips deleted", title + " (run " + payrollID + ")");
+        return remaining == 0
+            ? "Payroll run deleted."
+            : "Payslips not yet approved were deleted. The run stays because " + remaining + " approved payslip" + (remaining == 1 ? " remains." : "s remain.");
+    }
 
-            // Delete non-approved payslips only
-            ExecuteNonQuery(
-                "DELETE FROM hrm_payslips WHERE payroll_id=@id AND status != 'APPROVED'",
-                new MySqlParameter("@id", payrollID));
-
-            // Delete legacy detail records
-            ExecuteNonQuery("DELETE FROM hrm_payroll_details WHERE payrollID=@id",
-                new MySqlParameter("@id", payrollID));
-
-            // Clean up monthly ded/allowance records
+    private string Bulk()
+    {
+        string op = (Request.Form["op"] ?? "").ToUpperInvariant();
+        int done = 0, skipped = 0, failed = 0;
+        foreach (string s in (Request.Form["ids"] ?? "").Split(new[] { ',' }, StringSplitOptions.RemoveEmptyEntries))
+        {
+            int pid;
+            if (!int.TryParse(s.Trim(), out pid) || pid <= 0) continue;
             try
             {
-                ExecuteNonQuery("DELETE FROM hrm_monthly_ded_allowance WHERE payrollID=@id",
-                    new MySqlParameter("@id", payrollID));
+                if (op == "GENERATE") GenerateRun(pid);
+                else if (op == "CANCEL") CancelRun(pid);
+                else if (op == "DELETE") DeleteRun(pid);
+                else throw new UserError("Unknown action.");
+                done++;
             }
-            catch { /* table may not exist */ }
+            catch (UserError) { skipped++; }
+            catch (Exception ex) { failed++; Log("Error", "Bulk " + op + " run " + pid + ": " + ex.Message); }
+        }
+        string verb = op == "GENERATE" ? "generated" : op == "CANCEL" ? "cancelled" : "deleted";
+        string msg = done + (done == 1 ? " run " : " runs ") + verb + ".";
+        if (skipped > 0) msg += " " + skipped + " skipped (not pending).";
+        if (failed > 0) msg += " " + failed + " could not be processed.";
+        return Result(failed == 0, msg);
+    }
 
-            // Check remaining payslips (approved ones)
-            DataTable dtRemaining = ExecuteQuery(
-                "SELECT COUNT(*) AS cnt FROM hrm_payslips WHERE payroll_id=@id",
-                new MySqlParameter("@id", payrollID));
+    // =================================================================
+    //  Screen: list
+    // =================================================================
 
-            int remaining = dtRemaining.Rows.Count > 0 ? SafeInt(dtRemaining.Rows[0]["cnt"]) : 0;
+    private const string IcoMore = "<svg viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\"><circle cx=\"12\" cy=\"5\" r=\"1\"/><circle cx=\"12\" cy=\"12\" r=\"1\"/><circle cx=\"12\" cy=\"19\" r=\"1\"/></svg>";
+    private const string IcoBack = "<svg viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><polyline points=\"15 18 9 12 15 6\"/></svg>";
+    private const string IcoDownload = "<svg viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><path d=\"M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4\"/><polyline points=\"7 10 12 15 17 10\"/><line x1=\"12\" y1=\"15\" x2=\"12\" y2=\"3\"/></svg>";
+    private const string IcoPrint = "<svg viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><polyline points=\"6 9 6 2 18 2 18 9\"/><path d=\"M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2\"/><rect x=\"6\" y=\"14\" width=\"12\" height=\"8\"/></svg>";
 
-            if (remaining == 0)
+    private void RenderList()
+    {
+        string yearQs = Request.QueryString["year"];
+        string year = yearQs == null ? DateTime.Today.Year.ToString(IC) : (yearQs == "all" ? "" : SafeInt(yearQs).ToString(IC));
+        if (year == "0") year = "";
+        string status = (Request.QueryString["status"] ?? "").ToUpperInvariant();
+        if (status != "PENDING" && status != "PROCESSED" && status != "CANCELLED") status = "";
+
+        // KPIs: runs counted once each (bug 3); pay totals exclude cancelled runs.
+        string yWhere = "";
+        if (year != "") { yWhere = " AND p.payroll_year = @yr"; }
+        DataTable k1 = Q("SELECT COUNT(*) AS runs, COALESCE(SUM(p.payroll_status='PROCESSED'),0) AS approved, COALESCE(SUM(p.payroll_status='PENDING'),0) AS pending FROM hrm_payroll p WHERE 1=1" + yWhere,
+            year != "" ? new[] { P("@yr", year) } : new MySqlParameter[0]);
+        DataTable k2 = Q("SELECT COALESCE(SUM(ps.gross_salary),0) AS gross, COALESCE(SUM(ps.net_salary),0) AS net FROM hrm_payslips ps JOIN hrm_payroll p ON p.ID = ps.payroll_id WHERE p.payroll_status <> 'CANCELLED'" + yWhere,
+            year != "" ? new[] { P("@yr", year) } : new MySqlParameter[0]);
+        int runs = SafeInt(k1.Rows[0]["runs"]), approved = SafeInt(k1.Rows[0]["approved"]), pending = SafeInt(k1.Rows[0]["pending"]);
+        string yearArg = year == "" ? "all" : year;
+
+        StringBuilder h = new StringBuilder();
+        h.Append("<div class=\"hr-kpis\">");
+        h.Append("<a class=\"hr-kpi\" href=\"HRPayroll.aspx?year=").Append(yearArg).Append("\"><div class=\"hr-kpi__label\">Payroll runs</div><div class=\"hr-kpi__value\">")
+         .Append(runs).Append("</div><div class=\"hr-kpi__sub\">").Append(approved).Append(" approved").Append("</div></a>");
+        h.Append("<div class=\"hr-kpi\"><div class=\"hr-kpi__label\">Gross pay (UGX)</div><div class=\"hr-kpi__value\">").Append(Money(k2.Rows[0]["gross"]))
+         .Append("</div><div class=\"hr-kpi__sub\">Excludes cancelled runs</div></div>");
+        h.Append("<div class=\"hr-kpi\"><div class=\"hr-kpi__label\">Net pay (UGX)</div><div class=\"hr-kpi__value\">").Append(Money(k2.Rows[0]["net"]))
+         .Append("</div><div class=\"hr-kpi__sub\">Excludes cancelled runs</div></div>");
+        h.Append("<a class=\"hr-kpi").Append(pending > 0 ? " hr-kpi--alert" : "").Append("\" href=\"HRPayroll.aspx?year=").Append(yearArg).Append("&amp;status=PENDING\"><div class=\"hr-kpi__label\">Awaiting approval</div><div class=\"hr-kpi__value\">")
+         .Append(pending).Append("</div><div class=\"hr-kpi__sub\">Pending runs</div></a>");
+        h.Append("</div>");
+
+        // Filters
+        DataTable years = Q("SELECT DISTINCT payroll_year FROM hrm_payroll ORDER BY payroll_year DESC");
+        List<string> yl = new List<string>();
+        foreach (DataRow r in years.Rows) { string y = Str(r["payroll_year"]); if (y != "" && !yl.Contains(y)) yl.Add(y); }
+        string cy = DateTime.Today.Year.ToString(IC);
+        if (!yl.Contains(cy)) yl.Insert(0, cy);
+        yl.Sort(delegate (string a, string b) { return string.CompareOrdinal(b, a); });
+
+        h.Append("<div class=\"hr-filters\">");
+        h.Append("<div class=\"hr-filter\"><label for=\"fYear\">Year</label><select id=\"fYear\" class=\"hr-select\" onchange=\"applyFilters()\">");
+        h.Append("<option value=\"all\"").Append(year == "" ? " selected" : "").Append(">All years</option>");
+        foreach (string y in yl) h.Append("<option value=\"").Append(y).Append("\"").Append(y == year ? " selected" : "").Append(">").Append(y).Append("</option>");
+        h.Append("</select></div>");
+        h.Append("<div class=\"hr-filter\"><label for=\"fStatus\">Status</label><select id=\"fStatus\" class=\"hr-select\" onchange=\"applyFilters()\">");
+        string[,] sts = { { "", "All statuses" }, { "PENDING", "Pending" }, { "PROCESSED", "Approved" }, { "CANCELLED", "Cancelled" } };
+        for (int i = 0; i < sts.GetLength(0); i++)
+            h.Append("<option value=\"").Append(sts[i, 0]).Append("\"").Append(sts[i, 0] == status ? " selected" : "").Append(">").Append(sts[i, 1]).Append("</option>");
+        h.Append("</select></div></div>");
+
+        // Runs
+        List<MySqlParameter> lp = new List<MySqlParameter>();
+        string where = "WHERE 1=1";
+        if (year != "") { where += " AND p.payroll_year = @yr"; lp.Add(P("@yr", year)); }
+        if (status != "") { where += " AND p.payroll_status = @st"; lp.Add(P("@st", status)); }
+        DataTable dt = Q(@"
+            SELECT p.ID, p.payroll_title, p.payroll_month, p.payroll_year, p.payroll_date, p.payroll_status,
+                   p.target_type, p.target_ids, IFNULL(pe.emp_name,'') AS prepared_name,
+                   COUNT(ps.ID) AS staff, COALESCE(SUM(ps.gross_salary),0) AS gross, COALESCE(SUM(ps.net_salary),0) AS net
+            FROM hrm_payroll p
+            LEFT JOIN hrm_payslips ps ON ps.payroll_id = p.ID
+            LEFT JOIN hrm_employee pe ON pe.empID = p.prepared_by
+            " + where + @"
+            GROUP BY p.ID
+            ORDER BY p.payroll_year DESC, CAST(p.payroll_month AS UNSIGNED) DESC, p.ID DESC", lp.ToArray());
+
+        h.Append("<div class=\"hr-card\"><div class=\"hr-card__head\"><div class=\"hr-card__title\">Payroll runs</div><div class=\"hr-card__meta\">")
+         .Append(dt.Rows.Count).Append(dt.Rows.Count == 1 ? " run" : " runs").Append("</div></div>");
+        h.Append("<div class=\"hr-bulk\" id=\"bulkBar\"><span id=\"bulkCount\">0 selected</span><span class=\"hr-spacer\"></span>")
+         .Append("<button type=\"button\" class=\"hr-btn hr-btn--inverse hr-btn--sm\" onclick=\"bulkOp('GENERATE')\">Generate payslips</button>")
+         .Append("<button type=\"button\" class=\"hr-btn hr-btn--inverse hr-btn--sm\" onclick=\"bulkOp('CANCEL')\">Cancel runs</button>")
+         .Append("<button type=\"button\" class=\"hr-btn hr-btn--inverse hr-btn--sm\" onclick=\"bulkOp('DELETE')\">Delete runs</button>")
+         .Append("<button type=\"button\" class=\"hr-btn hr-btn--inverse hr-btn--sm\" onclick=\"clearSelection()\">Clear</button></div>");
+
+        if (dt.Rows.Count == 0)
+        {
+            h.Append("<div class=\"hr-empty\">No payroll runs for this filter.</div>");
+        }
+        else
+        {
+            h.Append("<div class=\"hr-table-wrap\"><table class=\"hr-table\"><thead><tr>")
+             .Append("<th style=\"width:32px\"><input type=\"checkbox\" id=\"chkAll\" onclick=\"selectAll(this)\" aria-label=\"Select all\" /></th>")
+             .Append("<th>Payroll run</th><th>Period</th><th>Coverage</th><th class=\"hr-num\">Staff</th><th class=\"hr-num\">Gross (UGX)</th><th class=\"hr-num\">Net (UGX)</th><th>Status</th><th>Prepared by</th><th>Created</th><th></th>")
+             .Append("</tr></thead><tbody>");
+            foreach (DataRow r in dt.Rows)
             {
-                ExecuteNonQuery("DELETE FROM hrm_payroll WHERE ID=@id",
-                    new MySqlParameter("@id", payrollID));
-                pnlPayrollDetails.Visible = false;
-                ShowAlert("Payroll deleted successfully.", "success");
+                int id = SafeInt(r["ID"]);
+                string st = Str(r["payroll_status"]);
+                bool isPending = st == "PENDING";
+                h.Append("<tr>");
+                h.Append("<td>").Append(isPending ? "<input type=\"checkbox\" class=\"row-chk\" value=\"" + id + "\" onclick=\"updateBulk()\" aria-label=\"Select\" />" : "").Append("</td>");
+                h.Append("<td><a href=\"HRPayroll.aspx?run=").Append(id).Append("\"><strong>").Append(E(r["payroll_title"])).Append("</strong></a></td>");
+                h.Append("<td>").Append(E(Period(r["payroll_month"], r["payroll_year"]))).Append("</td>");
+                h.Append("<td>").Append(E(Coverage(r["target_type"], r["target_ids"]))).Append("</td>");
+                h.Append("<td class=\"hr-num\">").Append(SafeInt(r["staff"])).Append("</td>");
+                h.Append("<td class=\"hr-num\">").Append(Money(r["gross"])).Append("</td>");
+                h.Append("<td class=\"hr-num\">").Append(Money(r["net"])).Append("</td>");
+                h.Append("<td>").Append(Badge(st)).Append("</td>");
+                h.Append("<td>").Append(E(r["prepared_name"])).Append("</td>");
+                h.Append("<td>").Append(ShortDate(r["payroll_date"])).Append("</td>");
+                h.Append("<td class=\"hr-right\"><div class=\"run-menu\"><button type=\"button\" class=\"hr-btn hr-btn--secondary hr-btn--sm\" onclick=\"toggleMenu(this,event)\" aria-label=\"Actions\">")
+                 .Append(IcoMore).Append("</button><div class=\"run-menu__list\">");
+                h.Append("<a href=\"HRPayroll.aspx?run=").Append(id).Append("\">Open</a>");
+                if (isPending) h.Append("<button type=\"button\" onclick=\"openGenerate(").Append(id).Append(")\">Generate payslips</button>");
+                h.Append("<a href=\"HRPayslips.aspx?payroll_id=").Append(id).Append("\">Review payslips</a>");
+                h.Append("<a href=\"HRPayroll.aspx?action=export&amp;type=register&amp;id=").Append(id).Append("\">Export register</a>");
+                h.Append("<a href=\"HRPayroll.aspx?action=print&amp;type=register&amp;id=").Append(id).Append("\" target=\"_blank\">Print register</a>");
+                if (isPending)
+                {
+                    h.Append("<button type=\"button\" onclick=\"runAction('cancel',").Append(id).Append(")\">Cancel run</button>");
+                    h.Append("<button type=\"button\" class=\"is-danger\" onclick=\"runAction('delete',").Append(id).Append(")\">Delete run</button>");
+                }
+                h.Append("</div></div></td></tr>");
             }
-            else
-            {
-                ShowAlert("Cannot fully delete: " + remaining + " approved payslip(s) still exist. Non-approved records removed.", "warning");
-            }
+            h.Append("</tbody></table></div>");
+        }
+        h.Append("</div>");
+        litBody.Text = h.ToString();
+    }
 
-            BindPayrollGrid();
-            LoadStats();
+    // =================================================================
+    //  Screen: run detail
+    // =================================================================
+
+    private DataRow LoadRun(int runId)
+    {
+        DataTable dt = Q(@"
+            SELECT p.*, IFNULL(pe.emp_name,'') AS prepared_name, IFNULL(ce.emp_name,'') AS checked_name,
+                   IFNULL((SELECT ae.emp_name FROM hrm_employee ae WHERE ae.usernames = p.processed_by AND p.processed_by <> '' LIMIT 1), IFNULL(p.processed_by,'')) AS approved_name
+            FROM hrm_payroll p
+            LEFT JOIN hrm_employee pe ON pe.empID = p.prepared_by
+            LEFT JOIN hrm_employee ce ON ce.empID = p.checked_by
+            WHERE p.ID = @id", P("@id", runId));
+        return dt.Rows.Count > 0 ? dt.Rows[0] : null;
+    }
+
+    private DataTable LoadRegister(int runId)
+    {
+        return Q(@"
+            SELECT ps.ID, ps.empID, e.EMP_CODE, e.emp_name, e.nssf_no, e.tin, e.bankAccount,
+                   IFNULL(b.bank_name,'') AS bank_name, IFNULL(d.dept_name,'') AS dept_name, IFNULL(j.jobname,'') AS jobname,
+                   ps.basic_pay, ps.total_allowances, ps.gross_salary, ps.paye, ps.nssf, ps.local_tax,
+                   ps.kabaka_contribution, ps.total_deductions, ps.net_salary, ps.status
+            FROM hrm_payslips ps
+            JOIN hrm_employee e ON e.empID = ps.empID
+            LEFT JOIN hrm_emp_contracts c ON c.ID = (SELECT MAX(c2.ID) FROM hrm_emp_contracts c2 WHERE c2.empID = ps.empID)
+            LEFT JOIN hrm_departments d ON d.ID = c.departmentID
+            LEFT JOIN hrm_jobs j ON j.ID = c.jobID
+            LEFT JOIN banks b ON b.bank_id = e.bankID
+            WHERE ps.payroll_id = @id
+            ORDER BY e.emp_name", P("@id", runId));
+    }
+
+    private static decimal OtherDeductions(DataRow r)
+    {
+        decimal v = SafeDecimal(r["total_deductions"]) - SafeDecimal(r["paye"]) - SafeDecimal(r["nssf"])
+                  - SafeDecimal(r["local_tax"]) - SafeDecimal(r["kabaka_contribution"]);
+        return v < 0 ? 0 : v;
+    }
+
+    private static string Account(object v)
+    {
+        string s = Str(v);
+        return s == "-" || s == "0" ? "" : s;
+    }
+
+    private void RenderDetail(int runId)
+    {
+        DataRow run = LoadRun(runId);
+        StringBuilder h = new StringBuilder();
+        h.Append("<div class=\"hr-row\" style=\"margin-bottom:10px\"><a class=\"hr-btn hr-btn--link\" href=\"HRPayroll.aspx\">").Append(IcoBack).Append("All payroll runs</a></div>");
+        if (run == null)
+        {
+            h.Append("<div class=\"hr-notice hr-notice--bad\">Payroll run not found.</div>");
+            litBody.Text = h.ToString();
+            return;
+        }
+
+        string st = Str(run["payroll_status"]);
+        bool pending = st == "PENDING";
+        DataTable reg = LoadRegister(runId);
+        int count = reg.Rows.Count, unapproved = 0;
+        decimal tBasic = 0, tAllow = 0, tGross = 0, tPaye = 0, tNssf = 0, tLst = 0, tKab = 0, tOther = 0, tDed = 0, tNet = 0;
+        foreach (DataRow r in reg.Rows)
+        {
+            if (Str(r["status"]) != "APPROVED") unapproved++;
+            tBasic += SafeDecimal(r["basic_pay"]); tAllow += SafeDecimal(r["total_allowances"]); tGross += SafeDecimal(r["gross_salary"]);
+            tPaye += SafeDecimal(r["paye"]); tNssf += SafeDecimal(r["nssf"]); tLst += SafeDecimal(r["local_tax"]);
+            tKab += SafeDecimal(r["kabaka_contribution"]); tOther += OtherDeductions(r); tDed += SafeDecimal(r["total_deductions"]);
+            tNet += SafeDecimal(r["net_salary"]);
+        }
+
+        int stale = 0, unheld = 0;
+        if (pending && count > 0)
+        {
+            using (MySqlConnection c = new MySqlConnection(ConnStr)) { c.Open(); stale = StaleCount(c, null, runId); }
+            int m = SafeInt(run["payroll_month"]);
+            if (m >= 1 && m <= 12)
+            {
+                bool ia = Str(run["should_include_allowances"]).ToUpperInvariant() == "YES";
+                bool id = Str(run["should_include_deductions"]).ToUpperInvariant() == "YES";
+                string sql = "SELECT " +
+                    (ia ? "(SELECT COUNT(*) FROM hrm_allowance_records a JOIN hrm_payslips ps ON ps.empID=a.empID AND ps.payroll_id=@id AND ps.status<>'APPROVED' WHERE a.status='PENDING' AND a.payroll_id IS NULL AND a.to_add_month=@mn AND a.to_add_year=@yr)" : "0") + " + " +
+                    (id ? "(SELECT COUNT(*) FROM hrm_deduction_records d JOIN hrm_payslips ps ON ps.empID=d.empID AND ps.payroll_id=@id AND ps.status<>'APPROVED' WHERE d.status='PENDING' AND d.payroll_id IS NULL AND d.to_deduct_month=@mn AND d.to_deduct_year=@yr)" : "0") + " AS n";
+                DataTable u = Q(sql, P("@id", runId), P("@mn", MONTH_NAMES[m]), P("@yr", SafeInt(run["payroll_year"])));
+                unheld = SafeInt(u.Rows[0]["n"]);
+            }
+        }
+
+        // Header card
+        h.Append("<div class=\"hr-card\"><div class=\"hr-card__head\"><div class=\"hr-row\"><div class=\"hr-card__title\">").Append(E(run["payroll_title"]))
+         .Append("</div>").Append(Badge(st)).Append("</div><div class=\"hr-row\">");
+        if (pending)
+        {
+            h.Append("<button type=\"button\" class=\"hr-btn hr-btn--primary hr-btn--sm\" onclick=\"openGenerate(").Append(runId).Append(")\">")
+             .Append(count > 0 ? "Regenerate payslips" : "Generate payslips").Append("</button>");
+            if (count > 0)
+                h.Append("<a class=\"hr-btn hr-btn--secondary hr-btn--sm\" href=\"HRPayslips.aspx?payroll_id=").Append(runId).Append("\">Review payslips</a>");
+            bool canApprove = count > 0 && unapproved == 0 && stale == 0;
+            h.Append("<button type=\"button\" class=\"hr-btn hr-btn--success hr-btn--sm\"").Append(canApprove ? "" : " disabled")
+             .Append(" onclick=\"runAction('approve',").Append(runId).Append(")\">Approve and lock</button>");
+            h.Append("<button type=\"button\" class=\"hr-btn hr-btn--secondary hr-btn--sm\" onclick=\"runAction('cancel',").Append(runId).Append(")\">Cancel run</button>");
+            h.Append("<button type=\"button\" class=\"hr-btn hr-btn--danger hr-btn--sm\" onclick=\"runAction('delete',").Append(runId).Append(")\">Delete run</button>");
+        }
+        else if (count > 0)
+        {
+            h.Append("<a class=\"hr-btn hr-btn--secondary hr-btn--sm\" href=\"HRPayslips.aspx?payroll_id=").Append(runId).Append("\">View payslips</a>");
+        }
+        h.Append("</div></div><div class=\"hr-card__body\">");
+
+        // Workflow position
+        string[] stages = { "Created", "Payslips generated", "Payslips approved", "Approved and locked" };
+        int reached = 1 + (count > 0 ? 1 : 0) + (count > 0 && unapproved == 0 ? 1 : 0) + (st == "PROCESSED" ? 1 : 0);
+        h.Append("<ol class=\"hr-stages\" style=\"margin-bottom:16px\">");
+        for (int i = 0; i < stages.Length; i++)
+        {
+            string cls = i < reached ? "is-done" : (i == reached ? (st == "CANCELLED" ? "is-stop" : "is-now") : "");
+            h.Append("<li class=\"").Append(cls).Append("\"><span></span>").Append(i == reached && st == "CANCELLED" ? "Cancelled" : stages[i]).Append("</li>");
+        }
+        h.Append("</ol>");
+
+        h.Append("<dl class=\"hr-dl\">");
+        Dl(h, "Period", Period(run["payroll_month"], run["payroll_year"]));
+        Dl(h, "Coverage", Coverage(run["target_type"], run["target_ids"]));
+        Dl(h, "Created", ShortDate(run["payroll_date"]));
+        Dl(h, "Prepared by", Str(run["prepared_name"]));
+        Dl(h, "One-off allowances", Str(run["should_include_allowances"]).ToUpperInvariant() == "YES" ? "Included" : "Not included");
+        Dl(h, "One-off deductions", Str(run["should_include_deductions"]).ToUpperInvariant() == "YES" ? "Included" : "Not included");
+        if (st == "PROCESSED")
+        {
+            Dl(h, "Approved by", Str(run["approved_name"]));
+            Dl(h, "Approved on", ShortDate(run["date_processed"]));
+        }
+        string notes = Str(run["payroll_comments"]);
+        if (notes != "" && notes != "-") Dl(h, "Notes", notes);
+        h.Append("</dl></div></div>");
+
+        // Notices
+        if (pending && count == 0)
+            h.Append("<div class=\"hr-notice\">No payslips yet. Generate the payslips to build the register.</div>");
+        if (pending && count > 0 && unapproved > 0)
+            h.Append("<div class=\"hr-notice hr-notice--warn\">").Append(unapproved).Append(unapproved == 1 ? " payslip is" : " payslips are")
+             .Append(" not approved yet. <a href=\"HRPayslips.aspx?payroll_id=").Append(runId).Append("&amp;status=PENDING\">Review payslips</a></div>");
+        if (stale > 0)
+            h.Append("<div class=\"hr-notice hr-notice--bad\">").Append(stale).Append(stale == 1 ? " payslip does" : " payslips do")
+             .Append(" not match the current allowances and deductions. Regenerate the run; reject approved payslips first.</div>");
+        if (unheld > 0)
+            h.Append("<div class=\"hr-notice hr-notice--warn\">").Append(unheld).Append(unheld == 1 ? " one-off item" : " one-off items")
+             .Append(" for this period was added after the payslips were generated. Regenerate the run to include ").Append(unheld == 1 ? "it." : "them.").Append("</div>");
+        if (st == "PROCESSED")
+            h.Append("<div class=\"hr-notice hr-notice--ok\">This payroll run is approved and locked.</div>");
+
+        // Summary strip
+        h.Append("<div class=\"hr-kpis\">");
+        Kpi(h, "Staff", count.ToString(IC), "Payslips in this run");
+        Kpi(h, "Gross pay (UGX)", tGross.ToString("#,##0", IC), "Basic " + tBasic.ToString("#,##0", IC));
+        Kpi(h, "Total deductions (UGX)", tDed.ToString("#,##0", IC), "PAYE " + tPaye.ToString("#,##0", IC));
+        Kpi(h, "Net pay (UGX)", tNet.ToString("#,##0", IC), "Paid to staff");
+        h.Append("</div>");
+
+        // Exports and prints
+        h.Append("<div class=\"hr-card\"><div class=\"hr-card__head\"><div class=\"hr-card__title\">Register</div><div class=\"hr-row\">");
+        if (count > 0)
+        {
+            h.Append("<a class=\"hr-btn hr-btn--secondary hr-btn--sm\" href=\"HRPayroll.aspx?action=export&amp;type=register&amp;id=").Append(runId).Append("\">").Append(IcoDownload).Append("Register (xlsx)</a>");
+            h.Append("<a class=\"hr-btn hr-btn--secondary hr-btn--sm\" href=\"HRPayroll.aspx?action=export&amp;type=register-csv&amp;id=").Append(runId).Append("\">").Append(IcoDownload).Append("Register (csv)</a>");
+            h.Append("<a class=\"hr-btn hr-btn--secondary hr-btn--sm\" href=\"HRPayroll.aspx?action=export&amp;type=statutory&amp;id=").Append(runId).Append("\">").Append(IcoDownload).Append("Statutory schedules</a>");
+            h.Append("<a class=\"hr-btn hr-btn--secondary hr-btn--sm\" target=\"_blank\" href=\"HRPayroll.aspx?action=print&amp;type=register&amp;id=").Append(runId).Append("\">").Append(IcoPrint).Append("Print register</a>");
+            h.Append("<a class=\"hr-btn hr-btn--secondary hr-btn--sm\" target=\"_blank\" href=\"HRPayslips.aspx?action=print&amp;run=").Append(runId).Append("\">").Append(IcoPrint).Append("Print payslips</a>");
+        }
+        h.Append("</div></div>");
+
+        if (count == 0)
+        {
+            h.Append("<div class=\"hr-empty\">No payslips in this run.</div>");
+        }
+        else
+        {
+            h.Append("<div class=\"hr-table-wrap\"><table class=\"hr-table\"><thead><tr>")
+             .Append("<th>Staff no</th><th>Name</th><th>Department</th><th class=\"hr-num\">Basic</th><th class=\"hr-num\">Allowances</th><th class=\"hr-num\">Gross</th>")
+             .Append("<th class=\"hr-num\">PAYE</th><th class=\"hr-num\">NSSF</th><th class=\"hr-num\">Local service tax</th><th class=\"hr-num\">Kabaka</th><th class=\"hr-num\">Other</th>")
+             .Append("<th class=\"hr-num\">Total deductions</th><th class=\"hr-num\">Net pay</th><th>Payslip</th></tr></thead><tbody>");
+            foreach (DataRow r in reg.Rows)
+            {
+                h.Append("<tr><td>").Append(E(r["EMP_CODE"])).Append("</td><td>").Append(E(r["emp_name"])).Append("</td><td>").Append(E(r["dept_name"])).Append("</td>");
+                h.Append("<td class=\"hr-num\">").Append(Money(r["basic_pay"])).Append("</td><td class=\"hr-num\">").Append(Money(r["total_allowances"])).Append("</td>");
+                h.Append("<td class=\"hr-num\">").Append(Money(r["gross_salary"])).Append("</td><td class=\"hr-num\">").Append(Money(r["paye"])).Append("</td>");
+                h.Append("<td class=\"hr-num\">").Append(Money(r["nssf"])).Append("</td><td class=\"hr-num\">").Append(Money(r["local_tax"])).Append("</td>");
+                h.Append("<td class=\"hr-num\">").Append(Money(r["kabaka_contribution"])).Append("</td><td class=\"hr-num\">").Append(OtherDeductions(r).ToString("#,##0", IC)).Append("</td>");
+                h.Append("<td class=\"hr-num\">").Append(Money(r["total_deductions"])).Append("</td><td class=\"hr-num\"><strong>").Append(Money(r["net_salary"])).Append("</strong></td>");
+                h.Append("<td>").Append(Badge(Str(r["status"]))).Append("</td></tr>");
+            }
+            h.Append("</tbody><tfoot><tr><td colspan=\"3\">Total (").Append(count).Append(" staff)</td>");
+            foreach (decimal v in new[] { tBasic, tAllow, tGross, tPaye, tNssf, tLst, tKab, tOther, tDed, tNet })
+                h.Append("<td class=\"hr-num\">").Append(v.ToString("#,##0", IC)).Append("</td>");
+            h.Append("<td></td></tr></tfoot></table></div>");
+            h.Append("<div class=\"hr-card__foot\"><span>Amounts in UGX. To change a payslip, adjust the allowance, deduction or contract and regenerate the run.</span></div>");
+        }
+        h.Append("</div>");
+        litBody.Text = h.ToString();
+    }
+
+    private static void Dl(StringBuilder h, string label, string value)
+    {
+        h.Append("<div><dt>").Append(E(label)).Append("</dt><dd>").Append(value == "" ? "<span class=\"hr-muted\">Not recorded</span>" : E(value)).Append("</dd></div>");
+    }
+
+    private static void Kpi(StringBuilder h, string label, string value, string sub)
+    {
+        h.Append("<div class=\"hr-kpi\"><div class=\"hr-kpi__label\">").Append(E(label)).Append("</div><div class=\"hr-kpi__value\">").Append(E(value))
+         .Append("</div><div class=\"hr-kpi__sub\">").Append(E(sub)).Append("</div></div>");
+    }
+
+    // Lists for the create dialog (rendered on every load; no ViewState needed)
+    private void RenderCreateLists()
+    {
+        StringBuilder y = new StringBuilder();
+        int cy = DateTime.Today.Year;
+        for (int yr = cy + 1; yr >= cy - 5; yr--)
+            y.Append("<option value=\"").Append(yr).Append("\"").Append(yr == cy ? " selected" : "").Append(">").Append(yr).Append("</option>");
+        litYearOptions.Text = y.ToString();
+
+        StringBuilder m = new StringBuilder();
+        for (int i = 1; i <= 12; i++)
+            m.Append("<option value=\"").Append(i).Append("\"").Append(i == DateTime.Today.Month ? " selected" : "").Append(">").Append(MonthTitle(i)).Append("</option>");
+        litMonthOptions.Text = m.ToString();
+
+        StringBuilder d = new StringBuilder();
+        foreach (DataRow r in Q("SELECT ID, dept_name FROM hrm_departments ORDER BY dept_name").Rows)
+            d.Append("<label class=\"pick\"><input type=\"checkbox\" name=\"pickDept\" value=\"").Append(SafeInt(r["ID"])).Append("\" /> ").Append(E(r["dept_name"])).Append("</label>");
+        litDeptChecks.Text = d.ToString();
+
+        StringBuilder e = new StringBuilder();
+        foreach (DataRow r in Q(@"SELECT DISTINCT e.empID, e.emp_name, IFNULL(e.EMP_CODE,'') AS code
+                                  FROM hrm_employee e JOIN hrm_emp_contracts c ON c.empID = e.empID
+                                  WHERE c.contractStatus = 'VALID' AND c.contractEnd >= CURDATE()
+                                  ORDER BY e.emp_name").Rows)
+        {
+            string code = Str(r["code"]);
+            e.Append("<label class=\"pick\" data-q=\"").Append(A((Str(r["emp_name"]) + " " + code).ToLowerInvariant())).Append("\"><input type=\"checkbox\" name=\"pickEmp\" value=\"")
+             .Append(SafeInt(r["empID"])).Append("\" /> ").Append(E(r["emp_name"]));
+            if (code != "" && code != "-") e.Append(" <span class=\"hr-muted\">").Append(E(code)).Append("</span>");
+            e.Append("</label>");
+        }
+        litEmpChecks.Text = e.ToString();
+    }
+
+    // =================================================================
+    //  Exports and print
+    // =================================================================
+
+    private void HandleFile(string action)
+    {
+        int runId = SafeInt(Request.QueryString["id"]);
+        string type = Request.QueryString["type"] ?? "";
+        try
+        {
+            DataRow run = LoadRun(runId);
+            if (run == null) { PlainError("Payroll run not found."); return; }
+            DataTable reg = LoadRegister(runId);
+            if (action == "print") { PrintRegister(run, reg); return; }
+            if (type == "statutory")
+            {
+                HrExport.SendXlsx(Response, StatutoryReport(run, reg));
+                Log("Payroll export", "statutory: " + Str(run["payroll_title"]));
+                return;
+            }
+            HrExport.Report rep = RegisterReport(run, reg);
+            if (type == "register-csv") HrExport.SendCsv(Response, rep, 0);
+            else HrExport.SendXlsx(Response, rep);
+            Log("Payroll export", type + ": " + Str(run["payroll_title"]));
         }
         catch (Exception ex)
         {
-            ShowAlert("Error deleting payroll: " + ex.Message, "danger");
+            Log("Error", "Export " + type + " run " + runId + ": " + ex.Message);
+            PlainError("The file could not be produced. Please try again.");
         }
     }
 
-    // -----------------------------------------------------------------
-    // Section 21: gvPayrolls_RowDeleting
-    // -----------------------------------------------------------------
-
-    protected void gvPayrolls_RowDeleting(object sender, DevExpress.Web.Data.ASPxDataDeletingEventArgs e)
+    private void PlainError(string msg)
     {
-        int payrollID = SafeInt(e.Keys["ID"]);
-        DeletePayroll(payrollID);
-        e.Cancel = true;
-        gvPayrolls.CancelEdit();
+        Response.Clear();
+        Response.ContentType = "text/plain";
+        Response.Write(msg);
     }
 
-    // -----------------------------------------------------------------
-    // Section 22: gvPayrollDetails_RowUpdating
-    // -----------------------------------------------------------------
-
-    protected void gvPayrollDetails_RowUpdating(object sender, DevExpress.Web.Data.ASPxDataUpdatingEventArgs e)
+    private HrExport.Report NewReport(DataRow run, string title, string slug)
     {
-        int slipID = SafeInt(e.Keys["ID"]);
+        HrExport.Report r = new HrExport.Report(title, slug);
+        r.PreparedBy = CurrentUser();
+        r.AddScope("Payroll run", Str(run["payroll_title"]));
+        r.AddScope("Period", Period(run["payroll_month"], run["payroll_year"]));
+        r.AddScope("Status", StatusWord(Str(run["payroll_status"])));
+        r.AddScope("Amounts", "UGX");
+        return r;
+    }
 
-        // Guard: look up the payslip to check payroll status
-        DataTable dtSlip = ExecuteQuery(
-            "SELECT ps.payroll_id, ps.empID, p.payroll_status " +
-            "FROM hrm_payslips ps " +
-            "JOIN hrm_payroll  p ON p.ID = ps.payroll_id " +
-            "WHERE ps.ID = @id",
-            new MySqlParameter("@id", slipID));
+    private HrExport.Report RegisterReport(DataRow run, DataTable reg)
+    {
+        HrExport.Report rep = NewReport(run, "Payroll register", "payroll-register");
+        HrExport.Kind M = HrExport.Kind.Money;
 
-        if (dtSlip.Rows.Count == 0)
+        HrExport.Sheet s = rep.NewSheet("Register");
+        s.Add("Staff No").Add("Name").Add("Department").Add("Position")
+         .Add("Basic", M, true).Add("Allowances", M, true).Add("Gross", M, true).Add("PAYE", M, true).Add("NSSF", M, true)
+         .Add("Local service tax", M, true).Add("Kabaka", M, true).Add("Other deductions", M, true).Add("Total deductions", M, true)
+         .Add("Net pay", M, true).Add("Bank").Add("Account no");
+        SortedDictionary<string, decimal[]> byDept = new SortedDictionary<string, decimal[]>(StringComparer.OrdinalIgnoreCase);
+        List<object[]> bank = new List<object[]>();
+        foreach (DataRow r in reg.Rows)
         {
-            ShowAlert("Payslip not found.", "danger");
-            e.Cancel = true;
-            gvPayrollDetails.CancelEdit();
-            return;
+            s.Row(Str(r["EMP_CODE"]), Str(r["emp_name"]), Str(r["dept_name"]), Str(r["jobname"]),
+                SafeDecimal(r["basic_pay"]), SafeDecimal(r["total_allowances"]), SafeDecimal(r["gross_salary"]), SafeDecimal(r["paye"]),
+                SafeDecimal(r["nssf"]), SafeDecimal(r["local_tax"]), SafeDecimal(r["kabaka_contribution"]), OtherDeductions(r),
+                SafeDecimal(r["total_deductions"]), SafeDecimal(r["net_salary"]), Str(r["bank_name"]), Account(r["bankAccount"]));
+            string dept = Str(r["dept_name"]);
+            if (dept == "") dept = "No department recorded";
+            decimal[] a;
+            if (!byDept.TryGetValue(dept, out a)) { a = new decimal[4]; byDept[dept] = a; }
+            a[0] += 1; a[1] += SafeDecimal(r["gross_salary"]); a[2] += SafeDecimal(r["total_deductions"]); a[3] += SafeDecimal(r["net_salary"]);
+            bank.Add(new object[] { Str(r["emp_name"]), Str(r["bank_name"]), Account(r["bankAccount"]), SafeDecimal(r["net_salary"]) });
         }
 
-        string payrollStatus = dtSlip.Rows[0]["payroll_status"].ToString().ToUpper();
-        if (payrollStatus == "PROCESSED")
+        HrExport.Sheet sd = rep.NewSheet("Summary by department");
+        sd.Add("Department").Add("Staff", HrExport.Kind.Number, true).Add("Gross", M, true).Add("Total deductions", M, true).Add("Net pay", M, true);
+        foreach (KeyValuePair<string, decimal[]> kv in byDept) sd.Row(kv.Key, kv.Value[0], kv.Value[1], kv.Value[2], kv.Value[3]);
+
+        HrExport.Sheet sb = rep.NewSheet("Bank schedule");
+        sb.Add("Name").Add("Bank").Add("Account no").Add("Net pay", M, true);
+        bank.Sort(delegate (object[] x, object[] y)
         {
-            ShowAlert("This payroll is locked (PROCESSED). Payslips cannot be edited.", "danger");
-            e.Cancel = true;
-            gvPayrollDetails.CancelEdit();
-            return;
-        }
+            string bx = (string)x[1], by = (string)y[1];
+            if (bx == "" && by != "") return 1;
+            if (by == "" && bx != "") return -1;
+            int c = string.Compare(bx, by, StringComparison.OrdinalIgnoreCase);
+            return c != 0 ? c : string.Compare((string)x[0], (string)y[0], StringComparison.OrdinalIgnoreCase);
+        });
+        foreach (object[] b in bank) sb.Row(b);
+        return rep;
+    }
 
-        int payrollID = SafeInt(dtSlip.Rows[0]["payroll_id"]);
-        int empID     = SafeInt(dtSlip.Rows[0]["empID"]);
-
-        decimal basicPay   = SafeDecimal(e.NewValues["basic_pay"]);
-        decimal allowances = SafeDecimal(e.NewValues["total_allowances"]);
-        decimal grossPay   = SafeDecimal(e.NewValues["gross_pay"]);
-        decimal paye       = SafeDecimal(e.NewValues["paye"]);
-        decimal nssf       = SafeDecimal(e.NewValues["nssf"]);
-        decimal deductions = SafeDecimal(e.NewValues["total_deductions"]);
-        decimal netPay     = SafeDecimal(e.NewValues["net_pay"]);
-
-        // Update hrm_payslips directly (primary table)
-        ExecuteNonQuery(@"
-            UPDATE hrm_payslips
-            SET basic_pay=@basic, total_allowances=@allow, gross_salary=@gross,
-                paye=@paye, nssf=@nssf, total_deductions=@ded, net_salary=@net
-            WHERE ID=@id AND status != 'APPROVED'",
-            new MySqlParameter("@basic", basicPay),
-            new MySqlParameter("@allow", allowances),
-            new MySqlParameter("@gross", grossPay),
-            new MySqlParameter("@paye",  paye),
-            new MySqlParameter("@nssf",  nssf),
-            new MySqlParameter("@ded",   deductions),
-            new MySqlParameter("@net",   netPay),
-            new MySqlParameter("@id",    slipID));
-
-        // Sync legacy hrm_payroll_details for backward compatibility
-        try
+    private HrExport.Report StatutoryReport(DataRow run, DataTable reg)
+    {
+        HrExport.Report rep = NewReport(run, "Statutory schedules", "statutory-schedules");
+        HrExport.Kind M = HrExport.Kind.Money;
+        HrExport.Sheet paye = rep.NewSheet("PAYE");
+        paye.Title = "PAYE schedule";
+        paye.Add("Staff No").Add("Name").Add("TIN").Add("Gross pay", M, true).Add("PAYE", M, true);
+        HrExport.Sheet nssf = rep.NewSheet("NSSF");
+        nssf.Title = "NSSF schedule";
+        nssf.Add("Staff No").Add("Name").Add("NSSF no").Add("Basic pay", M, true).Add("Employee NSSF", M, true);
+        HrExport.Sheet lst = rep.NewSheet("Local service tax");
+        lst.Title = "Local service tax schedule";
+        lst.Add("Staff No").Add("Name").Add("Basic pay", M, true).Add("Local service tax", M, true);
+        HrExport.Sheet kab = rep.NewSheet("Kabaka");
+        kab.Title = "Kabaka contribution schedule";
+        kab.Add("Staff No").Add("Name").Add("Basic pay", M, true).Add("Kabaka contribution", M, true);
+        foreach (DataRow r in reg.Rows)
         {
-            ExecuteNonQuery(@"
-                UPDATE hrm_payroll_details
-                SET basic_pay=@basic, total_allowances=@allow, gross_pay=@gross,
-                    paye=@paye, nssf=@nssf, total_deductions=@ded, net_pay=@net
-                WHERE payrollID=@pid AND empID=@eid",
-                new MySqlParameter("@basic", basicPay),
-                new MySqlParameter("@allow", allowances),
-                new MySqlParameter("@gross", grossPay),
-                new MySqlParameter("@paye",  paye),
-                new MySqlParameter("@nssf",  nssf),
-                new MySqlParameter("@ded",   deductions),
-                new MySqlParameter("@net",   netPay),
-                new MySqlParameter("@pid",   payrollID),
-                new MySqlParameter("@eid",   empID));
+            string code = Str(r["EMP_CODE"]), name = Str(r["emp_name"]);
+            paye.Row(code, name, Account(r["tin"]), SafeDecimal(r["gross_salary"]), SafeDecimal(r["paye"]));
+            nssf.Row(code, name, Account(r["nssf_no"]), SafeDecimal(r["basic_pay"]), SafeDecimal(r["nssf"]));
+            if (SafeDecimal(r["local_tax"]) != 0) lst.Row(code, name, SafeDecimal(r["basic_pay"]), SafeDecimal(r["local_tax"]));
+            if (SafeDecimal(r["kabaka_contribution"]) != 0) kab.Row(code, name, SafeDecimal(r["basic_pay"]), SafeDecimal(r["kabaka_contribution"]));
         }
-        catch { /* non-critical legacy sync */ }
-
-        e.Cancel = true;
-        gvPayrollDetails.CancelEdit();
-        ShowPayrollDetails(payrollID);
+        return rep;
     }
 
-    protected void gvPayrollDetails_HtmlRowCreated(object sender, DevExpress.Web.ASPxGridViewTableRowEventArgs e)
+    private void PrintRegister(DataRow run, DataTable reg)
     {
-        if (e.RowType != DevExpress.Web.GridViewRowType.Data) return;
-        DevExpress.Web.ASPxGridView grid = (DevExpress.Web.ASPxGridView)sender;
-        object statusVal = grid.GetRowValues(e.VisibleIndex, "status");
-        string status = (statusVal == null || statusVal == DBNull.Value) ? "" : statusVal.ToString().ToUpper();
-        if (status == "APPROVED")
-            e.Row.CssClass = "ps-row--approved";
-        else if (status == "REJECTED")
-            e.Row.CssClass = "ps-row--rejected";
-    }
+        string st = Str(run["payroll_status"]);
+        StringBuilder b = new StringBuilder();
+        b.Append(HrDocument.Meta(
+            "Payroll run", Str(run["payroll_title"]),
+            "Period", Period(run["payroll_month"], run["payroll_year"]),
+            "Coverage", Coverage(run["target_type"], run["target_ids"]),
+            "Status", StatusWord(st),
+            "Staff", reg.Rows.Count.ToString(IC),
+            "Amounts", "UGX"));
 
-    // -----------------------------------------------------------------
-    // Section 23: btnApprovePayroll_Click / btnCancelPayroll_Click
-    // -----------------------------------------------------------------
-
-    protected void btnApprovePayroll_Click(object sender, EventArgs e)
-    {
-        int payrollID;
-        if (!int.TryParse(hdnSelectedPayrollID.Value, out payrollID)) return;
-        ApprovePayroll(payrollID);
-        int pid2 = payrollID;
-        ShowPayrollDetails(pid2);
-    }
-
-    protected void btnCancelPayroll_Click(object sender, EventArgs e)
-    {
-        int payrollID;
-        if (!int.TryParse(hdnSelectedPayrollID.Value, out payrollID)) return;
-        CancelPayroll(payrollID);
-        ShowPayrollDetails(payrollID);
-    }
-
-    // -----------------------------------------------------------------
-    // Section 24: btnCloseDetails_Click
-    // -----------------------------------------------------------------
-
-    protected void btnCloseDetails_Click(object sender, EventArgs e)
-    {
-        pnlPayrollDetails.Visible = false;
-    }
-
-    // -----------------------------------------------------------------
-    // Section 25: Filter event handlers
-    // -----------------------------------------------------------------
-
-    protected void ddlPayrollYear_Changed(object sender, EventArgs e)
-    {
-        BindPayrollGrid();
-        LoadStats();
-    }
-
-    protected void ddlPayrollStatus_Changed(object sender, EventArgs e)
-    {
-        BindPayrollGrid();
-        LoadStats();
-    }
-
-    protected void btnRefresh_Click(object sender, EventArgs e)
-    {
-        BindPayrollGrid();
-        LoadStats();
-    }
-
-    // -----------------------------------------------------------------
-    // Section 26: Template Helpers
-    // -----------------------------------------------------------------
-
-    protected string FormatCurrency(object val)
-    {
-        if (val == null || val == DBNull.Value) return "-";
-        decimal d;
-        return decimal.TryParse(val.ToString(), out d) ? d.ToString("N0") : "-";
-    }
-
-    protected string FormatDate(object val)
-    {
-        if (val == null || val == DBNull.Value) return "-";
-        DateTime dt;
-        if (DateTime.TryParse(val.ToString(), out dt))
-            return dt.ToString("dd MMM yyyy");
-        return "-";
-    }
-
-    protected string GetPeriodHtml(object monthObj, object yearObj)
-    {
-        int mNum = SafeInt(monthObj);
-        string mName = (mNum >= 1 && mNum <= 12) ? MONTH_NAMES[mNum] : mNum.ToString();
-        string yr = (yearObj != null && yearObj != DBNull.Value) ? yearObj.ToString() : "";
-        return "<span class='pr-period'>" + mName + "</span> <span class='pr-period__year'>" + yr + "</span>";
-    }
-
-    protected string GetTargetBadge(object targetType)
-    {
-        if (targetType == null || targetType == DBNull.Value) return "";
-        switch (targetType.ToString().ToUpper())
+        b.Append(HrDocument.Heading("Register"));
+        string[] heads = { "Staff no", "Name", "Department", "Basic", "Allowances", "Gross", "PAYE", "NSSF", "LST", "Kabaka", "Other", "Total deductions", "Net pay" };
+        bool[] num = { false, false, false, true, true, true, true, true, true, true, true, true, true };
+        decimal[] t = new decimal[10];
+        List<string[]> rows = new List<string[]>();
+        SortedDictionary<string, decimal[]> byDept = new SortedDictionary<string, decimal[]>(StringComparer.OrdinalIgnoreCase);
+        foreach (DataRow r in reg.Rows)
         {
-            case "ALL":
-                return "<span class='pr-target-badge pr-target-badge--all'>ALL</span>";
-            case "DEPARTMENT":
-                return "<span class='pr-target-badge pr-target-badge--dept'>DEPARTMENT</span>";
-            case "EMPLOYEE":
-                return "<span class='pr-target-badge pr-target-badge--emp'>EMPLOYEE</span>";
-            default:
-                return "<span class='pr-target-badge'>" + HttpUtility.HtmlEncode(targetType.ToString()) + "</span>";
+            decimal[] v = { SafeDecimal(r["basic_pay"]), SafeDecimal(r["total_allowances"]), SafeDecimal(r["gross_salary"]), SafeDecimal(r["paye"]),
+                            SafeDecimal(r["nssf"]), SafeDecimal(r["local_tax"]), SafeDecimal(r["kabaka_contribution"]), OtherDeductions(r),
+                            SafeDecimal(r["total_deductions"]), SafeDecimal(r["net_salary"]) };
+            string[] cells = new string[13];
+            cells[0] = HrDocument.E(Str(r["EMP_CODE"])); cells[1] = HrDocument.E(Str(r["emp_name"])); cells[2] = HrDocument.E(Str(r["dept_name"]));
+            for (int i = 0; i < 10; i++) { cells[3 + i] = HrDocument.Money(v[i]); t[i] += v[i]; }
+            rows.Add(cells);
+            string dept = Str(r["dept_name"]);
+            if (dept == "") dept = "No department recorded";
+            decimal[] a;
+            if (!byDept.TryGetValue(dept, out a)) { a = new decimal[4]; byDept[dept] = a; }
+            a[0] += 1; a[1] += v[2]; a[2] += v[8]; a[3] += v[9];
         }
-    }
+        string[] tot = new string[13];
+        tot[0] = "Total"; tot[1] = reg.Rows.Count + " staff"; tot[2] = "";
+        for (int i = 0; i < 10; i++) tot[3 + i] = HrDocument.Money(t[i]);
+        b.Append(HrDocument.Table(heads, rows, num, tot));
 
-    protected string GetStatusBadge(object status)
-    {
-        if (status == null || status == DBNull.Value) return "";
-        switch (status.ToString().ToUpper())
+        b.Append(HrDocument.Heading("Summary by department"));
+        List<string[]> drows = new List<string[]>();
+        decimal[] dt = new decimal[4];
+        foreach (KeyValuePair<string, decimal[]> kv in byDept)
         {
-            case "PENDING":
-                return "<span class='ps-badge ps-badge--pending'>PENDING</span>";
-            case "PROCESSED":
-                return "<span class='ps-badge ps-badge--processed'>PROCESSED</span>";
-            case "CANCELLED":
-                return "<span class='ps-badge ps-badge--cancelled'>CANCELLED</span>";
-            default:
-                return "<span class='ps-badge'>" + HttpUtility.HtmlEncode(status.ToString()) + "</span>";
+            drows.Add(new[] { HrDocument.E(kv.Key), kv.Value[0].ToString("0", IC), HrDocument.Money(kv.Value[1]), HrDocument.Money(kv.Value[2]), HrDocument.Money(kv.Value[3]) });
+            for (int i = 0; i < 4; i++) dt[i] += kv.Value[i];
         }
-    }
+        b.Append(HrDocument.Table(new[] { "Department", "Staff", "Gross", "Total deductions", "Net pay" }, drows,
+            new[] { false, true, true, true, true },
+            new[] { "Total", dt[0].ToString("0", IC), HrDocument.Money(dt[1]), HrDocument.Money(dt[2]), HrDocument.Money(dt[3]) }));
 
-    protected string GetPayrollActionHtml(object idObj, object statusObj)
-    {
-        if (idObj == null || idObj == DBNull.Value) return "";
-        string pid    = idObj.ToString();
-        string status = (statusObj != null && statusObj != DBNull.Value) ? statusObj.ToString().ToUpper() : "";
+        b.Append(HrDocument.Signatures(
+            "Prepared by", Str(run["prepared_name"]), "",
+            "Checked by", "", "",
+            "Approved by", st == "PROCESSED" ? Str(run["approved_name"]) : "", ""));
 
-        string icoEye   = "<svg width='13' height='13' fill='none' stroke='currentColor' stroke-width='2' viewBox='0 0 24 24'><ellipse cx='12' cy='12' rx='10' ry='6'/><circle cx='12' cy='12' r='2.5'/></svg>";
-        string icoPlay  = "<svg width='13' height='13' fill='currentColor' viewBox='0 0 24 24'><path d='M5 3l14 9-14 9V3z'/></svg>";
-        string icoList  = "<svg width='13' height='13' fill='none' stroke='currentColor' stroke-width='2' viewBox='0 0 24 24'><line x1='8' y1='6' x2='21' y2='6'/><line x1='8' y1='12' x2='21' y2='12'/><line x1='8' y1='18' x2='21' y2='18'/><line x1='3' y1='6' x2='3.01' y2='6'/><line x1='3' y1='12' x2='3.01' y2='12'/><line x1='3' y1='18' x2='3.01' y2='18'/></svg>";
-        string icoCheck = "<svg width='13' height='13' fill='none' stroke='currentColor' stroke-width='2.5' viewBox='0 0 24 24'><polyline points='20 6 9 17 4 12'/></svg>";
-        string icoX     = "<svg width='13' height='13' fill='none' stroke='currentColor' stroke-width='2' viewBox='0 0 24 24'><circle cx='12' cy='12' r='10'/><line x1='15' y1='9' x2='9' y2='15'/><line x1='9' y1='9' x2='15' y2='15'/></svg>";
-        string icoTrash = "<svg width='13' height='13' fill='none' stroke='currentColor' stroke-width='2' viewBox='0 0 24 24'><polyline points='3 6 5 6 21 6'/><path d='M19 6l-1 14H6L5 6'/><path d='M10 11v6M14 11v6'/><path d='M9 6V4h6v2'/></svg>";
-
-        var sb = new StringBuilder();
-        sb.Append("<div class='cd-action-wrapper'>");
-        sb.Append("<button type='button' class='cd-action-btn' onclick='toggleActionPopover(this,event)' title='Actions'>&#8942;</button>");
-        sb.Append("<div class='cd-action-popover'>");
-
-        // View Details - always
-        sb.Append("<button type='button' onclick='closeAllActionPopovers();viewPayrollDetails(" + pid + ")'>" + icoEye + " View Details</button>");
-
-        // Generate - PENDING only
-        if (status == "PENDING")
-            sb.Append("<button type='button' onclick='closeAllActionPopovers();openProcessModal(" + pid + ")'>" + icoPlay + " Generate Payslips</button>");
-
-        // View Payslips - always
-        sb.Append("<a href='HRPayslips.aspx?payroll_id=" + pid + "'>" + icoList + " View Payslips</a>");
-
-        if (status == "PENDING")
-        {
-            sb.Append("<button type='button' onclick='closeAllActionPopovers();doAction(" + pid + ",\"CANCEL\")'>" + icoX + " Cancel Payroll</button>");
-            sb.Append("<button type='button' class='pop-danger' onclick='closeAllActionPopovers();doAction(" + pid + ",\"DELETE\")'>" + icoTrash + " Delete</button>");
-        }
-        else if (status == "PROCESSED")
-        {
-            sb.Append("<button type='button' disabled style='opacity:.55;cursor:default;'>" + icoCheck + " Locked</button>");
-        }
-
-        sb.Append("</div></div>");
-        return sb.ToString();
-    }
-
-    private void ShowAlert(string message, string type)
-    {
-        litAlert.Text = "<div class='alert alert-" + HttpUtility.HtmlEncode(type) + " alert-dismissible' role='alert'>" +
-            HttpUtility.HtmlEncode(message) +
-            "<button type='button' class='btn-close' onclick='this.parentElement.style.display=\"none\"'>&times;</button></div>";
-
-        ScriptManager.RegisterStartupScript(this, GetType(), "toast_" + type,
-            "if(typeof showToast==='function') showToast('" +
-            HttpUtility.JavaScriptStringEncode(message) + "','" + type + "');", true);
-    }
-
-    // -----------------------------------------------------------------
-    // Section 27: ShowModalError
-    // -----------------------------------------------------------------
-
-    private void ShowModalError(string modalId, string resultId, string message)
-    {
-        ScriptManager.RegisterStartupScript(this, GetType(), "modalErr_" + modalId,
-            "document.getElementById('" + resultId + "').innerHTML='<span style=\"color:#dc3545;font-size:12px;\">" +
-            HttpUtility.JavaScriptStringEncode(message) + "</span>';" +
-            "document.getElementById('" + modalId + "').style.display='flex';", true);
+        HrDocument.Options o = new HrDocument.Options();
+        o.Landscape = true;
+        o.Reference = "Period: " + Period(run["payroll_month"], run["payroll_year"]);
+        o.BackUrl = "HRPayroll.aspx?run=" + SafeInt(run["ID"]);
+        Response.Clear();
+        Response.ContentType = "text/html";
+        Response.Write(HrDocument.Page("Payroll register", b.ToString(), o));
+        Log("Payroll print", "Register: " + Str(run["payroll_title"]));
     }
 }
