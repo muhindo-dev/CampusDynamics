@@ -47,12 +47,14 @@ public partial class API_StudentLedgerExport : System.Web.UI.Page
             return;
         }
 
-        // Date range: default to legacy statement window
-        // (from 01-01 of previous calendar year to today).
-        // This matches the old interface and prevents historical rows from
-        // inflating the visible balance when users compare statements.
+        // Date range: the student's FULL history by default (LoadLedger sets the start to
+        // the first transaction). The old default began on 01-01 of the previous calendar
+        // year, which folded every earlier payment into one "Opening Balance" figure — so a
+        // 2024 entrant's 2024 payments never appeared as lines on the statement. A caller
+        // can still ask for a window with sDate/eDate; anything before it is carried in the
+        // opening balance.
         LedgerEnd = DateTime.Today;
-        LedgerStart = new DateTime(DateTime.Today.Year - 1, 1, 1);
+        LedgerStart = DateTime.MinValue;   // resolved in LoadLedger when no sDate is given
 
         string sDateStr = (Request.QueryString["sDate"] ?? "").Trim();
         string eDateStr = (Request.QueryString["eDate"] ?? "").Trim();
@@ -69,6 +71,7 @@ public partial class API_StudentLedgerExport : System.Web.UI.Page
         {
             ErrorMessage = "Error generating ledger: " + ex.Message;
         }
+        if (LedgerStart == DateTime.MinValue) LedgerStart = LedgerEnd;
     }
 
     // ============================================================
@@ -254,6 +257,15 @@ public partial class API_StudentLedgerExport : System.Web.UI.Page
                     }
                 }
             }
+        }
+
+        // No requested start: begin at the first transaction, so every line is shown.
+        if (LedgerStart == DateTime.MinValue)
+        {
+            DateTime first = DateTime.Today;
+            for (int i = 0; i < rows.Count; i++)
+                if (rows[i].RawDate != DateTime.MinValue && rows[i].RawDate.Date < first) first = rows[i].RawDate.Date;
+            LedgerStart = first;
         }
 
         // Filter to ledger date range
