@@ -40,6 +40,7 @@ public partial class COOPERP_NewScreens_SidebarMaster : System.Web.UI.MasterPage
         // user has no access to. ON by default; fail-safe (admins and users with
         // no role see the full menu). Disable with appSetting RbacSlugMenu="false".
         RegisterRbacMenuScript();
+        RegisterGlWarningsBadge();
     }
 
     private void RegisterRbacMenuScript()
@@ -133,6 +134,33 @@ public partial class COOPERP_NewScreens_SidebarMaster : System.Web.UI.MasterPage
             Page.ClientScript.RegisterStartupScript(GetType(), "rbacMenuData",
                 "window.cdMenuFilter=false;window.cdAllowedSlugs=null;window.cdUrlSlugMap={};", true);
         }
+    }
+
+    // Finance Warnings count on the sidebar link, for users who may open the warnings page.
+    // One cached query (2 minutes) shared by all users; never breaks the page.
+    private void RegisterGlWarningsBadge()
+    {
+        try
+        {
+            if (Session["username"] == null || !RoleAccessService.CanAccess("accounts.gl.warnings")) return;
+            var cache = System.Web.HttpRuntime.Cache;
+            int[] n = cache["gl:badge"] as int[];
+            if (n == null)
+            {
+                n = new int[2];
+                using (var c = GlDb.Read())
+                using (var cmd = new MySqlCommand("SELECT COUNT(*), IFNULL(SUM(severity='CRITICAL'),0) FROM gl_warning WHERE status IN ('OPEN','REAPPEARED') AND severity <> 'INFO'", c))
+                using (var r = cmd.ExecuteReader())
+                    if (r.Read()) { n[0] = Convert.ToInt32(r[0]); n[1] = Convert.ToInt32(r[1]); }
+                cache.Insert("gl:badge", n, null, DateTime.UtcNow.AddMinutes(2), System.Web.Caching.Cache.NoSlidingExpiration);
+            }
+            if (n[0] == 0) return;
+            string tip = n[0] + " open finance warning" + (n[0] == 1 ? "" : "s") + (n[1] > 0 ? ", " + n[1] + " critical" : "");
+            Page.ClientScript.RegisterStartupScript(GetType(), "glWarnBadge",
+                "(function(){var a=document.getElementById('" + lnkAccountsWarnings.ClientID + "');if(!a)return;var b=document.createElement('span');" +
+                "b.className='cd-sidebar__badge';b.textContent='" + n[0] + "';b.title='" + tip + "';a.appendChild(b);})();", true);
+        }
+        catch { }
     }
 
     // Builds the url-filename -> slug map the sidebar filter needs. Cached for
@@ -447,6 +475,27 @@ public partial class COOPERP_NewScreens_SidebarMaster : System.Web.UI.MasterPage
                 break;
             case "assetsdashboard":
                 title = "Assets Dashboard";
+                break;
+            case "accountsdashboard":
+                title = "Accounts Dashboard";
+                break;
+            case "accountsreports":
+                title = "Accounts Reports";
+                break;
+            case "accountswarnings":
+                title = "Finance Warnings";
+                break;
+            case "accountsadjustments":
+                title = "Adjusting Entries";
+                break;
+            case "accountsperiods":
+                title = "Periods and Close";
+                break;
+            case "accountsaccount":
+                title = "Account Card";
+                break;
+            case "accountsvoucher":
+                title = "Voucher";
                 break;
             case "assets":
                 title = "Assets";

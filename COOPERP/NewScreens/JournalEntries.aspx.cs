@@ -327,6 +327,29 @@ public partial class COOPERP_NewScreens_JournalEntries : System.Web.UI.Page
         int tid = Convert.ToInt32(e.Keys["TID"]);
         int jno = Session["ActiveJournalNo"] != null ? Convert.ToInt32(Session["ActiveJournalNo"]) : 0;
 
+        // Emergency guard (Expenditure and Accounts audit D03, 7 Oct 2026). fin_Delete_journal_item deletes
+        // fin_ledger WHERE TID=_id when the journal is not Pending, and _id here is a journal-detail id, so it
+        // could delete an unrelated posted ledger row. Only a line that belongs to this journal, while the
+        // journal is still Pending, may be removed.
+        try
+        {
+            string status = Convert.ToString(FinanceDB.ExecuteScalar<object>(
+                "SELECT PostStatus FROM fin_journalnumbers WHERE JournalNo=@j", FinanceDB.P("@j", jno)) ?? "");
+            long owns = Convert.ToInt64(FinanceDB.ExecuteScalar<object>(
+                "SELECT COUNT(*) FROM fin_journal_details WHERE TID=@t AND TRIM(journal_no)=@j", FinanceDB.P("@t", tid), FinanceDB.P("@j", jno.ToString())) ?? 0);
+            if (!string.Equals(status.Trim(), "Pending", StringComparison.OrdinalIgnoreCase) || owns != 1)
+            {
+                ShowMessage("Only a line of a pending journal can be removed. Posted journals are corrected with an adjusting entry.", false);
+                return;
+            }
+        }
+        catch (Exception ex)
+        {
+            FinanceLogger.LogError(PAGE_NAME, "DeleteLineGuard", ex);
+            ShowMessage("The line could not be checked, so it was not removed.", false);
+            return;
+        }
+
         try
         {
             FinanceDB.ExecuteNonQuerySP("fin_Delete_journal_item",

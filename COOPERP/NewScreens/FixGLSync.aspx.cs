@@ -15,6 +15,18 @@ public partial class FixGLSync : System.Web.UI.Page
         }
     }
 
+    // Retired (Expenditure and Accounts audit D02, 7 Oct 2026). This one-off repair tool had no sign-in check and
+    // bulk-inserts into and rewrites fin_ledger. It now refuses every request; its buttons cannot be reached.
+    // Proposed for deletion; see COOPERP/docs/expenditure-accounts-plan.md.
+    protected override void OnInit(EventArgs e)
+    {
+        Response.Clear();
+        Response.StatusCode = 410;
+        Response.ContentType = "text/plain";
+        Response.Write("This repair tool has been retired. Ledger corrections are made as adjusting entries in Expenditure & Accounts.");
+        Response.End();
+    }
+
     protected void Page_Load(object sender, EventArgs e) { }
 
     protected void btnRunDiag_Click(object sender, EventArgs e)

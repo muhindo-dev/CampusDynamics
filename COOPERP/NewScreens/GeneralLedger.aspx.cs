@@ -117,9 +117,24 @@ public partial class COOPERP_NewScreens_GeneralLedger : System.Web.UI.Page
         }
     }
 
-    [WebMethod]
+    [WebMethod(EnableSession = true)]
     public static TransactionAjaxResponse SaveTransactionAjax(TransactionAjaxRequest request)
     {
+        // Emergency guard (Expenditure and Accounts audit D01, 7 Oct 2026): this method posts to fin_ledger and
+        // used to run for anyone, signed in or not. It now needs a signed-in user who holds the General Ledger slug.
+        string who = HttpContext.Current != null && HttpContext.Current.Session != null && HttpContext.Current.Session["username"] != null
+            ? HttpContext.Current.Session["username"].ToString().Trim() : "";
+        if (who == "")
+            return new TransactionAjaxResponse { Success = false, Message = "Your session has ended. Sign in again." };
+        bool allowed = false;
+        try
+        {
+            if (string.IsNullOrEmpty(HttpContext.Current.Session[RoleAccessService.SESSION_SLUGS] as string)) RoleAccessService.LoadUserAccess(who);
+            allowed = RoleAccessService.CanAccess("accounts.ledgers.general_ledger");
+        }
+        catch { allowed = false; }
+        if (!allowed)
+            return new TransactionAjaxResponse { Success = false, Message = "You do not have permission to post to the general ledger." };
         return CreateTransactionCore(request);
     }
 

@@ -752,7 +752,51 @@
                              Roles: finance_officer | accountant | admin
                              Task focus: Everything spend-side, ledgers, payments, reporting.
                              ══════════════════════════════════════════════ -->
-                        <li class="cd-sidebar__heading" data-roles="finance_officer accountant admin">Expenditure &amp; Accounts</li>
+                        <li class="cd-sidebar__heading" data-roles="all">Expenditure &amp; Accounts</li>
+
+                        <!-- ── General Ledger (Expenditure and Accounts rebuild, 2026-10) ──
+                             Shown by permission slug (accounts.gl.*), so Bursar, Accountant,
+                             Finance Officer, Auditor and VC reach it. Read-only reports,
+                             Finance Warnings, adjusting entries and period sign-off. -->
+                        <li class="cd-sidebar__item cd-sidebar__item--has-submenu" data-roles="all">
+                            <a href="javascript:void(0)" class="cd-sidebar__link cd-sidebar__link--toggle">
+                                <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"></path><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"></path></svg>
+                                <span>General Ledger</span>
+                                <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="cd-sidebar__arrow"><polyline points="9 18 15 12 9 6"></polyline></svg>
+                            </a>
+                            <ul class="cd-sidebar__submenu">
+                                <li class="cd-sidebar__subitem" data-roles="all">
+                                    <asp:HyperLink ID="lnkAccountsDashboard" runat="server" NavigateUrl="~/COOPERP/NewScreens/AccountsDashboard.aspx" CssClass="cd-sidebar__sublink">
+                                        <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="20" x2="18" y2="10"></line><line x1="12" y1="20" x2="12" y2="4"></line><line x1="6" y1="20" x2="6" y2="14"></line></svg>
+                                        <span>Accounts Dashboard</span>
+                                    </asp:HyperLink>
+                                </li>
+                                <li class="cd-sidebar__subitem" data-roles="all">
+                                    <asp:HyperLink ID="lnkAccountsReports" runat="server" NavigateUrl="~/COOPERP/NewScreens/AccountsReports.aspx" CssClass="cd-sidebar__sublink">
+                                        <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline><line x1="16" y1="13" x2="8" y2="13"></line><line x1="16" y1="17" x2="8" y2="17"></line></svg>
+                                        <span>Accounts Reports</span>
+                                    </asp:HyperLink>
+                                </li>
+                                <li class="cd-sidebar__subitem" data-roles="all">
+                                    <asp:HyperLink ID="lnkAccountsWarnings" runat="server" NavigateUrl="~/COOPERP/NewScreens/AccountsWarnings.aspx" CssClass="cd-sidebar__sublink">
+                                        <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"></path><line x1="12" y1="9" x2="12" y2="13"></line><line x1="12" y1="17" x2="12.01" y2="17"></line></svg>
+                                        <span>Finance Warnings</span>
+                                    </asp:HyperLink>
+                                </li>
+                                <li class="cd-sidebar__subitem" data-roles="all">
+                                    <asp:HyperLink ID="lnkAccountsAdjustments" runat="server" NavigateUrl="~/COOPERP/NewScreens/AccountsAdjustments.aspx" CssClass="cd-sidebar__sublink">
+                                        <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"></path><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"></path></svg>
+                                        <span>Adjusting Entries</span>
+                                    </asp:HyperLink>
+                                </li>
+                                <li class="cd-sidebar__subitem" data-roles="all">
+                                    <asp:HyperLink ID="lnkAccountsPeriods" runat="server" NavigateUrl="~/COOPERP/NewScreens/AccountsPeriods.aspx" CssClass="cd-sidebar__sublink">
+                                        <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"></rect><line x1="16" y1="2" x2="16" y2="6"></line><line x1="8" y1="2" x2="8" y2="6"></line><line x1="3" y1="10" x2="21" y2="10"></line></svg>
+                                        <span>Periods and Close</span>
+                                    </asp:HyperLink>
+                                </li>
+                            </ul>
+                        </li>
 
                         <!-- ── Accounts & Ledgers ── -->
                         <li class="cd-sidebar__item cd-sidebar__item--has-submenu" data-roles="finance_officer accountant admin">

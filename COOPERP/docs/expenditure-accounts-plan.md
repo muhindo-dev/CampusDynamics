@@ -72,8 +72,8 @@ Status: **implementation in progress**. Section 7 is the live checklist.
 | GL (provisional) | code in `gl_account_map` | the code, flagged provisional |
 | Students | account_type in (`Student`, `-`) | `SUB:STUDENTS` |
 | Faculty fee lines | account_type in (`FOEFees`, `FSTEADFees`, `FBMFees`, `FSSAHFees`, `BursaryFees`) | `SUB:` + type |
-| Suppliers | `Supplier` | `SUB:SUPPLIERS` |
-| Salary advances, gratuity, sponsors | `Salary Advance`, `Gratuity`, `Sponsor` | `SUB:` + type |
+| Suppliers | `Supplier` | `SUB:Supplier` |
+| Salary advances, gratuity, sponsors | `Salary Advance`, `Gratuity`, `Sponsor` | `SUB:` + type without spaces (`SUB:SalaryAdvance`) |
 | Unmapped | anything else (codes not in the chart and not mapped) | the code, flagged unmapped |
 
 The amount is always `transaction_amount` (no line uses another currency).
@@ -238,13 +238,35 @@ Severity: **C** Critical, **H** High, **M** Medium, **I** Information. All detec
 
 Each item is ticked when done, with notes.
 
-- [ ] 1. Back up: schema dump, row counts and checksums of all `fin_*` tables into `gl_baseline`.
-- [ ] 2. Read-only user `cd_gl_ro` and connection string.
-- [ ] 3. `gl_*` schema, guards, settings; provisional account map seeded from history.
-- [ ] 4. Menu slugs and grants; sidebar group.
-- [ ] 5. Emergency guards on D01 (GeneralLedger PageMethod), D02 (FixGLSync), D03 (JournalEntries delete).
-- [ ] 6. `GlDb`, `GlCore`, `GlCalc` (classification, aggregate cache, TB, statement figures, voucher analysis).
-- [ ] 7. `GlChecks` with the TB decomposition; `GlWarnings` with rules W01-W22, history and health score.
+- [x] 1. Back up: schema dump, row counts and checksums of all `fin_*` tables into `gl_baseline`.
+  - Script `sql/ledger/gl_baseline_check.sql`; label `before-gl-install`; ledger up to TID 406926, tracking up to TID 128893.
+  - Schema dump `_dbbackups/accounts_schema_before_gl_20261007.sql`. Rerun after the schema install: unchanged.
+- [x] 2. Read-only user `cd_gl_ro` and connection string.
+  - `sql/ledger/2026-10_gl_readonly_user.sql` (password placeholder). INSERT and UPDATE verified refused.
+  - **web.config is not committed** (it holds credentials). On production add `accountsReadOnlyConnectionString` by hand after `accountsConnectionString`.
+- [x] 3. `gl_*` schema, guards, settings; provisional account map seeded from history.
+  - `sql/ledger/2026-10_gl_schema.sql`, idempotent; 47 map rows.
+  - Two rows are left from installation and cannot be removed, because the append-only guards refuse it:
+    - `gl_audit` id 1 (entity TEST), the guard test;
+    - `gl_warning_event` id 46 (warning_id 0, "placeholder"), a keying slip.
+  - Neither belongs to any warning or entry, and no screen shows them.
+- [x] 4. Menu slugs and grants; sidebar group.
+  - `sql/ledger/2026-10_gl_menu.sql`: 11 slugs, 44 grants; backups `sys_menu_items_bak_gl2026` and `sys_role_permissions_bak_gl2026`.
+  - Sidebar: a General Ledger group at the top of Expenditure & Accounts. That heading is now `data-roles="all"`; empty sections still collapse.
+  - Finance Warnings badge: open non-information warnings, cached 2 minutes.
+- [x] 5. Emergency guards on D01 (GeneralLedger PageMethod), D02 (FixGLSync), D03 (JournalEntries delete).
+- [x] 6. `GlDb`, `GlCore`, `GlCalc` (classification, aggregate cache, TB, statement figures, voucher analysis).
+  - Aggregate: 8,067 key-day rows; 0.7 s cold, 30 ms warm.
+  - Whole-ledger difference 4,030,430,035 decomposes exactly. The pattern order matches audit 4.3: one-sided first, then reused, then unequal.
+  - Chart-only basis 689,428,946: also exact, with "other side on a subsidiary ledger" as its own pattern.
+  - Statement of financial position identity: assets + unclassified − liabilities − equity − surplus = TB difference, exact.
+  - **Lesson:** `transaction_amount` is BIGINT UNSIGNED. A negation or subtraction raises MySQL error 1690 part-way through the result, and MySql.Data 6.6 then *hangs* instead of throwing. Every signed expression goes through `GlCalc.NetExpr`/`NetBare`, which cast to SIGNED.
+  - Control accounts come from `fin_subaccounts.collectionLedgerType`, balance-sheet accounts only. The chart also tags AC2028 Printing and Stationery as "Supplier" (a chart error, ignored).
+- [x] 7. `GlChecks` with the TB decomposition; `GlWarnings` with rules W01-W22, history and health score.
+  - 22 rules, full run 7 s.
+  - Detection runs on demand, automatically when a page opens and the last run is older than 6 hours (in the background, never blocking), and on a timer (`GlWarnings.EnsureScheduled`, armed from Global.asax).
+  - Health is counted per rule at its worst open severity. Today it is 0 (3 critical, 9 high, 7 medium rules), so the pages show the points lost per rule.
+  - Run 1 was the hung installation run (W04 and W07 errors recorded). Two warnings closed in run 2 only because rules were corrected (AC2028 control, AC8040 contra); each carries a note saying so.
 - [ ] 8. Report engine and R01 Trial Balance with the Checks panel; exports.
 - [ ] 9. Reports R02-R20.
 - [ ] 10. Account and voucher pages (drill targets).

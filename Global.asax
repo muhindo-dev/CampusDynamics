@@ -218,6 +218,11 @@
         try { BillingReconciliationJob.EnsureStarted(); }
         catch { }
 
+        // FINANCE WARNINGS detection (General Ledger rebuild): runs the read-only checks W01-W22 when the
+        // last run is older than gl_settings.detection_interval_hours. Only arms a timer; never blocks startup.
+        try { GlWarnings.EnsureScheduled(); }
+        catch { }
+
         // ID Card module: wire the notification hook to THIS app's EmailSenderProtocol
         // (main-app signature: message, recipients, subject, sender).
         try { IDCardService.Mailer = delegate(string to, string subj, string body) {
