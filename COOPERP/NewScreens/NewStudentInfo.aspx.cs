@@ -194,7 +194,7 @@ public partial class COOPERP_NewScreens_NewStudentInfo : System.Web.UI.Page
             else if (action == "ChangeProgramme")   { HandleChangeProgramme();   handledAction = true; }
             else if (action == "ChangeEntryYear")   { HandleChangeEntryYear();   handledAction = true; }
             else if (action == "QuickEditLoad")      { HandleQuickEditLoad();      handledAction = true; }
-            else if (action == "PreviewEntrynoForSession") { HandlePreviewEntrynoForSession(); handledAction = true; }
+            else if (action == "PreviewStudentNumber")     { HandlePreviewStudentNumber();     handledAction = true; }
             else if (action == "DiagnoseTranscript")  { HandleDiagnoseTranscript();  handledAction = true; }
             else if (action == "FixTranscript")       { HandleFixTranscript();       handledAction = true; }
             else if (action == "QuickEditSave")      { HandleQuickEditSave();      handledAction = true; }
@@ -7892,7 +7892,10 @@ public partial class COOPERP_NewScreens_NewStudentInfo : System.Web.UI.Page
     }
 
     /// <summary>Moves a student to a different programme (and optional specialisation). Validates the
-    /// programme exists and the specialisation belongs to it; logged to acad_activity_log.</summary>
+    /// programme exists and the specialisation belongs to it; logged to acad_activity_log.
+    /// When updateRegNo=1 the student number is rebuilt from the record (see PlanStudentNumber) in the
+    /// same transaction — for a new programme, or to correct a number that no longer matches the record.
+    /// If that number cannot be built, nothing at all is saved.</summary>
     private void HandleChangeProgramme()
     {
         var js = new JavaScriptSerializer();
@@ -7902,7 +7905,7 @@ public partial class COOPERP_NewScreens_NewStudentInfo : System.Web.UI.Page
             string prog  = (Request.Form["prog"] ?? "").Trim();
             string spec  = (Request.Form["spec"] ?? "").Trim();   // spec_id, or "" for none
             bool changeProg  = (Request.Form["changeProg"]  ?? "0") == "1";  // caller explicitly wants to move programme
-            bool updateRegNo = (Request.Form["updateRegNo"] ?? "0") == "1";  // caller explicitly wants the reg/entry no regenerated
+            bool updateRegNo = (Request.Form["updateRegNo"] ?? "0") == "1";  // caller explicitly wants the student number rebuilt
             if (regno == "") { WriteJsonAndComplete(js, new { success = false, message = "Registration number is required." }); return; }
 
             using (var conn = new MySqlConnection(ConnectionString))
@@ -7910,7 +7913,7 @@ public partial class COOPERP_NewScreens_NewStudentInfo : System.Web.UI.Page
                 conn.Open();
 
                 string oldProg = "", oldEntryno = "", studCampus = "";
-                using (var cmd = new MySqlCommand("SELECT progid, entryno, studCampus FROM acad_student WHERE regno=@r LIMIT 1", conn))
+                using (var cmd = new MySqlCommand("SELECT progid, TRIM(IFNULL(entryno,'')) entryno, studCampus FROM acad_student WHERE regno=@r LIMIT 1", conn))
                 {
                     cmd.Parameters.AddWithValue("@r", regno);
                     using (var rdr = cmd.ExecuteReader())
@@ -7929,11 +7932,10 @@ public partial class COOPERP_NewScreens_NewStudentInfo : System.Web.UI.Page
 
                 // Backend enforcement (independent of the UI checkboxes — defence in depth):
                 //  • the programme changes ONLY when the caller asked to change it AND picked a *different* one;
-                //  • the reg/entry number is regenerated ONLY on top of that, and only when the caller opted in.
-                // Without those flags the reg/entry number is never touched — the common case is a spec-only edit.
+                //  • the student number is rebuilt ONLY when the caller opted in.
                 bool progChanged  = changeProg && prog != "" && !string.Equals(prog, oldProg, StringComparison.OrdinalIgnoreCase);
                 string effProg    = progChanged ? prog : oldProg;   // spec is validated against the effective programme
-                bool regenEntryno = progChanged && updateRegNo;
+                bool regenEntryno = updateRegNo;
 
                 using (var cmd = new MySqlCommand("SELECT progname FROM acad_programme WHERE progcode=@p LIMIT 1", conn))
                 { cmd.Parameters.AddWithValue("@p", effProg); if (cmd.ExecuteScalar() == null) { WriteJsonAndComplete(js, new { success = false, message = "Programme '" + effProg + "' does not exist." }); return; } }
@@ -7958,11 +7960,6 @@ public partial class COOPERP_NewScreens_NewStudentInfo : System.Web.UI.Page
                         }
                 }
 
-                // The formatted registration number (entryno) embeds the programme code + the per-programme
-                // student number. It is regenerated ONLY when the programme actually moves AND the caller
-                // opted in. The canonical acad_student.regno (PRIMARY KEY / system-wide FK) is never changed.
-                string newEntryno = regenEntryno ? ComputeNewEntryno(conn, oldEntryno, prog, campusLetter) : "";
-
                 // If the operator settles a campus conflict, the campus FIELD moves with the letter.
                 // Writing "M" into the number while the record still says Kakeeka would just recreate
                 // the disagreement this dialog exists to resolve.
@@ -7970,53 +7967,77 @@ public partial class COOPERP_NewScreens_NewStudentInfo : System.Web.UI.Page
                 bool campusChanged = regenEntryno && newCampusCode != "" &&
                                      newCampusCode != (studCampus ?? "").Trim().TrimStart('0');
 
-                using (var tx = conn.BeginTransaction())
+                string newEntryno = "", numberNote = "";
+                bool locked = false;
+                try
                 {
-                    try
+                    if (regenEntryno)
                     {
-                        var sets = new System.Collections.Generic.List<string> { "specialisation=@s" };
-                        if (progChanged)      sets.Add("progid=@p");
-                        if (newEntryno != "") sets.Add("entryno=@e");
-                        if (campusChanged)    sets.Add("studCampus=@cm");
-                        using (var cmd = new MySqlCommand("UPDATE acad_student SET " + string.Join(", ", sets) + " WHERE regno=@r", conn, tx))
-                        {
-                            // acad_student.specialisation is NOT NULL (default '-'). For programmes/faculties
-                            // that have NO subject combinations, the caller sends an empty spec — store the
-                            // "none" sentinel '-' rather than NULL, which previously failed with
-                            // "Column 'specialisation' cannot be null" and blocked the whole course change.
-                            cmd.Parameters.AddWithValue("@s", spec == "" ? (object)"-" : spec);
-                            if (progChanged)      cmd.Parameters.AddWithValue("@p", prog);
-                            if (newEntryno != "") cmd.Parameters.AddWithValue("@e", newEntryno);
-                            if (campusChanged)    cmd.Parameters.AddWithValue("@cm", newCampusCode);
-                            cmd.Parameters.AddWithValue("@r", regno);
-                            cmd.ExecuteNonQuery();
-                        }
-                        // Keep the only other table that references entryno in step (only if it actually changed).
-                        if (newEntryno != "" && oldEntryno != "" && !string.Equals(newEntryno, oldEntryno))
-                            using (var cmd = new MySqlCommand("UPDATE acad_haltcases SET entryno=@n WHERE entryno=@o", conn, tx))
-                            { cmd.Parameters.AddWithValue("@n", newEntryno); cmd.Parameters.AddWithValue("@o", oldEntryno); cmd.ExecuteNonQuery(); }
-                        tx.Commit();
+                        locked = TakeStudentNumberLock(conn);
+                        if (!locked) { WriteJsonAndComplete(js, new { success = false, message = "Another student number is being issued right now. Nothing was saved; please try again." }); return; }
                     }
-                    catch { tx.Rollback(); throw; }
+                    using (var tx = conn.BeginTransaction())
+                    {
+                        try
+                        {
+                            var sets = new System.Collections.Generic.List<string> { "specialisation=@s" };
+                            if (progChanged)   sets.Add("progid=@p");
+                            if (campusChanged) sets.Add("studCampus=@cm");
+                            using (var cmd = new MySqlCommand("UPDATE acad_student SET " + string.Join(", ", sets) + " WHERE regno=@r", conn, tx))
+                            {
+                                // acad_student.specialisation is NOT NULL (default '-'). For programmes/faculties
+                                // that have NO subject combinations, the caller sends an empty spec — store the
+                                // "none" sentinel '-' rather than NULL, which previously failed with
+                                // "Column 'specialisation' cannot be null" and blocked the whole course change.
+                                cmd.Parameters.AddWithValue("@s", spec == "" ? (object)"-" : spec);
+                                if (progChanged)   cmd.Parameters.AddWithValue("@p", prog);
+                                if (campusChanged) cmd.Parameters.AddWithValue("@cm", newCampusCode);
+                                cmd.Parameters.AddWithValue("@r", regno);
+                                cmd.ExecuteNonQuery();
+                            }
+
+                            if (regenEntryno)
+                            {
+                                // Planned from the row as just updated (programme, campus), so every
+                                // segment agrees with the record that is being committed.
+                                StudentNumberPlan plan = PlanStudentNumber(conn, tx, regno, null, null, null, null, campusLetter);
+                                if (plan.Proposed == "")
+                                {
+                                    tx.Rollback();
+                                    WriteJsonAndComplete(js, new { success = false, message = "Nothing was saved. The student number could not be built: " + plan.Reason });
+                                    return;
+                                }
+                                if (plan.Changes)
+                                {
+                                    WriteStudentNumber(conn, tx, regno, plan.Current, plan.Proposed);
+                                    newEntryno = plan.Proposed;
+                                }
+                                else numberNote = " The student number " + plan.Current + " already matches the record.";
+                            }
+                            tx.Commit();
+                        }
+                        catch { try { tx.Rollback(); } catch { } throw; }
+                    }
                 }
+                finally { if (locked) ReleaseStudentNumberLock(conn); }
 
                 string campusNote = campusChanged
                     ? ("; Campus " + studCampus + " -> " + newCampusCode + " (" + CampusNameForLetter(campusLetter) + ")") : "";
+                string numberLog = newEntryno != "" ? "; Reg No " + oldEntryno + " -> " + newEntryno
+                                 : (regenEntryno ? "; Reg No already correct " + oldEntryno : "; Reg No kept " + oldEntryno);
                 string logMsg = progChanged
-                    ? ("Programme " + oldProg + " -> " + prog + (spec != "" ? " (spec " + spec + ")" : "")
-                        + (newEntryno != "" ? "; Reg No " + oldEntryno + " -> " + newEntryno : "; Reg No kept " + oldEntryno)
-                        + campusNote)
-                    : ("Specialisation updated" + (spec != "" ? " (spec " + spec + ")" : " (cleared)") + "; programme & reg no unchanged");
+                    ? ("Programme " + oldProg + " -> " + prog + (spec != "" ? " (spec " + spec + ")" : "") + numberLog + campusNote)
+                    : ("Specialisation updated" + (spec != "" ? " (spec " + spec + ")" : " (cleared)") + "; programme unchanged" + numberLog + campusNote);
                 LogStudentAction(conn, regno, "ChangeProgramme", logMsg);
 
-                string userMsg = progChanged
-                    ? ("Programme updated to " + prog + "." + (newEntryno != "" ? " New Reg No: " + newEntryno : " Registration number kept unchanged.")
-                        + (campusChanged ? " Campus set to " + CampusNameForLetter(campusLetter) + "." : ""))
-                    : "Specialisation updated. Programme and registration number were left unchanged.";
+                string userMsg = (progChanged ? "Programme updated to " + prog + "." : "Specialisation updated.")
+                    + (newEntryno != "" ? " New student number: " + newEntryno + " (was " + (oldEntryno == "" ? "blank" : oldEntryno) + ")."
+                                        : (regenEntryno ? numberNote : " The student number was left unchanged."))
+                    + (campusChanged ? " Campus set to " + CampusNameForLetter(campusLetter) + "." : "");
                 WriteJsonAndComplete(js, new { success = true, newEntryno = newEntryno, message = userMsg });
             }
         }
-        catch (Exception ex) { WriteJsonAndComplete(js, new { success = false, message = ex.Message }); }
+        catch (Exception ex) { WriteJsonAndComplete(js, new { success = false, message = "Nothing was saved. " + ex.Message }); }
     }
 
     /// <summary>
@@ -8046,59 +8067,8 @@ public partial class COOPERP_NewScreens_NewStudentInfo : System.Web.UI.Page
         return seg.Length >= 5 ? (seg[4] ?? "").Trim() : "";
     }
 
-    /// <summary>Rebuilds the formatted registration number (entryno) for a new programme: keeps the year
-    /// prefix / level / session segments, sets segment 3 = new programme code, segment 4 =
-    /// the next free student-number for that (year, programme), and segment 5 = the campus letter when the
-    /// caller supplies one. Returns "" when the entryno isn't in the
-    /// standard slash format (then only progid/specialisation change). Guards against a duplicate entryno.</summary>
-    private string ComputeNewEntryno(MySqlConnection conn, string oldEntryno, string newProg, string campusLetter)
-    {
-        if (string.IsNullOrWhiteSpace(oldEntryno)) return "";
-        string[] seg = oldEntryno.Split('/');
-        if (seg.Length < 4) return "";                 // not the YY/U/PROG/SEQ/... form → leave identifiers alone
-        string yearPrefix = seg[0];
-        string oldSeq = (seg[3] ?? "").Trim();
-
-        // Campus letter. Only the FIRST character is replaced: legacy numbers carry two-letter
-        // codes there (KD, MJ, MM) whose second character means something we do not model, and
-        // rewriting the whole segment would throw that away.
-        campusLetter = (campusLetter ?? "").Trim().ToUpperInvariant();
-        if (seg.Length >= 5 && campusLetter.Length == 1)
-        {
-            string cur = (seg[4] ?? "").Trim();
-            seg[4] = cur.Length > 1 ? campusLetter + cur.Substring(1) : campusLetter;
-        }
-
-        long next = 1;
-        using (var cmd = new MySqlCommand(
-            @"SELECT MAX(CAST(SUBSTRING_INDEX(SUBSTRING_INDEX(entryno,'/',4),'/',-1) AS UNSIGNED))
-                FROM acad_student
-               WHERE SUBSTRING_INDEX(entryno,'/',1)=@yr
-                 AND SUBSTRING_INDEX(SUBSTRING_INDEX(entryno,'/',3),'/',-1)=@prog", conn))
-        {
-            cmd.Parameters.AddWithValue("@yr", yearPrefix);
-            cmd.Parameters.AddWithValue("@prog", newProg);
-            var o = cmd.ExecuteScalar();
-            long m; if (o != null && o != DBNull.Value && long.TryParse(o.ToString(), out m)) next = m + 1;
-        }
-
-        int ov, width = 4;
-        if (int.TryParse(oldSeq, out ov)) width = Math.Max(4, oldSeq.Length);
-
-        // Build, then bump the number until the entryno is unique (defends against a rare race).
-        for (int guard = 0; guard < 1000; guard++)
-        {
-            seg[2] = newProg;
-            seg[3] = next.ToString().PadLeft(width, '0');
-            string candidate = string.Join("/", seg);
-            using (var cmd = new MySqlCommand("SELECT 1 FROM acad_student WHERE entryno=@e LIMIT 1", conn))
-            { cmd.Parameters.AddWithValue("@e", candidate); if (cmd.ExecuteScalar() == null) return candidate; }
-            next++;
-        }
-        return "";   // extremely unlikely — fall back to leaving entryno unchanged
-    }
-
-    /// <summary>Preview the new Reg No / student number a programme change would produce (no write).</summary>
+    /// <summary>Preview the student number a programme (or the current one) would produce, plus the
+    /// campus facts the dialog shows. No write.</summary>
     private void HandlePreviewProgRegno()
     {
         var js = new JavaScriptSerializer();
@@ -8106,13 +8076,13 @@ public partial class COOPERP_NewScreens_NewStudentInfo : System.Web.UI.Page
         {
             string regno = (Request.Form["regno"] ?? Request.QueryString["regno"] ?? "").Trim();
             string prog  = (Request.Form["prog"]  ?? Request.QueryString["prog"]  ?? "").Trim();
-            if (regno == "" || prog == "") { WriteJsonAndComplete(js, new { success = false, message = "Missing parameters." }); return; }
+            if (regno == "") { WriteJsonAndComplete(js, new { success = false, message = "Missing parameters." }); return; }
             using (var conn = new MySqlConnection(ConnectionString))
             {
                 conn.Open();
                 string oldEntryno = "", studCampus = "", campusName = "";
                 using (var cmd = new MySqlCommand(
-                    "SELECT s.entryno, IFNULL(s.studCampus,'') sc, IFNULL(c.campus_name,'') cn FROM acad_student s " +
+                    "SELECT TRIM(IFNULL(s.entryno,'')) entryno, IFNULL(s.studCampus,'') sc, IFNULL(c.campus_name,'') cn FROM acad_student s " +
                     "LEFT JOIN acad_campuses c ON TRIM(LEADING '0' FROM c.campus_code) = TRIM(LEADING '0' FROM s.studCampus) " +
                     "WHERE s.regno=@r LIMIT 1", conn))
                 {
@@ -8127,7 +8097,7 @@ public partial class COOPERP_NewScreens_NewStudentInfo : System.Web.UI.Page
                 string chosen = (Request.Form["campusLetter"] ?? Request.QueryString["campusLetter"] ?? "").Trim().ToUpperInvariant();
                 if (chosen != "K" && chosen != "M") chosen = letterFromRecord;
 
-                string preview = ComputeNewEntryno(conn, oldEntryno, prog, chosen);
+                StudentNumberPlan plan = PlanStudentNumber(conn, null, regno, prog, null, null, null, chosen);
 
                 // A conflict is reported, never resolved silently: only a human knows whether the
                 // student sits in Masaka or Kakeeka when the record and the number disagree.
@@ -8138,7 +8108,12 @@ public partial class COOPERP_NewScreens_NewStudentInfo : System.Web.UI.Page
                 {
                     success = true,
                     oldEntryno = oldEntryno,
-                    newEntryno = preview,
+                    newEntryno = plan.Proposed,
+                    changes = plan.Changes,
+                    canBuild = plan.Proposed != "",
+                    reason = plan.Reason,
+                    keptSequence = plan.KeptSequence,
+                    yearNote = plan.YearNote,
                     campusCode = studCampus,
                     campusName = campusName,
                     letterOnRecord = letterFromRecord,
@@ -8147,6 +8122,257 @@ public partial class COOPERP_NewScreens_NewStudentInfo : System.Web.UI.Page
                     campusOnRecordName = CampusNameForLetter(letterFromRecord),
                     campusInNumberName = CampusNameForLetter(letterInOldNumber),
                     campusConflict = conflict
+                });
+            }
+        }
+        catch (Exception ex) { WriteJsonAndComplete(js, new { success = false, message = ex.Message }); }
+    }
+
+    // ===================================================================
+    // Student number (acad_student.entryno) — ONE builder for every screen
+    // ===================================================================
+    //
+    // Format, exactly as acad_RegNoCreator issues it at admission:
+    //
+    //     YY / LEVEL / PROGRAMME / SEQ / CAMPUS / SESSION        26/U/BIT/0093/K/DAY
+    //
+    //   YY       last two digits of the entry year (acad_student.entryyear)
+    //   LEVEL    U when acad_programme.levelcode < 4, otherwise GC
+    //   SEQ      four digits, unique within (YY, programme)
+    //   CAMPUS   K = Kakeeka (campus 1), M = Kirumba (campus 2)
+    //   SESSION  acad_studysessions.Abbreviation (DAY, EVE, INSRV, WKD)
+    //
+    // Every part comes from the student's record, so a rebuilt number always agrees with
+    // the record — the old screens patched one segment at a time and left the rest stale.
+    //
+    // Uniqueness is checked against every place a number can already be held: other
+    // students, and the numbers reserved on admitted applications (acad_applications
+    // .stud_reg_no, acad_applicant_choices.choice_reg_no) that have no student row yet.
+    // entryno has no unique index (historic duplicates exist), so the database will not
+    // catch a clash; issuing runs under a named lock so two officers cannot take the same
+    // number at once. If a valid, unique number cannot be built, NOTHING is saved and the
+    // reason is shown — a requested number change never silently becomes "kept".
+    //
+    // acad_student.regno (the primary key) is never changed here.
+
+    private const string StudentNumberLock = "cd_student_number_issue";
+    private const int StudentNumberMaxLength = 25;   // acad_student.entryno is CHAR(25)
+
+    private class StudentNumberPlan
+    {
+        public string Current = "";
+        public string Proposed = "";
+        public string Reason = "";
+        public bool KeptSequence;
+        public string YearNote = "";
+        public bool Changes { get { return Proposed != "" && !string.Equals(Proposed, Current, StringComparison.OrdinalIgnoreCase); } }
+    }
+
+    /// <summary>
+    /// Works out the number this student should carry. The student's row supplies every part
+    /// unless an override is given (the screens pass the values being edited, so the preview
+    /// shows the number that will really be written). Read-only.
+    /// </summary>
+    private StudentNumberPlan PlanStudentNumber(MySqlConnection conn, MySqlTransaction tx, string regno,
+        string progOverride, string yearOverride, string sessionOverride, string campusOverride, string campusLetterOverride)
+    {
+        var plan = new StudentNumberPlan();
+        string prog = "", year = "", session = "", campus = "";
+        using (var cmd = new MySqlCommand(
+            "SELECT TRIM(IFNULL(entryno,'')), TRIM(IFNULL(progid,'')), IFNULL(entryyear,''), TRIM(IFNULL(studsesion,'')), TRIM(IFNULL(studCampus,'')) " +
+            "FROM acad_student WHERE regno=@r LIMIT 1", conn, tx))
+        {
+            cmd.Parameters.AddWithValue("@r", regno);
+            using (var rd = cmd.ExecuteReader())
+            {
+                if (!rd.Read()) { plan.Reason = "Student not found."; return plan; }
+                plan.Current = rd.GetValue(0).ToString();
+                prog = rd.GetValue(1).ToString(); year = rd.GetValue(2).ToString();
+                session = rd.GetValue(3).ToString(); campus = rd.GetValue(4).ToString();
+            }
+        }
+        if (!string.IsNullOrWhiteSpace(progOverride))    prog = progOverride.Trim();
+        if (!string.IsNullOrWhiteSpace(yearOverride))    year = yearOverride.Trim();
+        if (!string.IsNullOrWhiteSpace(sessionOverride)) session = sessionOverride.Trim();
+        if (!string.IsNullOrWhiteSpace(campusOverride))  campus = campusOverride.Trim();
+        string[] cur = plan.Current.Split('/');
+        string curYY = cur.Length >= 4 ? cur[0].Trim() : "";
+        bool curYYValid = curYY.Length == 2 && char.IsDigit(curYY[0]) && char.IsDigit(curYY[1]);
+
+        // YY — from the entry year; the current number's year only when no entry year is on file.
+        string yy; int y;
+        if (int.TryParse(year, out y) && y >= 2000 && y <= 2099) yy = (y % 100).ToString("00");
+        else if (curYYValid) yy = curYY;
+        else { plan.Reason = "The student has no valid entry year, so the year part of the number cannot be set."; return plan; }
+        if (curYYValid && curYY != yy)
+            plan.YearNote = "The year part follows the entry year (" + year + "), so it changes from " + curYY + " to " + yy + ".";
+
+        // PROGRAMME + LEVEL
+        prog = prog.ToUpperInvariant();
+        if (prog == "") { plan.Reason = "The student has no programme."; return plan; }
+        foreach (char ch in prog)
+            if (ch == '/' || char.IsWhiteSpace(ch))
+            { plan.Reason = "The programme code \"" + prog + "\" contains a slash or a space, so it cannot be written into a student number."; return plan; }
+        object lvO;
+        using (var cmd = new MySqlCommand("SELECT levelcode FROM acad_programme WHERE progcode=@p LIMIT 1", conn, tx))
+        { cmd.Parameters.AddWithValue("@p", prog); lvO = cmd.ExecuteScalar(); }
+        int lv;
+        if (lvO == null || lvO == DBNull.Value || !int.TryParse(lvO.ToString(), out lv))
+        { plan.Reason = "Programme " + prog + " has no level set, so it is not known whether the number takes U or GC."; return plan; }
+        string level = lv < 4 ? "U" : "GC";
+
+        // CAMPUS
+        string letter = (campusLetterOverride ?? "").Trim().ToUpperInvariant();
+        if (letter != "K" && letter != "M") letter = CampusLetterFor(campus);
+        if (letter == "") { plan.Reason = "The student's campus is not set to Kakeeka or Kirumba, so the campus letter cannot be chosen."; return plan; }
+
+        // SESSION — the code the admissions generator itself uses.
+        object abO;
+        using (var cmd = new MySqlCommand("SELECT TRIM(Abbreviation) FROM acad_studysessions WHERE UPPER(TRIM(Session))=UPPER(@s) LIMIT 1", conn, tx))
+        { cmd.Parameters.AddWithValue("@s", session); abO = cmd.ExecuteScalar(); }
+        string sess = abO == null || abO == DBNull.Value ? "" : abO.ToString().Trim().ToUpperInvariant();
+        if (sess == "") { plan.Reason = "The study session \"" + session + "\" has no code in Study Sessions, so the session part cannot be set."; return plan; }
+
+        string head = yy + "/" + level + "/" + prog + "/";
+        string tail = "/" + letter + "/" + sess;
+        string sample = head + "0000" + tail;
+        if (sample.Length > StudentNumberMaxLength)
+        { plan.Reason = "The number " + sample + " would be " + sample.Length + " characters; the register holds " + StudentNumberMaxLength + "."; return plan; }
+
+        // Keep the student's own sequence when year, level and programme are unchanged and
+        // the resulting number is not held by anyone else (e.g. only the session moved).
+        if (cur.Length >= 4 && curYY == yy &&
+            string.Equals(cur[1].Trim(), level, StringComparison.OrdinalIgnoreCase) &&
+            string.Equals(cur[2].Trim(), prog, StringComparison.OrdinalIgnoreCase))
+        {
+            string s = cur[3].Trim();
+            int sn;
+            if (s.Length >= 1 && s.Length <= 4 && int.TryParse(s, System.Globalization.NumberStyles.None, null, out sn) && sn > 0)
+            {
+                string keep = head + sn.ToString("0000") + tail;
+                if (IsStudentNumberFree(conn, tx, keep, regno)) { plan.Proposed = keep; plan.KeptSequence = true; return plan; }
+            }
+        }
+
+        // Otherwise the next free sequence for (YY, programme), counted across students and
+        // the numbers reserved on admitted applications.
+        long next = 1;
+        const string seqOf = "SUBSTRING_INDEX(SUBSTRING_INDEX(TRIM({0}),'/',4),'/',-1)";
+        string scopeFmt = "SUBSTRING_INDEX(TRIM({0}),'/',1)=@yy AND SUBSTRING_INDEX(SUBSTRING_INDEX(TRIM({0}),'/',3),'/',-1)=@p AND " + seqOf + " REGEXP '^[0-9]{{1,4}}$'";
+        string maxSql =
+            "SELECT GREATEST(" +
+            " IFNULL((SELECT MAX(CAST(" + string.Format(seqOf, "entryno") + " AS UNSIGNED)) FROM acad_student WHERE " + string.Format(scopeFmt, "entryno") + "),0)," +
+            " IFNULL((SELECT MAX(CAST(" + string.Format(seqOf, "stud_reg_no") + " AS UNSIGNED)) FROM acad_applications WHERE " + string.Format(scopeFmt, "stud_reg_no") + "),0)," +
+            " IFNULL((SELECT MAX(CAST(" + string.Format(seqOf, "choice_reg_no") + " AS UNSIGNED)) FROM acad_applicant_choices WHERE " + string.Format(scopeFmt, "choice_reg_no") + "),0))";
+        using (var cmd = new MySqlCommand(maxSql, conn, tx))
+        {
+            cmd.Parameters.AddWithValue("@yy", yy);
+            cmd.Parameters.AddWithValue("@p", prog);
+            object o = cmd.ExecuteScalar(); long m;
+            if (o != null && o != DBNull.Value && long.TryParse(o.ToString(), out m)) next = m + 1;
+        }
+        for (; next <= 9999; next++)
+        {
+            string candidate = head + next.ToString("0000") + tail;
+            if (IsStudentNumberFree(conn, tx, candidate, regno)) { plan.Proposed = candidate; return plan; }
+        }
+        plan.Reason = "No free sequence is left for " + head + "####" + tail + ".";
+        return plan;
+    }
+
+    /// <summary>True when no OTHER student, application or admission choice holds the number.</summary>
+    private static bool IsStudentNumberFree(MySqlConnection conn, MySqlTransaction tx, string number, string regno)
+    {
+        using (var cmd = new MySqlCommand(
+            "SELECT (SELECT COUNT(*) FROM acad_student WHERE TRIM(entryno)=@e AND regno<>@r)" +
+            "     + (SELECT COUNT(*) FROM acad_applications WHERE TRIM(stud_reg_no)=@e AND TRIM(stud_entry_no)<>@r)" +
+            "     + (SELECT COUNT(*) FROM acad_applicant_choices WHERE TRIM(choice_reg_no)=@e AND TRIM(stud_entry_no)<>@r)", conn, tx))
+        {
+            cmd.Parameters.AddWithValue("@e", number);
+            cmd.Parameters.AddWithValue("@r", regno);
+            return Convert.ToInt64(cmd.ExecuteScalar()) == 0;
+        }
+    }
+
+    /// <summary>Takes the issuing lock for this connection; false if another issue is in progress.</summary>
+    private static bool TakeStudentNumberLock(MySqlConnection conn)
+    {
+        using (var cmd = new MySqlCommand("SELECT GET_LOCK(@n, 15)", conn))
+        {
+            cmd.Parameters.AddWithValue("@n", StudentNumberLock);
+            object o = cmd.ExecuteScalar();
+            return o != null && o != DBNull.Value && Convert.ToInt32(o) == 1;
+        }
+    }
+
+    private static void ReleaseStudentNumberLock(MySqlConnection conn)
+    {
+        try
+        {
+            using (var cmd = new MySqlCommand("SELECT RELEASE_LOCK(@n)", conn))
+            { cmd.Parameters.AddWithValue("@n", StudentNumberLock); cmd.ExecuteScalar(); }
+        }
+        catch { }
+    }
+
+    /// <summary>
+    /// Writes a planned number inside the caller's transaction, re-checking it is still free,
+    /// and moves every copy of the old number with it: acad_haltcases, and this student's own
+    /// admission record (application + choice) where it held the old number.
+    /// </summary>
+    private static void WriteStudentNumber(MySqlConnection conn, MySqlTransaction tx, string regno, string oldNo, string newNo)
+    {
+        if (string.IsNullOrEmpty(newNo) || newNo.Length > StudentNumberMaxLength) throw new Exception("Invalid student number.");
+        if (!IsStudentNumberFree(conn, tx, newNo, regno)) throw new Exception(newNo + " was taken a moment ago. Nothing was saved; please try again.");
+        using (var cmd = new MySqlCommand("UPDATE acad_student SET entryno=@n WHERE regno=@r", conn, tx))
+        {
+            cmd.Parameters.AddWithValue("@n", newNo); cmd.Parameters.AddWithValue("@r", regno);
+            cmd.ExecuteNonQuery();
+        }
+        if (!string.IsNullOrEmpty(oldNo) && !string.Equals(oldNo, newNo, StringComparison.OrdinalIgnoreCase))
+        {
+            foreach (string sql in new[] {
+                "UPDATE acad_haltcases SET entryno=@n WHERE TRIM(entryno)=@o",
+                "UPDATE acad_applications SET stud_reg_no=@n WHERE TRIM(stud_entry_no)=@r AND TRIM(stud_reg_no)=@o",
+                "UPDATE acad_applicant_choices SET choice_reg_no=@n WHERE TRIM(stud_entry_no)=@r AND TRIM(choice_reg_no)=@o" })
+                using (var cmd = new MySqlCommand(sql, conn, tx))
+                {
+                    cmd.Parameters.AddWithValue("@n", newNo); cmd.Parameters.AddWithValue("@o", oldNo); cmd.Parameters.AddWithValue("@r", regno);
+                    cmd.ExecuteNonQuery();
+                }
+        }
+        // Final proof inside the transaction: this student holds the number, and no one else does.
+        using (var cmd = new MySqlCommand(
+            "SELECT SUM(regno=@r), COUNT(*) FROM acad_student WHERE TRIM(entryno)=@n", conn, tx))
+        {
+            cmd.Parameters.AddWithValue("@n", newNo); cmd.Parameters.AddWithValue("@r", regno);
+            using (var rd = cmd.ExecuteReader())
+            {
+                rd.Read();
+                long mine = rd.IsDBNull(0) ? 0 : Convert.ToInt64(rd.GetValue(0));
+                long all  = rd.IsDBNull(1) ? 0 : Convert.ToInt64(rd.GetValue(1));
+                if (mine != 1 || all != 1) throw new Exception("Uniqueness check failed for " + newNo + ". Nothing was saved.");
+            }
+        }
+    }
+
+    /// <summary>action=PreviewStudentNumber — the number the given details would produce. Read-only.</summary>
+    private void HandlePreviewStudentNumber()
+    {
+        var js = new JavaScriptSerializer();
+        try
+        {
+            string regno = (Request["regno"] ?? "").Trim();
+            if (regno == "") { WriteJsonAndComplete(js, new { success = false, message = "Registration number is required." }); return; }
+            using (var conn = new MySqlConnection(ConnectionString))
+            {
+                conn.Open();
+                StudentNumberPlan p = PlanStudentNumber(conn, null, regno, Request["prog"], Request["entryyear"],
+                                                        Request["studsesion"], Request["studCampus"], Request["campusLetter"]);
+                WriteJsonAndComplete(js, new
+                {
+                    success = true, current = p.Current, proposed = p.Proposed, changes = p.Changes,
+                    canBuild = p.Proposed != "", reason = p.Reason, keptSequence = p.KeptSequence, yearNote = p.YearNote
                 });
             }
         }
@@ -8199,222 +8425,9 @@ public partial class COOPERP_NewScreens_NewStudentInfo : System.Web.UI.Page
         catch (Exception ex) { WriteJsonAndComplete(js, new { success = false, message = ex.Message }); }
     }
 
-    // ── Quick Edit: save the edited fields (strict-SQL-mode safe; identity fields untouched) ──
-    // ===================================================================
-    // Entry number ↔ study session
-    // ===================================================================
-    //
-    // The formatted entry number is YY/U/PROG/SEQ/CAMPUS/SESSION — the number printed
-    // on the transcript as "REG NO." (21/U/BED(P)/1238/KA/INS). Its last segment encodes
-    // the study session, and changing acad_student.studsesion has never touched it, so a
-    // student moved from Day to Weekend kept an entry number that still said DAY.
-    //
-    // WHAT MAKES THIS DELICATE, measured before writing any of it: the format is not
-    // uniform. Of the 32,689 slash-formatted entry numbers, 21,403 have six segments,
-    // 8,213 have five, 1,984 have four and 1,088 have seven. The last segment is a
-    // session code only in the six-segment form; elsewhere it is a campus code (K, M),
-    // a bare number (007, 104), or empty. Rewriting "the last segment" blindly would
-    // corrupt roughly a third of the student body's entry numbers.
-    //
-    // So the rule is the opposite of blind: the segment is replaced ONLY when it is
-    // already a recognisable session code. Anything else is left exactly alone and the
-    // offer is never made.
-    //
-    // acad_student.regno — the primary key, referenced across the whole system — is
-    // NEVER touched here, the same rule the programme-change action follows.
-
-    /// <summary>
-    /// The code written into the entry number for a given session. Reflects what the
-    /// register actually uses for 2022 and later: DAY 5,230, WKD 1,377, INSRV 977
-    /// (against INS 396 for the same session), EVE for evening.
-    /// </summary>
-    private static string SessionSegmentCode(string session)
-    {
-        string s = (session ?? "").Trim().ToUpperInvariant();
-        if (s == "DAY") return "DAY";
-        if (s == "WEEKEND") return "WKD";
-        if (s == "EVENING") return "EVE";
-        if (s == "INSERVICE" || s == "IN-SERVICE" || s == "IN SERVICE") return "INSRV";
-        return "";
-    }
-
-    /// <summary>
-    /// Every spelling of a session code seen in the register. Used to decide whether the
-    /// last segment of an entry number is a session at all — which is the whole safety
-    /// of this feature. "K" and "M" are campuses and must never match.
-    /// </summary>
-    private static bool IsSessionSegment(string segment)
-    {
-        string s = (segment ?? "").Trim().ToUpperInvariant();
-        switch (s)
-        {
-            case "DAY": case "D":
-            case "WKD": case "WKND": case "WEEKEND":
-            case "EVE": case "EVENING":
-            case "INS": case "INSR": case "INSRV": case "INSERVICE":
-                return true;
-            default:
-                return false;
-        }
-    }
-
-    /// <summary>
-    /// The entry number this student would have if its session segment matched
-    /// <paramref name="newSession"/>. Returns "" when the change does not apply — no
-    /// entry number, no slashes, an unrecognised last segment, or nothing to change.
-    /// <paramref name="reason"/> explains which, for the screen to show.
-    /// </summary>
-    private static string ProjectEntrynoForSession(string entryno, string newSession, string overrideCode, out string reason)
-    {
-        reason = "";
-        string e = (entryno ?? "").Trim();
-        if (e == "") { reason = "This student has no entry number on file."; return ""; }
-        if (e.IndexOf('/') < 0) { reason = "This entry number is not in the slash format, so it carries no session."; return ""; }
-
-        string[] parts = e.Split('/');
-        string last = parts[parts.Length - 1].Trim();
-
-        if (!IsSessionSegment(last))
-        {
-            reason = "The last part of this entry number (\"" + last + "\") is not a session code, "
-                   + "so it is left alone. Only entry numbers ending in DAY, EVE, WKD or INSRV are changed here.";
-            return "";
-        }
-
-        string code = (overrideCode ?? "").Trim().ToUpperInvariant();
-        if (code == "") code = SessionSegmentCode(newSession);
-        if (code == "") { reason = "There is no entry-number code for the session \"" + newSession + "\"."; return ""; }
-
-        if (string.Equals(last, code, StringComparison.OrdinalIgnoreCase))
-        { reason = "The entry number already ends in " + code + "."; return ""; }
-
-        parts[parts.Length - 1] = code;
-        return string.Join("/", parts);
-    }
-
-    /// <summary>
-    /// action=PreviewEntrynoForSession — what the entry number would become, shown live
-    /// in the Quick Edit dialog before anything is saved. Read-only.
-    /// </summary>
-    private void HandlePreviewEntrynoForSession()
-    {
-        var js = new JavaScriptSerializer();
-        try
-        {
-            string regno = (Request["regno"] ?? "").Trim();
-            string session = (Request["studsesion"] ?? "").Trim();
-            string code = (Request["code"] ?? "").Trim();
-            if (regno == "") { WriteJsonAndComplete(js, new { success = false, message = "Registration number is required." }); return; }
-
-            string entryno = "", currentSession = "";
-            using (var conn = new MySqlConnection(ConnectionString))
-            {
-                conn.Open();
-                using (var cmd = new MySqlCommand("SELECT IFNULL(entryno,''), IFNULL(studsesion,'') FROM acad_student WHERE regno=@r LIMIT 1", conn))
-                {
-                    cmd.Parameters.AddWithValue("@r", regno);
-                    using (var r = cmd.ExecuteReader())
-                    {
-                        if (!r.Read()) { WriteJsonAndComplete(js, new { success = false, message = "Student not found." }); return; }
-                        entryno = r.GetString(0).Trim();
-                        currentSession = r.GetString(1).Trim();
-                    }
-                }
-            }
-
-            string reason;
-            string projected = ProjectEntrynoForSession(entryno, session, code, out reason);
-            WriteJsonAndComplete(js, new
-            {
-                success = true,
-                entryno = entryno,
-                currentSession = currentSession,
-                sessionChanged = !string.Equals(currentSession, session, StringComparison.OrdinalIgnoreCase),
-                canUpdate = projected != "",
-                projected = projected,
-                suggestedCode = SessionSegmentCode(session),
-                reason = reason
-            });
-        }
-        catch (Exception ex) { WriteJsonAndComplete(js, new { success = false, message = ex.Message }); }
-    }
-
-    /// <summary>
-    /// Rewrites the session segment of a student's entry number, after re-checking every
-    /// condition the dialog checked. The browser's tick is treated as a request, not as
-    /// permission: an admin who opened the dialog, changed the session, ticked the box
-    /// and then changed the session back must not end up with a rewritten number.
-    ///
-    /// Returns a sentence to append to the success message, or "" when nothing was done.
-    /// Never throws: the student's own details are already saved by this point, and a
-    /// problem with the entry number must not report that save as a failure.
-    /// </summary>
-    private string ApplyEntrynoSessionChange(MySqlConnection conn, string regno,
-        string priorEntryno, string priorSession, string newSession, string overrideCode)
-    {
-        try
-        {
-            if (string.Equals(priorSession, newSession, StringComparison.OrdinalIgnoreCase))
-                return "  The entry number was left unchanged because the session did not change.";
-
-            string reason;
-            string projected = ProjectEntrynoForSession(priorEntryno, newSession, overrideCode, out reason);
-            if (projected == "")
-                return "  The entry number was left unchanged. " + reason;
-
-            // The code came from a text box, so it is bounded here rather than trusted:
-            // letters only, and short. A slash would silently add a segment; anything
-            // longer than this is not a session code.
-            string tail = projected.Substring(projected.LastIndexOf('/') + 1);
-            if (tail.Length == 0 || tail.Length > 8)
-                return "  The entry number was left unchanged: \"" + tail + "\" is not a valid session code.";
-            foreach (char c in tail)
-                if (!char.IsLetter(c))
-                    return "  The entry number was left unchanged: a session code may only contain letters.";
-
-            // entryno has no unique index and 135 duplicate values already exist, so the
-            // database will not catch a collision. Landing on ANOTHER student's number is
-            // a different matter from the historical duplicates, and is worth stopping for.
-            using (var dup = new MySqlCommand(
-                "SELECT regno FROM acad_student WHERE TRIM(entryno)=TRIM(@e) AND regno<>@r LIMIT 1", conn))
-            {
-                dup.Parameters.AddWithValue("@e", projected);
-                dup.Parameters.AddWithValue("@r", regno);
-                object other = dup.ExecuteScalar();
-                if (other != null && other != DBNull.Value)
-                    return "  The entry number was NOT changed: " + projected + " already belongs to "
-                         + other.ToString().Trim() + ". Please resolve that first.";
-            }
-
-            using (var tx = conn.BeginTransaction())
-            {
-                try
-                {
-                    using (var up = new MySqlCommand("UPDATE acad_student SET entryno=@e WHERE regno=@r", conn, tx))
-                    { up.Parameters.AddWithValue("@e", projected); up.Parameters.AddWithValue("@r", regno); up.ExecuteNonQuery(); }
-
-                    // acad_haltcases is the only other table carrying an entry number
-                    // (confirmed against information_schema), so it moves with it or the
-                    // two records stop referring to the same student.
-                    using (var up = new MySqlCommand("UPDATE acad_haltcases SET entryno=@e WHERE TRIM(entryno)=TRIM(@old)", conn, tx))
-                    { up.Parameters.AddWithValue("@e", projected); up.Parameters.AddWithValue("@old", priorEntryno); up.ExecuteNonQuery(); }
-
-                    tx.Commit();
-                }
-                catch { tx.Rollback(); throw; }
-            }
-
-            LogStudentAction(conn, regno, "QuickEditEntrynoSession",
-                "Session " + priorSession + " -> " + newSession + "; entry number " + priorEntryno + " -> " + projected);
-
-            return "  Entry number updated: " + priorEntryno + "  ->  " + projected;
-        }
-        catch (Exception ex)
-        {
-            return "  The student's details were saved, but the entry number could not be updated: " + ex.Message;
-        }
-    }
-
+    // ── Quick Edit: save the edited fields (strict-SQL-mode safe; regno untouched) ──
+    // With updateEntryno=1 the student number is rebuilt from the saved details (entry year,
+    // session, campus, programme) in the SAME transaction: either both are saved or neither is.
     private void HandleQuickEditSave()
     {
         var js = new JavaScriptSerializer();
@@ -8455,67 +8468,88 @@ public partial class COOPERP_NewScreens_NewStudentInfo : System.Web.UI.Page
             sets.Add("gradSystemID=@gradsystem"); sets.Add("completion_date=@completion_date"); sets.Add("new_status=@newstatus");
             string sql = "UPDATE acad_student SET " + string.Join(", ", sets.ToArray()) + " WHERE regno=@regno";
 
-            // Opt-in, from the "also update the entry number" tick in the dialog. Enforced
-            // again below regardless of what the browser sent.
             bool updateEntryno = F("updateEntryno") == "1";
-            string entrynoNote = "";
-            string priorEntryno = "", priorSession = "";
+            string numberNote = "", oldNo = "", newNo = "";
 
             using (var conn = new MySqlConnection(ConnectionString))
             {
                 conn.Open();
-
-                // Read the session and entry number BEFORE the update: the update
-                // overwrites studsesion, and "did the session actually change" cannot be
-                // answered afterwards.
-                if (updateEntryno)
+                bool locked = false;
+                try
                 {
-                    using (var pre = new MySqlCommand("SELECT IFNULL(entryno,''), IFNULL(studsesion,'') FROM acad_student WHERE regno=@r LIMIT 1", conn))
+                    if (updateEntryno)
                     {
-                        pre.Parameters.AddWithValue("@r", regno);
-                        using (var pr = pre.ExecuteReader())
-                            if (pr.Read()) { priorEntryno = pr.GetString(0).Trim(); priorSession = pr.GetString(1).Trim(); }
+                        locked = TakeStudentNumberLock(conn);
+                        if (!locked) { WriteJsonAndComplete(js, new { success = false, message = "Another student number is being issued right now. Nothing was saved; please try again." }); return; }
+                    }
+                    using (var tx = conn.BeginTransaction())
+                    {
+                        try
+                        {
+                            using (var cmd = new MySqlCommand(sql, conn, tx))
+                            {
+                                cmd.CommandTimeout = 30;
+                                cmd.Parameters.AddWithValue("@regno", regno);
+                                cmd.Parameters.AddWithValue("@firstname", firstname);
+                                cmd.Parameters.AddWithValue("@othername", othername);
+                                cmd.Parameters.AddWithValue("@gender", gender);
+                                cmd.Parameters.AddWithValue("@dob", pDob);
+                                cmd.Parameters.AddWithValue("@nationality", nationality);
+                                cmd.Parameters.AddWithValue("@religion", religion);
+                                cmd.Parameters.AddWithValue("@phone", phone);
+                                cmd.Parameters.AddWithValue("@email", email);
+                                cmd.Parameters.AddWithValue("@district", district);
+                                cmd.Parameters.AddWithValue("@nin", nin);
+                                cmd.Parameters.AddWithValue("@entryyear", pEntry);
+                                cmd.Parameters.AddWithValue("@intake", intake);
+                                cmd.Parameters.AddWithValue("@entrymethod", entrymethod);
+                                if (session != "") cmd.Parameters.AddWithValue("@session", session);
+                                if (campusOk) cmd.Parameters.AddWithValue("@campus", campusVal);
+                                cmd.Parameters.AddWithValue("@gradsystem", pGrad);
+                                cmd.Parameters.AddWithValue("@completion_date", pComp);
+                                cmd.Parameters.AddWithValue("@newstatus", newstatus);
+                                int rows = cmd.ExecuteNonQuery();
+                                if (rows == 0)
+                                {
+                                    bool exists;
+                                    using (var chk = new MySqlCommand("SELECT COUNT(*) FROM acad_student WHERE regno=@r", conn, tx))
+                                    { chk.Parameters.AddWithValue("@r", regno); exists = Convert.ToInt64(chk.ExecuteScalar()) > 0; }
+                                    if (!exists) { tx.Rollback(); WriteJsonAndComplete(js, new { success = false, message = "No student found with regno " + regno + "." }); return; }
+                                }
+                            }
+
+                            if (updateEntryno)
+                            {
+                                // Planned from the row as just saved, so the number matches the details being committed.
+                                StudentNumberPlan plan = PlanStudentNumber(conn, tx, regno, null, null, null, null, null);
+                                if (plan.Proposed == "")
+                                {
+                                    tx.Rollback();
+                                    WriteJsonAndComplete(js, new { success = false, message = "Nothing was saved. The student number could not be built: " + plan.Reason });
+                                    return;
+                                }
+                                if (plan.Changes)
+                                {
+                                    WriteStudentNumber(conn, tx, regno, plan.Current, plan.Proposed);
+                                    oldNo = plan.Current; newNo = plan.Proposed;
+                                    numberNote = " Student number updated: " + (oldNo == "" ? "(blank)" : oldNo) + "  ->  " + newNo + ".";
+                                }
+                                else numberNote = " The student number " + plan.Current + " already matches these details.";
+                            }
+                            tx.Commit();
+                        }
+                        catch { try { tx.Rollback(); } catch { } throw; }
                     }
                 }
+                finally { if (locked) ReleaseStudentNumberLock(conn); }
 
-                using (var cmd = new MySqlCommand(sql, conn))
-                {
-                    cmd.CommandTimeout = 30;
-                    cmd.Parameters.AddWithValue("@regno", regno);
-                    cmd.Parameters.AddWithValue("@firstname", firstname);
-                    cmd.Parameters.AddWithValue("@othername", othername);
-                    cmd.Parameters.AddWithValue("@gender", gender);
-                    cmd.Parameters.AddWithValue("@dob", pDob);
-                    cmd.Parameters.AddWithValue("@nationality", nationality);
-                    cmd.Parameters.AddWithValue("@religion", religion);
-                    cmd.Parameters.AddWithValue("@phone", phone);
-                    cmd.Parameters.AddWithValue("@email", email);
-                    cmd.Parameters.AddWithValue("@district", district);
-                    cmd.Parameters.AddWithValue("@nin", nin);
-                    cmd.Parameters.AddWithValue("@entryyear", pEntry);
-                    cmd.Parameters.AddWithValue("@intake", intake);
-                    cmd.Parameters.AddWithValue("@entrymethod", entrymethod);
-                    if (session != "") cmd.Parameters.AddWithValue("@session", session);
-                    if (campusOk) cmd.Parameters.AddWithValue("@campus", campusVal);
-                    cmd.Parameters.AddWithValue("@gradsystem", pGrad);
-                    cmd.Parameters.AddWithValue("@completion_date", pComp);
-                    cmd.Parameters.AddWithValue("@newstatus", newstatus);
-                    int rows = cmd.ExecuteNonQuery();
-                    if (rows == 0)
-                    {
-                        bool exists;
-                        using (var chk = new MySqlCommand("SELECT COUNT(*) FROM acad_student WHERE regno=@r", conn))
-                        { chk.Parameters.AddWithValue("@r", regno); exists = Convert.ToInt64(chk.ExecuteScalar()) > 0; }
-                        if (!exists) { WriteJsonAndComplete(js, new { success = false, message = "No student found with regno " + regno + "." }); return; }
-                    }
-                }
-
-                if (updateEntryno)
-                    entrynoNote = ApplyEntrynoSessionChange(conn, regno, priorEntryno, priorSession, session, F("entrynoCode"));
+                if (newNo != "")
+                    LogStudentAction(conn, regno, "QuickEditStudentNumber", "Student number " + oldNo + " -> " + newNo +
+                        " (entry year " + entryyear + ", session " + session + ", campus " + campus + ")");
             }
-            WriteJsonAndComplete(js, new { success = true, message = "Student " + regno + " updated successfully." + entrynoNote });
+            WriteJsonAndComplete(js, new { success = true, newEntryno = newNo, message = "Student " + regno + " updated successfully." + numberNote });
         }
-        catch (Exception ex) { WriteJsonAndComplete(js, new { success = false, message = ex.Message }); }
+        catch (Exception ex) { WriteJsonAndComplete(js, new { success = false, message = "Nothing was saved. " + ex.Message }); }
     }
 
     private void HandleChangeEntryYear()

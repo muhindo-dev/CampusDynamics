@@ -2648,40 +2648,32 @@
                         <div class="qe-col">
                             <div class="qe-sec">Academic Information</div>
                             <div class="qe-row2">
-                                <div class="cd-form-group"><label class="cd-form-label">Entry Year</label><input type="number" id="qe_entryyear" class="cd-form-input" min="1990" max="2100" /></div>
+                                <div class="cd-form-group"><label class="cd-form-label">Entry Year</label><input type="number" id="qe_entryyear" class="cd-form-input" min="1990" max="2100" oninput="qeNumberRefresh()" /></div>
                                 <div class="cd-form-group"><label class="cd-form-label">Intake</label>
                                     <select id="qe_intake" class="cd-form-input"><option value="">—</option><option>JANUARY</option><option>FEBRUARY</option><option>MARCH</option><option>APRIL</option><option>MAY</option><option>JUNE</option><option>JULY</option><option>AUGUST</option><option>SEPTEMBER</option><option>OCTOBER</option><option>NOVEMBER</option><option>DECEMBER</option></select>
                                 </div>
                             </div>
                             <div class="qe-row2">
                                 <div class="cd-form-group"><label class="cd-form-label">Session</label>
-                                    <select id="qe_studsesion" class="cd-form-input" onchange="qeSessionChanged()"><option value="">—</option><option>DAY</option><option>EVENING</option><option>WEEKEND</option><option>INSERVICE</option></select>
+                                    <select id="qe_studsesion" class="cd-form-input" onchange="qeNumberRefresh()"><option value="">—</option><option>DAY</option><option>EVENING</option><option>WEEKEND</option><option>INSERVICE</option></select>
                                 </div>
                                 <div class="cd-form-group"><label class="cd-form-label">Campus</label>
-                                    <select id="qe_studCampus" class="cd-form-input"><option value="">—</option></select>
+                                    <select id="qe_studCampus" class="cd-form-input" onchange="qeNumberRefresh()"><option value="">—</option></select>
                                 </div>
                             </div>
 
-                            <%-- Appears only when the session is changed AND this student's entry
-                                 number actually ends in a session code. Most do not: of 32,689
-                                 slash-formatted entry numbers only the six-segment ones carry a
-                                 session last, and the rest end in a campus code or a number. --%>
+                            <%-- Student number (YY/U/PROG/SEQ/CAMPUS/SESSION). Shown whenever the
+                                 number these details produce differs from the one on file. Built and
+                                 re-checked on the server; saved in the same transaction as the details. --%>
                             <div id="qeEntrynoBox" style="display:none;margin:2px 0 12px;padding:10px 12px;background:#fffbeb;border:1px solid #fde68a;">
                                 <label style="display:flex;gap:8px;align-items:flex-start;cursor:pointer;font-size:12px;color:#78350f;line-height:1.5;">
-                                    <input type="checkbox" id="qe_updateEntryno" style="margin-top:2px;flex:0 0 auto;" onchange="qeEntrynoToggle()" />
+                                    <input type="checkbox" id="qe_updateEntryno" style="margin-top:2px;flex:0 0 auto;" />
                                     <span>
-                                        <b>Also update the entry number to match the new session.</b><br />
-                                        The last part of the entry number is the session, and it does not change on its own.
+                                        <b>Update the student number to match these details.</b><br />
+                                        Year, level, programme, campus and session are all taken from the record; the number is checked to be unique before it is saved.
                                     </span>
                                 </label>
                                 <div id="qeEntrynoPreview" style="margin:8px 0 0 24px;font-size:12px;color:#78350f;"></div>
-                                <div id="qeEntrynoCodeWrap" style="display:none;margin:8px 0 0 24px;">
-                                    <label class="cd-form-label" style="margin-bottom:3px;">Session code to use</label>
-                                    <input type="text" id="qe_entrynoCode" maxlength="8" autocomplete="off"
-                                           style="width:110px;text-transform:uppercase;border:1px solid #e0e5ed;padding:6px 9px;font-size:12px;font-family:inherit;"
-                                           oninput="qeEntrynoRefresh()" />
-                                    <span style="font-size:11px;color:#92400e;margin-left:8px;">Letters only. Change it if your office uses a different code.</span>
-                                </div>
                             </div>
                             <div id="qeEntrynoWhyNot" style="display:none;margin:2px 0 12px;padding:9px 12px;background:#f5f7fa;border:1px solid #e0e5ed;font-size:11.5px;color:#5b6472;line-height:1.5;"></div>
 
@@ -2868,6 +2860,17 @@
                         </label>
                     </div>
                 </div>
+
+                <!-- Shown when the programme is NOT being changed but the student's current number does not
+                     match their record (an earlier programme/campus/session change left it stale). Opt-in. -->
+                <div id="cpFixWrap" style="display:none;margin-top:10px;padding:8px 10px;border:1px solid #fde68a;background:#fffbeb;font-size:11px;color:#78350f;">
+                    <label style="display:flex;align-items:flex-start;gap:8px;cursor:pointer;font-size:12px;">
+                        <input type="checkbox" id="cpFixRegno" style="margin-top:2px;">
+                        <span><b>Correct the student number</b> &mdash; it does not match this student's record.</span>
+                    </label>
+                    <div id="cpFixPreview" style="margin:6px 0 0 22px;"></div>
+                </div>
+                <div id="cpFixWhyNot" style="display:none;margin-top:10px;padding:8px 10px;border:1px solid #e0e5ed;background:#f5f7fa;font-size:11px;color:#5b6472;"></div>
 
                 <div id="cpStatus" style="display:none;padding:8px 10px;font-size:11px;margin-top:8px;"></div>
             </div>
@@ -3516,6 +3519,8 @@
         // is a second opt-in + confirmation. So the identifier never changes unless the user asks for it,
         // and if the programme itself doesn't change the reg number is never touched.
         var _cpRegno = '', _cpCurProg = '', _cpCurSpec = '', _cpNewRegno = '', _cpOldRegno = '', _cpCampus = '';
+        var _cpNewReason = '', _cpNewNote = '';   // why a number cannot be built / year note, for the new programme
+        var _cpFixNew = '', _cpFixState = '';     // current-programme check: 'fix' = offer correction, 'why' = cannot build
         function openChangeProgModal(regno, student) {
             if (!regno) { alert('No registration number.'); return; }
             _cpRegno = regno; _cpCurProg = ''; _cpCurSpec = ''; _cpNewRegno = ''; _cpOldRegno = '';
@@ -3528,7 +3533,10 @@
             document.getElementById('cpRegnoWrap').style.display = 'none';
             document.getElementById('cpPreview').style.display = 'none';
             document.getElementById('cpCampusWrap').style.display = 'none';
-            _cpCampus = '';
+            _cpCampus = ''; _cpNewReason = ''; _cpNewNote = ''; _cpFixNew = ''; _cpFixState = '';
+            document.getElementById('cpFixRegno').checked = false;
+            document.getElementById('cpFixWrap').style.display = 'none';
+            document.getElementById('cpFixWhyNot').style.display = 'none';
             document.getElementById('cpProg').innerHTML = '<option value="">Loading…</option>';
             document.getElementById('cpProg').disabled = true;
             document.getElementById('cpSpec').innerHTML = '<option value="">-- None --</option>';
@@ -3547,7 +3555,40 @@
                 document.getElementById('cpCurrent').innerHTML = 'Currently: <b>' + _njEsc(cur.progname || cur.prog || '-') + '</b>' + (cur.specname ? ' &middot; ' + _njEsc(cur.specname) : '');
                 // Load specialisations for the CURRENT programme — the default editable list.
                 cpLoadSpecs(_cpCurProg, _cpCurSpec);
+                cpCheckCurrentNumber();
             });
+        }
+
+        // Does the number on file match what the record says it should be (same programme)?
+        function cpCheckCurrentNumber() {
+            if (!_cpRegno || !_cpCurProg) return;
+            var forRegno = _cpRegno;
+            _njPost('PreviewProgRegno', 'regno=' + encodeURIComponent(_cpRegno) + '&prog=' + encodeURIComponent(_cpCurProg), function (r) {
+                if (forRegno !== _cpRegno) return;
+                _cpFixNew = ''; _cpFixState = '';
+                if (r && r.success && r.canBuild && r.changes) {
+                    _cpFixNew = r.newEntryno; _cpFixState = 'fix';
+                    document.getElementById('cpFixPreview').innerHTML =
+                        '<span style="opacity:.7">' + _njEsc(r.oldEntryno || '(blank)') + '</span> &rarr; <b>' + _njEsc(r.newEntryno) + '</b>'
+                        + (r.keptSequence ? '<br><span style="font-size:10px;">The student keeps their sequence number.</span>'
+                                          : '<br><span style="font-size:10px;">A new, unused sequence number is issued.</span>')
+                        + (r.yearNote ? '<br><span style="font-size:10px;">' + _njEsc(r.yearNote) + '</span>' : '');
+                } else if (r && r.success && !r.canBuild) {
+                    _cpFixState = 'why';
+                    document.getElementById('cpFixWhyNot').innerHTML = '<b>Student number:</b> ' + _njEsc(r.oldEntryno || '(blank)')
+                        + '<br>It cannot be rebuilt automatically: ' + _njEsc(r.reason || '');
+                }
+                cpSyncFixVisibility();
+            });
+        }
+        // The correction applies only while the programme is NOT being changed; a programme
+        // change has its own "regenerate" option.
+        function cpSyncFixVisibility() {
+            var prog = document.getElementById('cpProg').value;
+            var moving = document.getElementById('cpChangeProg').checked && prog && prog !== _cpCurProg;
+            document.getElementById('cpFixWrap').style.display = (!moving && _cpFixState === 'fix') ? 'block' : 'none';
+            document.getElementById('cpFixWhyNot').style.display = (!moving && _cpFixState === 'why') ? 'block' : 'none';
+            if (moving) document.getElementById('cpFixRegno').checked = false;
         }
         function cpToggleProg() {
             var on = document.getElementById('cpChangeProg').checked;
@@ -3560,6 +3601,7 @@
                 document.getElementById('cpPreview').style.display = 'none';
                 _cpNewRegno = '';
                 cpLoadSpecs(_cpCurProg, _cpCurSpec);
+                cpSyncFixVisibility();
             } else {
                 cpOnProgChange();
             }
@@ -3598,6 +3640,7 @@
             cpLoadSpecs(prog, '');
             // Reg-number regeneration only applies when the programme actually DIFFERS from the current one.
             var changed = document.getElementById('cpChangeProg').checked && prog && prog !== _cpCurProg;
+            cpSyncFixVisibility();
             if (!changed) {
                 document.getElementById('cpRegnoWrap').style.display = 'none';
                 document.getElementById('cpPreview').style.display = 'none';
@@ -3616,8 +3659,8 @@
             var body = 'regno=' + encodeURIComponent(_cpRegno) + '&prog=' + encodeURIComponent(prog)
                      + (_cpCampus ? '&campusLetter=' + encodeURIComponent(_cpCampus) : '');
             _njPost('PreviewProgRegno', body, function (r) {
-                if (r && r.success && r.newEntryno) { _cpNewRegno = r.newEntryno; _cpOldRegno = r.oldEntryno || ''; }
-                else { _cpNewRegno = ''; _cpOldRegno = ''; }
+                if (r && r.success && r.newEntryno) { _cpNewRegno = r.newEntryno; _cpOldRegno = r.oldEntryno || ''; _cpNewReason = ''; _cpNewNote = r.yearNote || ''; }
+                else { _cpNewRegno = ''; _cpOldRegno = (r && r.oldEntryno) || ''; _cpNewReason = (r && (r.reason || r.message)) || 'The number could not be prepared.'; _cpNewNote = ''; }
                 if (r && r.success) cpRenderCampus(r);
                 cpRenderPreview();
             });
@@ -3657,11 +3700,25 @@
         }
         function cpRenderPreview() {
             var pv = document.getElementById('cpPreview');
-            if (!document.getElementById('cpUpdateRegno').checked || !_cpNewRegno) { pv.style.display = 'none'; return; }
+            if (!document.getElementById('cpUpdateRegno').checked) { pv.style.display = 'none'; return; }
+            if (!_cpNewRegno) {
+                if (!_cpNewReason) { pv.style.display = 'none'; return; }
+                pv.innerHTML = '<span style="color:#b91c1c;font-weight:700;">The student number cannot be rebuilt:</span> ' + _njEsc(_cpNewReason)
+                    + '<br><span style="font-size:10px;">Untick the option to move the programme and keep the current number, or correct the record first.</span>';
+                pv.style.display = 'block'; return;
+            }
             pv.innerHTML = 'New Reg No will be <b>' + _njEsc(_cpNewRegno) + '</b>'
                 + (_cpOldRegno ? ' <span style="color:#aa8a3a;">(was ' + _njEsc(_cpOldRegno) + ')</span>' : '')
-                + '<br><span style="font-size:10px;">The reg &amp; student number move to the new programme; the internal student ID never changes.</span>';
+                + (_cpNewNote ? '<br><span style="font-size:10px;">' + _njEsc(_cpNewNote) + '</span>' : '')
+                + '<br><span style="font-size:10px;">Built from the record and checked to be unique; the internal student ID never changes.</span>';
             pv.style.display = 'block';
+        }
+        // 1 = correct the number, 0 = leave it, -1 = ticked but nothing valid to apply (blocked).
+        function cpFixRequested() {
+            var box = document.getElementById('cpFixRegno');
+            if (!box.checked || document.getElementById('cpFixWrap').style.display === 'none') return 0;
+            if (!_cpFixNew) { _njStatus('cpStatus', 'The corrected student number is not ready. Nothing was saved.', true); return -1; }
+            return 1;
         }
         function closeChangeProgModal() { document.getElementById('changeProgOverlay').style.display = 'none'; _cpRegno = ''; }
         function submitChangeProg() {
@@ -3673,11 +3730,17 @@
             if (wantProg) {
                 if (!prog) { _njStatus('cpStatus', 'Please select the new programme.', true); return; }
                 if (prog === _cpCurProg) {
-                    if (!confirm('The programme is the same as now, so only the specialisation will be updated. Continue?')) return;
-                    // leaves changeProg = 0 -> reg number untouched
+                    updateRegno = cpFixRequested();
+                    if (updateRegno < 0) return;
+                    if (!confirm('The programme is the same as now, so only the specialisation will be updated'
+                        + (updateRegno ? ' and the student number corrected to ' + _cpFixNew : '') + '. Continue?')) return;
                 } else {
                     changeProg = 1;
                     updateRegno = document.getElementById('cpUpdateRegno').checked ? 1 : 0;
+                    if (updateRegno && !_cpNewRegno) {
+                        _njStatus('cpStatus', 'The student number cannot be rebuilt: ' + (_cpNewReason || 'unknown reason') + ' Nothing was saved.', true);
+                        return;
+                    }
                     var m = 'Move ' + _cpRegno + ' from programme ' + _cpCurProg + ' to ' + prog + '.';
                     m += updateRegno
                         ? '\n\nThe registration / entry number WILL be regenerated to:\n' + (_cpNewRegno || '(new number)') + (_cpOldRegno ? '\n(was ' + _cpOldRegno + ')' : '')
@@ -3686,7 +3749,11 @@
                     if (!confirm(m + '\n\nProceed?')) return;
                 }
             } else {
-                if (!confirm('Update the specialisation for ' + _cpRegno + '?\n\n(Programme and registration number will NOT change.)')) return;
+                updateRegno = cpFixRequested();
+                if (updateRegno < 0) return;
+                if (!confirm(updateRegno
+                    ? 'Update the specialisation for ' + _cpRegno + ' and correct the student number to:\n\n' + _cpFixNew + '\n\n(The programme will NOT change.)'
+                    : 'Update the specialisation for ' + _cpRegno + '?\n\n(Programme and registration number will NOT change.)')) return;
             }
 
             var btn = document.getElementById('btnChangeProg'); btn.disabled = true; var o = btn.innerText; btn.innerText = 'Saving…';
@@ -3701,8 +3768,8 @@
 
         // ---- Quick Edit (modal-driven single-student editor) ----
         var _qeRegno = '';
-        var _qeOpenedSession = '';   // session as loaded, so a change back to it counts as no change
-        var _qeEntryno = '';
+        var _qeNumSeq = 0;           // ignores stale preview replies
+        var _qeNumProposed = '';     // number the server last proposed ('' = none / cannot build)
         function openQuickEdit(regno, name) {
             closeAllActionPopovers();
             if (!regno) { alert('No registration number provided'); return; }
@@ -3742,25 +3809,21 @@
             qeSetVal('qe_completion_date', s.completion_date);
             qeSetSelect('qe_gender', s.gender); qeSetSelect('qe_religion', s.religion); qeSetSelect('qe_intake', s.intake);
             qeSetSelect('qe_studsesion', s.studsesion); qeSetSelect('qe_entrymethod', s.entrymethod);
-            _qeOpenedSession = s.studsesion || '';   // what it was when the dialog opened
-            _qeEntryno = s.entryno || '';
             qeResetEntrynoBox();
             qeSetSelect('qe_new_status', s.new_status || 'ADMITTED');
             if (s.studCampus && !isNaN(parseInt(s.studCampus, 10))) camp.value = String(parseInt(s.studCampus, 10));
             if (s.gradSystemID && !isNaN(parseInt(s.gradSystemID, 10))) grd.value = String(parseInt(s.gradSystemID, 10));
             document.getElementById('qeLoading').style.display = 'none';
             document.getElementById('qeForm').style.display = 'block';
+            qeNumberRefresh();   // after campus/session are set, so the check uses what is on screen
         }
         function closeQuickEdit() { document.getElementById('quickEditOverlay').style.display = 'none'; _qeRegno = ''; qeResetEntrynoBox(); }
 
-        /* ---- entry number follows the session ------------------------------------
-           The last part of the entry number (21/U/BED(P)/1238/KA/INS) is the study
-           session, and changing the session has never updated it. This offers to, but
-           only ever as an opt-in, and only when this student's entry number really does
-           end in a session code — most do not: the six-segment form carries a session
-           last, while shorter ones end in a campus code (K, M) or a bare number, and
-           rewriting those would corrupt them. The server decides that, not this code,
-           and re-checks everything again on save. */
+        /* ---- student number follows the record --------------------------------
+           Every part of the number (YY/U/PROG/SEQ/CAMPUS/SESSION) comes from the record,
+           so the server builds it from the values on screen and says whether it differs
+           from the one on file. The tick is a request: on save the server rebuilds it from
+           the saved row, re-checks uniqueness, and saves nothing if it cannot. */
         function qeEsc(v) {
             return String(v == null ? '' : v)
                 .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
@@ -3774,67 +3837,53 @@
             if (b) b.style.display = 'none';
             if (w) w.style.display = 'none';
             if (c) c.checked = false;
-            var cw = document.getElementById('qeEntrynoCodeWrap');
-            if (cw) cw.style.display = 'none';
+            _qeNumProposed = '';
         }
 
-        function qeSessionChanged() {
-            var sess = document.getElementById('qe_studsesion').value || '';
+        function qeNumberRefresh() {
             if (!_qeRegno) return;
-            // Back to where it started is not a change.
-            if (sess.toUpperCase() === (_qeOpenedSession || '').toUpperCase()) { qeResetEntrynoBox(); return; }
-            document.getElementById('qe_entrynoCode').value = '';
-            qeEntrynoRefresh();
-        }
-
-        function qeEntrynoRefresh() {
-            var sess = document.getElementById('qe_studsesion').value || '';
-            var code = (document.getElementById('qe_entrynoCode').value || '').toUpperCase();
-            document.getElementById('qe_entrynoCode').value = code;
-            if (!_qeRegno || !sess) { qeResetEntrynoBox(); return; }
-
+            var seq = ++_qeNumSeq;
+            function v(id) { return encodeURIComponent((document.getElementById(id).value || '').trim()); }
             var body = 'regno=' + encodeURIComponent(_qeRegno)
-                     + '&studsesion=' + encodeURIComponent(sess)
-                     + '&code=' + encodeURIComponent(code);
-            fetch(window.location.pathname + '?action=PreviewEntrynoForSession', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/x-www-form-urlencoded', 'X-Requested-With': 'XMLHttpRequest' },
-                body: body
-            }).then(function (r) { return r.json(); }).then(function (d) {
+                     + '&entryyear=' + v('qe_entryyear') + '&studsesion=' + v('qe_studsesion') + '&studCampus=' + v('qe_studCampus');
+            _njPost('PreviewStudentNumber', body, function (d) {
+                if (seq !== _qeNumSeq) return;   // a newer edit is already being checked
                 var box = document.getElementById('qeEntrynoBox');
                 var why = document.getElementById('qeEntrynoWhyNot');
+                var chk = document.getElementById('qe_updateEntryno');
                 if (!d || !d.success) { qeResetEntrynoBox(); return; }
-
-                if (d.canUpdate) {
+                if (d.canBuild && d.changes) {
+                    _qeNumProposed = d.proposed;
                     why.style.display = 'none';
                     box.style.display = 'block';
                     document.getElementById('qeEntrynoPreview').innerHTML =
-                        '<span style="opacity:.7">' + qeEsc(d.entryno) + '</span>'
-                        + ' &nbsp;&rarr;&nbsp; <b>' + qeEsc(d.projected) + '</b>';
-                    if (!document.getElementById('qe_entrynoCode').value)
-                        document.getElementById('qe_entrynoCode').value = d.suggestedCode || '';
+                        '<span style="opacity:.7">' + qeEsc(d.current || '(blank)') + '</span>'
+                        + ' &nbsp;&rarr;&nbsp; <b>' + qeEsc(d.proposed) + '</b>'
+                        + (d.keptSequence ? '<br/><span style="font-size:11px;">The student keeps their sequence number.</span>'
+                                          : '<br/><span style="font-size:11px;">A new, unused sequence number is issued.</span>')
+                        + (d.yearNote ? '<br/><span style="font-size:11px;">' + qeEsc(d.yearNote) + '</span>' : '');
+                } else if (d.canBuild) {
+                    // Already correct: nothing to offer.
+                    chk.checked = false; _qeNumProposed = '';
+                    box.style.display = 'none'; why.style.display = 'none';
                 } else {
-                    // Say WHY it is not offered rather than showing nothing, so an admin
-                    // is never left wondering whether the system noticed.
+                    chk.checked = false; _qeNumProposed = '';
                     box.style.display = 'none';
-                    document.getElementById('qe_updateEntryno').checked = false;
-                    if (d.reason && d.entryno) {
-                        why.style.display = 'block';
-                        why.innerHTML = '<b>Entry number:</b> ' + qeEsc(d.entryno) + '<br/>' + qeEsc(d.reason);
-                    } else { why.style.display = 'none'; }
+                    why.style.display = 'block';
+                    why.innerHTML = '<b>Student number:</b> ' + qeEsc(d.current || '(blank)') + '<br/>It cannot be rebuilt automatically: ' + qeEsc(d.reason);
                 }
-            }).catch(function () { qeResetEntrynoBox(); });
+            });
         }
 
-        function qeEntrynoToggle() {
-            var on = document.getElementById('qe_updateEntryno').checked;
-            document.getElementById('qeEntrynoCodeWrap').style.display = on ? 'block' : 'none';
-        }
         function submitQuickEdit() {
             var fn = (document.getElementById('qe_firstname').value || '').trim();
             if (!fn) { _njStatus('qeStatus', 'First name is required.', true); return; }
             var em = (document.getElementById('qe_email').value || '').trim();
             if (em && em.indexOf('@') < 0) { _njStatus('qeStatus', 'Invalid email format.', true); return; }
+            if (document.getElementById('qe_updateEntryno').checked) {
+                if (!_qeNumProposed) { _njStatus('qeStatus', 'The student number could not be prepared. Untick "Update the student number" or fix the details shown.', true); return; }
+                if (!confirm('Save these details AND change the student number to:\n\n' + _qeNumProposed + '\n\nThe number is re-checked for uniqueness when it is saved. Proceed?')) return;
+            }
             var btn = document.getElementById('btnQuickEdit'); btn.disabled = true; var o = btn.innerText; btn.innerText = 'Saving…';
             function v(id) { return encodeURIComponent((document.getElementById(id).value || '').trim()); }
             var body = 'regno=' + encodeURIComponent(_qeRegno)
@@ -3844,8 +3893,7 @@
                 + '&national_id=' + v('qe_national_id') + '&entryyear=' + v('qe_entryyear') + '&intake=' + v('qe_intake')
                 + '&studsesion=' + v('qe_studsesion') + '&studCampus=' + v('qe_studCampus') + '&entrymethod=' + v('qe_entrymethod')
                 + '&gradSystemID=' + v('qe_gradSystemID') + '&new_status=' + v('qe_new_status') + '&completion_date=' + v('qe_completion_date')
-                + '&updateEntryno=' + (document.getElementById('qe_updateEntryno').checked ? '1' : '0')
-                + '&entrynoCode=' + encodeURIComponent(document.getElementById('qe_entrynoCode').value || '');
+                + '&updateEntryno=' + (document.getElementById('qe_updateEntryno').checked ? '1' : '0');
             _njPost('QuickEditSave', body, function (r) {
                 if (r && r.success) { _njStatus('qeStatus', (r.message || 'Saved.') + ' Refreshing…', false); setTimeout(function () { window.location.reload(); }, 800); }
                 else { _njStatus('qeStatus', (r && r.message) || 'Save failed.', true); btn.disabled = false; btn.innerText = o; }
