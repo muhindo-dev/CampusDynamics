@@ -239,7 +239,9 @@ public sealed class AcademicDocumentPdfService
 				"  gpa, result_comment, CreditUnits, r.progid, r.study_system,\n" +
 				"  CONCAT_WS('  ',CONCAT('GPA: ',gpa),CONCAT('      CGPA: ',acad_CGPAFinder_ByPeriod(r.regno,r.studyyear, r.semester))) AS SemesterScores\n" +
 				"  FROM acad_transcript_results r JOIN acad_graduands g ON g.regno=r.regno\n" +
-				"  WHERE g.regno=reg AND trans_status='Ready'\n" +
+				// No trans_status filter: once a transcript was printed (status 'Printed') the
+				// filter made every later copy blank. Who may print is GraduationPrintGate's job.
+				"  WHERE g.regno=reg\n" +
 				"  ORDER BY r.studyyear, r.semester, r.ID;\n" +
 				"END";
 

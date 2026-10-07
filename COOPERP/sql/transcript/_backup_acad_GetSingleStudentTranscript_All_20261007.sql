@@ -1,5 +1,3 @@
--- 2026-10-07: no trans_status='Ready' filter - a printed transcript must not reprint blank.
--- Who may print is decided by GraduationPrintGate; every print is logged in acad_document_prints.
 DROP PROCEDURE IF EXISTS `acad_GetSingleStudentTranscript_All`;
 DELIMITER $$
 CREATE DEFINER=`root`@`localhost` PROCEDURE `acad_GetSingleStudentTranscript_All`(reg CHAR(30))
@@ -15,7 +13,7 @@ r.ID, r.regno, courseid, r.semester, acad_GetResultsAcademicYear(reg,studyyear, 
 gpa, result_comment, CreditUnits, r.progid, r.study_system,
 CONCAT_WS('  ',CONCAT('GPA: ',gpa),CONCAT('      CGPA: ',acad_CGPAFinder_ByPeriod(r.regno,r.studyyear, r.semester))) AS SemesterScores
 FROM acad_transcript_results r JOIN acad_graduands g ON g.regno=r.regno
-WHERE g.regno=reg
+WHERE g.regno=reg AND trans_status='Ready'
 ORDER BY r.studyyear, r.semester, r.ID;
 
 END$$
