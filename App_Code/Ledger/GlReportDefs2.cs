@@ -371,7 +371,8 @@ public static partial class GlReports
             {
                 GlCalc.Totals t = GlCalc.Total(x.S, p.Item2, p.Item3, "WHOLE");
                 int n = ub.Count(v => v.First >= p.Item2 && v.First <= p.Item3);
-                string key = year == null ? p.Item1 : p.Item2.ToString("yyyy-MM", CultureInfo.InvariantCulture), so;
+                GlCalc.FinYear py = year == null ? x.Years.FirstOrDefault(v => v.Label == p.Item1) : null;
+                string key = year == null ? (py != null ? "FY:" + GlFmt.Iso(py.Start) : p.Item1) : p.Item2.ToString("yyyy-MM", CultureInfo.InvariantCulture), so;
                 r.Add(ReportLink("R01", "from", GlFmt.Iso(p.Item2), "to", GlFmt.Iso(p.Item3)), "", p.Item1, t.Lines, (decimal)t.Dr, (decimal)t.Cr, (decimal)t.Diff, (long)n, signed.TryGetValue(key, out so) ? so : "Not signed off");
             }
             foreach (GlFinding f in GlWarnings.DetectOnly("W06").Where(f => year == null || f.Scope == year.Label))

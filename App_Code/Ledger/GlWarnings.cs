@@ -362,7 +362,8 @@ public static class GlWarnings
             if (!DateTime.TryParseExact(key + "-01", "yyyy-MM-dd", CultureInfo.InvariantCulture, DateTimeStyles.None, out m)) return false;
             a = m; b = m.AddMonths(1).AddDays(-1); return true;
         }
-        GlCalc.FinYear y = x.Years.FirstOrDefault(v => v.Label == key || "FY" + v.Label == key);
+        // Years are signed off under "FY:" and their start date (labels in the year table are not reliable).
+        GlCalc.FinYear y = x.Years.FirstOrDefault(v => key == "FY:" + GlFmt.Iso(v.Start) || v.Label == key);
         if (y == null) return false;
         a = y.Start; b = y.End; return true;
     }
