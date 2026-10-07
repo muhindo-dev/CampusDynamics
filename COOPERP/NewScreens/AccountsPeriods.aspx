@@ -21,5 +21,5 @@
 <script>window.GL_BOOT = <%= BootJson %>;</script>
 <script src="<%= ResolveUrl("~/COOPERP/NewScreens/js/fa.js") %>?v=2"></script>
 <script src="<%= ResolveUrl("~/COOPERP/NewScreens/js/gl.js") %>?v=3"></script>
-<script src="<%= ResolveUrl("~/COOPERP/NewScreens/js/gl-periods.js") %>?v=1"></script>
+<script src="<%= ResolveUrl("~/COOPERP/NewScreens/js/gl-periods.js") %>?v=2"></script>
 </asp:Content>

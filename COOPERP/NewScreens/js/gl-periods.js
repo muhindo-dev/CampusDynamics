@@ -19,7 +19,7 @@
             var rows = [r.year].concat(r.months);
             FA.qs('pList').innerHTML = '<div class="fa-table-wrap"><table class="fa-table"><thead><tr><th>Period</th><th class="fa-num">Lines</th><th class="fa-num">Difference</th><th class="fa-num">Unbalanced vouchers</th><th>Review</th></tr></thead><tbody>' +
                 rows.map(function (p, i) {
-                    return '<tr class="is-click' + (i === 0 ? ' gl-s' : '') + (p.key === st.sel ? ' is-selected' : '') + '" data-k="' + FA.esc(p.key) + '"' + (p.started ? '' : ' style="opacity:.5"') + '><td>' + (i === 0 ? 'Whole year ' : '') + FA.esc(p.label) + '</td><td class="fa-num">' + p.lines + '</td>' +
+                    return '<tr class="is-click' + (i === 0 ? ' gl-s' : '') + (p.key === st.sel ? ' is-selected' : '') + '" data-k="' + FA.esc(p.key) + '"' + (p.started ? '' : ' style="opacity:.5"') + '><td>' + FA.esc(p.label) + '</td><td class="fa-num">' + p.lines + '</td>' +
                         '<td class="fa-num' + (p.balanced ? '' : ' gl-neg') + '">' + p.diff + '</td><td class="fa-num">' + FA.money(p.unbalanced) + '</td><td>' + badge(p.status) + (p.statusBy ? '<span class="fa-sub">' + FA.esc(p.statusBy + ', ' + p.statusWhen) + '</span>' : '') + '</td></tr>';
                 }).join('') + '</tbody></table></div>';
             Array.prototype.forEach.call(FA.qs('pList').querySelectorAll('tr[data-k]'), function (tr) { tr.onclick = function () { st.sel = tr.getAttribute('data-k'); Array.prototype.forEach.call(FA.qs('pList').querySelectorAll('tr'), function (x) { x.classList.remove('is-selected'); }); tr.classList.add('is-selected'); panel(); }; });
