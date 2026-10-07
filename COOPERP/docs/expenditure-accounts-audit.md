@@ -152,6 +152,16 @@ Evidence is file:line or a query result.
 | D36 | L | SupplierManagement.aspx.cs:127 | Hard delete with no check for ledger use. | Code | Classic. |
 | D37 | L | Hard-coded credentials | Fallback connection strings with passwords in FinanceSystemRealignmentHelper.cs:119 and SidebarMaster.master.cs:10-12; root password in FINANCE_UI_PLAN.md. | Code | Remove fallbacks (MIS). |
 | D38 | L | FSR helper | Stale duplicate copy at COOPERP/App_Code/FinanceSystemRealignmentHelper.cs. | Files | Retire with FSR. |
+| D39 | H | Function fin_NextVoucherNo | Returns the calling user's own highest number in fin_transaction_numbers plus one, not a global next number. A new user gets 1. This is one source of the reused voucher numbers (D34). The highest number in use is 202,502,611, from a date-like sequence. | Function body, 7 Oct 2026 | Adjusting entries do not use it: they number from 900,000,001. The classic posting routes still do (phase 2). |
+| D40 | M | Chart: fin_subaccounts.collectionLedgerType | "Supplier" is linked to AC2028 Printing and Stationery, an expense account, as well as to AC9021 Trade Payables. | Query, 7 Oct 2026 | Control accounts are taken from balance-sheet accounts only; correct the chart link (phase 2 chart editor). |
+| D41 | M | Unsigned amounts | transaction_amount is BIGINT UNSIGNED. Any query that negates or subtracts it raises MySQL error 1690 part-way through the result, and the MySql.Data 6.6 connector then hangs instead of failing. | Found while building the warnings, 7 Oct 2026 | All new queries cast to SIGNED. Any classic report doing this arithmetic can hang the same way. |
+
+---
+
+Status after phase 1 (7 October 2026):
+- D01, D02 and D03 are guarded.
+- D04 to D07, D10 to D12, D21, D29 to D31, D34 and D35 are now reported by the General Ledger reports and Finance Warnings, with the cause shown.
+- The rest are in the plan's phase 2.
 
 ---
 

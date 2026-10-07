@@ -1,7 +1,7 @@
 # Expenditure and Accounts: rebuild plan
 
 Prepared 7 October 2026 by MIS, for the University Bursar and MIS. Read with `expenditure-accounts-audit.md`; defect IDs (D01...) refer to it.
-Status: **implementation in progress**. Section 7 is the live checklist.
+Status: **phase 1 delivered 7 October 2026**. Section 7 is the checklist with notes; section 10 records the test results; section 11 lists what is left.
 
 ---
 
@@ -37,6 +37,21 @@ Status: **implementation in progress**. Section 7 is the live checklist.
 8. **Phase split, from the size of the problem.**
    - **Phase 1 (this work):** the read side, warnings, the adjusting-entry workflow and the period sign-off, plus emergency guards on three dangerous existing endpoints (D01-D03).
    - **Phase 2 (planned, not in this delivery):** replace the transactional screens. That means the voucher, journal, contra and requisition-to-payment posting workflow, a chart and supplier editor, budget entry and bank statement import. Those screens post money, and their replacement must be agreed with the Bursar screen by screen.
+
+### 0b. Changes made during implementation
+
+1. **Voucher numbers for adjusting entries.**
+   - `fin_NextVoucherNo(user)` returns the *user's own* highest number plus one, so a new user gets voucher 1. It is one cause of the reused numbers (W05). It is not used.
+   - A balanced adjusting entry takes voucher number 900,000,000 plus its id (`gl_settings.adjust_voucher_base`).
+   - No sequence reaches that range today: the highest number in use is 202,502,611. So the number is never shared.
+2. **Two kinds of adjusting entry.**
+   - A balanced entry cannot reduce the trial balance difference.
+   - So an entry can also *complete* an unbalanced voucher. It adds the missing side under that voucher's own number, and is accepted only if the voucher then balances exactly. That is checked again, under a row lock, at approval.
+   - Migration `2026-10_gl_schema_2.sql` adds `gl_adjustment.mode` and `override_note` (additive, own table).
+3. **`fin_ledger` is InnoDB**, so posting is one transaction: lock, re-validate, sign-off check, insert, assert counts and balance, audit, commit.
+4. **Control accounts come from the chart's ledger-type link, balance-sheet accounts only.** The chart links "Supplier" to AC2028 Printing and Stationery, an expense, which is ignored as a chart error. The supplier control is AC9021.
+5. **Health score.** Each rule counts once, at its worst open severity. The score is 0 today, so the page shows the points lost per rule.
+6. **Last-used parameters** are a convenience and are not audited. Saved filters are audited.
 
 ---
 
@@ -267,15 +282,24 @@ Each item is ticked when done, with notes.
   - Detection runs on demand, automatically when a page opens and the last run is older than 6 hours (in the background, never blocking), and on a timer (`GlWarnings.EnsureScheduled`, armed from Global.asax).
   - Health is counted per rule at its worst open severity. Today it is 0 (3 critical, 9 high, 7 medium rules), so the pages show the points lost per rule.
   - Run 1 was the hung installation run (W04 and W07 errors recorded). Two warnings closed in run 2 only because rules were corrected (AC2028 control, AC8040 contra); each carries a note saying so.
-- [ ] 8. Report engine and R01 Trial Balance with the Checks panel; exports.
-- [ ] 9. Reports R02-R20.
-- [ ] 10. Account and voucher pages (drill targets).
-- [ ] 11. Finance Warnings page.
-- [ ] 12. Dashboard.
-- [ ] 13. Adjusting entries: wizard, approval, posting.
-- [ ] 14. Periods page and close wizard; year-end draft.
-- [ ] 15. Test plan (section 8); fix; record results.
-- [ ] 16. User guide; memory; commit.
+- [x] 8. Report engine and R01 Trial Balance with the Checks panel; exports.
+  - `GlReports`: definition-driven engine (parameters with defaults, financial-year shortcut, search, sort, paging, totals over all matching rows, one drill link per row), last-used parameters, saved filters.
+  - Exports (`GlExport`, `GlPdf`): Excel workbook (Cover, Report, Checks sheets), CSV, and PDF with crest and signatures. Each carries exactly the screen's rows, totals and checks; search and sort are kept.
+  - PDF is limited to 20,000 rows, Excel and CSV to 500,000.
+- [x] 9. Reports R02-R20. All twenty run with their checks.
+- [x] 10. Account and voucher pages (drill targets).
+  - The trial balance drills to the account card, then the statement, then the voucher.
+  - The account card shows members of a subsidiary ledger, warnings on the account, and the mapping form for codes missing from the chart.
+  - The voucher page shows journals, fee-tracking records, requisitions, and lines deleted or edited under the number.
+- [x] 11. Finance Warnings page.
+  - Health score and points lost; Open, Acknowledged, Fixed and History tabs.
+  - Live records with per-record acceptance; acknowledge, reopen, assign and note; run now.
+- [x] 12. Dashboard. Every tile agrees with the report it opens (section 10).
+- [x] 13. Adjusting entries: wizard, approval, posting. See the changes in section 0b.
+- [x] 14. Periods page and close wizard; year-end draft. Sign-off keys: month `yyyy-MM`; year `FY:` plus the start date.
+- [x] 15. Test plan (section 8); fix; record results. Section 10.
+- [x] 16. User guide (`expenditure-accounts-user-guide.md`); memory; commit.
+  - The 17 replaced sidebar items are labelled "(classic)"; nothing classic was removed.
 
 ---
 
@@ -307,3 +331,81 @@ Each item is ticked when done, with notes.
 | Q8 | Retirement of the classic and FSR pages listed in the audit (section 5). |
 | Q9 | Budgets for 2025/26 and 2026/27: who loads them, and by account or by vote and department? |
 | Q10 | Phase 2 order: voucher and payment workflow first (it connects requisitions to the ledger), or bank reconciliation first? |
+
+---
+
+## 10. Test results (7 October 2026)
+
+| # | Test | Result |
+|---|---|---|
+| 1 | No historical row changed | **Pass.** Counts, totals and CRC checksums of fin_ledger (to TID 406926), fin_studentfeestracking (to TID 128893), fin_journalnumbers, fin_journal_details, fin_subaccounts, fin_mainaccounts and fin_financial_years match the pre-installation baseline exactly. No GL_ADJUST line exists. |
+| 2 | One figure everywhere | **Pass, 13 comparisons**, listed below. |
+| 3 | Cause analysis adds up | **Pass**: whole ledger, each financial year, November 2024, March 2025 and July 2026, on both bases. |
+| 4 | Read-only | **Pass.** Every report, check and warning runs on `cd_gl_ro`; INSERT and UPDATE as that user are refused by MySQL. |
+| 5 | Permissions | **Pass**, details below. |
+| 6 | Every write audited | **Pass.** Acknowledge, reopen, assign, note, record acceptance and withdrawal, saved filter create and remove, mapping create and confirm, adjustment create, edit, submit, take back, cancel, reject, approve and post, period review, sign-off and reopen: one `gl_audit` row each. |
+| 7 | Performance | Aggregate 0.7 s cold, 38 ms warm; trial balance with checks 1.1 to 2.1 s; voucher analysis 1.2 s; full detection 7 s (22 rules); slowest report R19 2.6 s. |
+| 8 | Exports | **Pass.** R01: 217 rows plus totals in PDF, Excel and CSV, with totals equal to the screen. R05: 114 rows in all three. |
+| 9 | Screens | **Pass.** Eight screens at 1366, 768 and 375 px: no script errors and no horizontal overflow. |
+
+**Test 2, one figure everywhere:**
+- Trial balance difference: R01 = R05 = W02 = unbalanced vouchers plus unnumbered lines = 4,030,430,035.
+- Cash: dashboard = the sum of the cash book closings = cash flow closing = 4,186,211,453.
+- Income and expenditure: dashboard = R04, and R04 = R09 (income 15,895,573,650, expenditure 6,706,619,190).
+- Receivables: dashboard = R11 canonical = 4,212,689,109.
+- Payables: R10 = the supplier subsidiary ledger.
+- R14's year total = the trial balance movement.
+- The account card = R02 = the trial balance row.
+
+**Test 5, permissions:**
+- PageMethods refuse anonymous callers, and writes refuse a missing anti-forgery token.
+- Auditor and VC can read but are refused every write. The Finance Officer gets 403 on Adjusting entries; an unrelated role (registrar) gets 403 on every page.
+- An Accountant cannot approve or sign off. The maker cannot approve their own entry, and a stale version is refused.
+
+**Posting.** The posting path was tested as a dry run through the real approval code:
+- It inserted the lines inside the transaction (ledger 187,371 to 187,372 and to 187,373).
+- It passed the row-count and balance assertions, then rolled back.
+- No test line was left in the ledger.
+
+**Installation records that remain by design** (append-only tables; none affects any figure):
+
+| Record | Why it remains |
+|---|---|
+| `gl_audit` id 1 (entity TEST) | Guard test |
+| `gl_audit` rows by `install-test` and `gl.test.*` | One per test action above |
+| `gl_warning_event` id 46 | warning_id 0, a keying slip |
+| 10 `gl_warning_event` rows | For removed test warning 42 (rule W00) |
+| `gl_warning_run` 1 | Hung during installation: errors W04 and W07 from the unsigned-amount fault, since fixed |
+| Two warnings closed in run 2 | Only because rules were corrected (AC2028 control, AC8040 contra). Each carries a note saying so. |
+| `gl_period_signoff` rows for 2023-01 | Reviewed, signed off, then reopened. The month is outside every financial year and never shown. |
+| `gl_record_ack` id 1 | Withdrawn, on voucher 999999901, which does not exist |
+| Adjusting entries ADJ/2024-25/0001, ADJ/2024-25/0002 (year-end builder test), ADJ/2025-26/0001 | Cancelled |
+| Adjusting entry ADJ/2025-26/0002 | Rejected |
+| `gl_saved_filter` 1 and 2 | Inactive |
+
+## 11. What is left (phase 2 and decisions)
+
+**Decisions needed (section 9):**
+- Q1, the year table: id 4 is labelled 2026/2027 but dated 1 Aug 2025 to 30 Oct 2026.
+- Q2, adding the 47 provisionally mapped codes to the chart.
+- Q3, the receivables basis and a control account.
+- Q4, how to clear the trial balance difference voucher by voucher.
+- Q5, whether a sign-off should block posting.
+- Q6, a threshold and second approver for adjusting entries.
+- Q7, archiving the 87 backup tables.
+- Q8, retiring the classic pages.
+- Q9, loading budgets.
+- Q10, the phase 2 order.
+
+**Phase 2 (not built):**
+- the voucher, journal and contra posting workflow on this layer, connecting requisitions to payments;
+- chart, supplier and budget editors;
+- bank statement import and reconciliation;
+- cost-centre capture on postings.
+
+**Data work, which needs the Bursar's decisions:**
+- completing the 41,660 unbalanced vouchers with adjusting entries, starting with the largest;
+- closing 2024/25 with the prepared year-end entry, after Q1;
+- clearing AC-RECONCILE-DIFF.
+
+**On production:** add `accountsReadOnlyConnectionString` to web.config by hand. It is not in git because it holds credentials.
