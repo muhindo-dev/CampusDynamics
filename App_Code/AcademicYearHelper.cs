@@ -425,6 +425,30 @@ public static class AcademicYearHelper
         return DateTime.Now.Year;
     }
 
+    /// <summary>
+    /// The start year of the current academic year: 2026 throughout 2026/2027, including
+    /// January–July 2027. This is the right default entry year for an officer registering a
+    /// new student — a January-intake student joins the academic year already running, so
+    /// the calendar year (2027 in January) would wrongly put them in 2027/2028.
+    /// </summary>
+    public static int CurrentAcademicStartYear()
+    {
+        int y = IntakeYearOf(GetCurrentAcademicYear());
+        return y > 0 ? y : IntakeYearOf(CalculateAcademicYearFromDate(DateTime.Now));
+    }
+
+    /// <summary>
+    /// The latest entry year a new student may be given: the current academic year, or a later
+    /// one only while admission is open for it (eAdmin → Academic Years → Admission).
+    /// </summary>
+    public static int MaxAdmissionEntryYear()
+    {
+        int cur = CurrentAcademicStartYear();
+        List<string> open = GetOpenAdmissionYears();
+        int adm = open.Count > 0 ? IntakeYearOf(open[0]) : 0;
+        return Math.Max(cur, adm);
+    }
+
     /// <summary>Returns a single academic year row by its acadyear string.</summary>
     public static DataRow GetAcademicYear(string acadyear)
     {

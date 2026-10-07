@@ -150,9 +150,11 @@ public partial class COOPERP_NewScreens_FeesRegistration : System.Web.UI.Page
             ddlNewStudSession.SelectedValue = "DAY";
 
         // Entry Years
+        // Default is the running academic year (2026 for 2026/2027, also in January), and a later
+        // year is offered only while admission is open for it.
         ddlNewStudEntryYear.Items.Clear();
-        int currentYear = DateTime.Now.Year;
-        for (int y = currentYear + 1; y >= currentYear - 5; y--)
+        int currentYear = AcademicYearHelper.CurrentAcademicStartYear();
+        for (int y = AcademicYearHelper.MaxAdmissionEntryYear(); y >= currentYear - 5; y--)
             ddlNewStudEntryYear.Items.Add(new ListItem(y.ToString(), y.ToString()));
         if (ddlNewStudEntryYear.Items.FindByValue(currentYear.ToString()) != null)
             ddlNewStudEntryYear.SelectedValue = currentYear.ToString();
@@ -936,6 +938,10 @@ public partial class COOPERP_NewScreens_FeesRegistration : System.Web.UI.Page
         { ShowNewStudentError("Please select a campus."); return; }
         if (string.IsNullOrEmpty(entryYear))
         { ShowNewStudentError("Please select an entry year."); return; }
+        if (SafeInt(entryYear, 0) > AcademicYearHelper.MaxAdmissionEntryYear())
+        { ShowNewStudentError("Entry year " + entryYear + " belongs to academic year " + entryYear + "/" + (SafeInt(entryYear, 0) + 1) +
+                              ", which has not started and is not open for admission. A January intake joins the current academic year (" +
+                              AcademicYearHelper.GetCurrentAcademicYear() + ")."); return; }
         if (string.IsNullOrEmpty(billing))
         { ShowNewStudentError("Please select a billing system."); return; }
 

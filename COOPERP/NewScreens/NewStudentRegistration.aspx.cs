@@ -289,8 +289,10 @@ public partial class COOPERP_NewScreens_NewStudentRegistration : System.Web.UI.P
     {
         ddlEntryYear.Items.Clear();
         ddlEntryYear.Items.Add(new ListItem("-- Select Year --", ""));
-        int currentYear = DateTime.Now.Year;
-        for (int y = currentYear + 1; y >= currentYear - 10; y--)
+        // Newest offered year is the running academic year (or a later one only while
+        // admission is open for it) — never next calendar year by default.
+        int currentYear = AcademicYearHelper.CurrentAcademicStartYear();
+        for (int y = AcademicYearHelper.MaxAdmissionEntryYear(); y >= currentYear - 10; y--)
             ddlEntryYear.Items.Add(new ListItem(y.ToString(), y.ToString()));
     }
 
@@ -347,9 +349,10 @@ public partial class COOPERP_NewScreens_NewStudentRegistration : System.Web.UI.P
     // -- Set defaults ------------------------------------------------
     private void SetDefaults()
     {
-        int currentYear = DateTime.Now.Year;
+        // Entry year → start of the running academic year (2026 for 2026/2027, including a
+        // January intake registered in January 2027 — not the calendar year).
+        int currentYear = AcademicYearHelper.CurrentAcademicStartYear();
 
-        // Entry year → current year
         if (ddlEntryYear.Items.FindByValue(currentYear.ToString()) != null)
             ddlEntryYear.SelectedValue = currentYear.ToString();
 
@@ -1493,6 +1496,10 @@ public partial class COOPERP_NewScreens_NewStudentRegistration : System.Web.UI.P
         { ShowError("Please select a campus."); return; }
         if (string.IsNullOrEmpty(entryYear))
         { ShowError("Please select an entry year."); return; }
+        if (SafeInt(entryYear, 0) > AcademicYearHelper.MaxAdmissionEntryYear())
+        { ShowError("Entry year " + entryYear + " belongs to academic year " + entryYear + "/" + (SafeInt(entryYear, 0) + 1) +
+                    ", which has not started and is not open for admission. A January intake joins the current academic year (" +
+                    AcademicYearHelper.GetCurrentAcademicYear() + ")."); return; }
         if (string.IsNullOrEmpty(billing))
         { ShowError("Please select a billing system."); return; }
 

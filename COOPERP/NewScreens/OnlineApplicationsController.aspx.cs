@@ -1199,9 +1199,14 @@ public partial class COOPERP_NewScreens_OnlineApplicationsController : System.We
                 }
 
                 // 3) Create the acad_student record via the shared, proven SP.
+                //    The SP only accepts the current academic year, so pass that year's start
+                //    (2026 for 2026/2027), never the calendar year: admitting the January intake
+                //    in January 2027 would otherwise ask for 2027/2028 and be refused.
+                int admitYear = AcademicYearHelper.IntakeYearOf(AcademicYearHelper.GetCurrentAcademicYear());
+                if (admitYear <= 0) admitYear = DateTime.Now.Year;
                 using (var cmd = new MySqlCommand("CALL acad_RegisterApplicant(@yr, @eno, @usr)", conn))
                 {
-                    cmd.Parameters.AddWithValue("@yr", DateTime.Now.Year);
+                    cmd.Parameters.AddWithValue("@yr", admitYear);
                     cmd.Parameters.AddWithValue("@eno", eno);
                     cmd.Parameters.AddWithValue("@usr", GetCurrentUser());
                     cmd.ExecuteNonQuery();
