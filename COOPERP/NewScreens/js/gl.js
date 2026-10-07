@@ -33,6 +33,12 @@
         var s = String(Math.abs(v)).replace(/\B(?=(\d{3})+(?!\d))/g, ',');
         return v < 0 ? '(' + s + ')' : s;
     };
+    /** 2026-03-17 to 17 Mar 2026; anything else is returned as it is. */
+    GL.date = function (iso) {
+        var m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(iso || ''));
+        if (!m) return iso || '';
+        return parseInt(m[3], 10) + ' ' + ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'][parseInt(m[2], 10) - 1] + ' ' + m[1];
+    };
     GL.short = function (n) {
         var v = Number(n) || 0, a = Math.abs(v), s;
         if (a >= 1e9) s = (a / 1e9).toFixed(a >= 1e10 ? 1 : 2) + 'bn';

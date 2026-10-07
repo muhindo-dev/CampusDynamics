@@ -4,7 +4,7 @@
 <asp:Content ID="HeadContent" ContentPlaceHolderID="HeadContent" runat="server">
 <meta name="csrf-token" content="<%= MarksAntiForgeryService.GetToken() %>" />
 <link rel="stylesheet" href="<%= ResolveUrl("~/COOPERP/NewScreens/css/fa.css") %>?v=2" />
-<link rel="stylesheet" href="<%= ResolveUrl("~/COOPERP/NewScreens/css/gl.css") %>?v=1" />
+<link rel="stylesheet" href="<%= ResolveUrl("~/COOPERP/NewScreens/css/gl.css") %>?v=2" />
 </asp:Content>
 
 <asp:Content ID="MainContent" ContentPlaceHolderID="ContentPlaceHolder1" runat="server">
@@ -19,6 +19,6 @@
 </div>
 <script>window.GL_BOOT = <%= BootJson %>;</script>
 <script src="<%= ResolveUrl("~/COOPERP/NewScreens/js/fa.js") %>?v=2"></script>
-<script src="<%= ResolveUrl("~/COOPERP/NewScreens/js/gl.js") %>?v=1"></script>
+<script src="<%= ResolveUrl("~/COOPERP/NewScreens/js/gl.js") %>?v=3"></script>
 <script src="<%= ResolveUrl("~/COOPERP/NewScreens/js/gl-voucher.js") %>?v=1"></script>
 </asp:Content>
