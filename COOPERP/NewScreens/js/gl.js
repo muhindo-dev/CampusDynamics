@@ -111,7 +111,7 @@
             r.c.forEach(function (v, i) {
                 var c = res.cols[i], num = c.kind === 'money' || c.kind === 'count' || c.kind === 'pct';
                 var neg = num && /^\(/.test(v);
-                h += '<td class="' + (num ? 'fa-num' : '') + (neg ? ' gl-neg' : '') + (c.kind === 'code' ? ' fa-code' : '') + '">' + FA.esc(v) + '</td>';
+                h += '<td class="' + (num ? 'fa-num' : '') + (neg ? ' gl-neg' : '') + (c.kind === 'code' ? ' fa-code' : '') + (c.kind === 'date' ? ' gl-nowrap' : '') + '">' + FA.esc(v) + '</td>';
             });
             h += '</tr>';
         });

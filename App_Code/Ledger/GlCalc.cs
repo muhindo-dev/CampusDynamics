@@ -88,6 +88,18 @@ public static class GlCalc
 
     // transaction_amount is BIGINT UNSIGNED: any subtraction or negation must be on a SIGNED cast, or MySQL raises
     // error 1690 part-way through the result and the MySql.Data 6.6 connector hangs instead of throwing.
+    /// <summary>KeyExpr in C#: the key of one ledger line, for lines read row by row (the voucher page).</summary>
+    public static string KeyOf(Snapshot s, string code, string accountType)
+    {
+        code = (code ?? "").Trim(); accountType = (accountType ?? "").Trim();
+        GlAcct a;
+        if (s.Accounts.TryGetValue(code, out a) && a.Kind == "CHART") return code;
+        if (StudentTypes.Contains(accountType)) return "SUB:STUDENTS";
+        if (FeeTypes.Contains(accountType)) return "SUB:" + accountType;
+        if (OtherSubTypes.Contains(accountType)) return "SUB:" + accountType.Replace(" ", "");
+        return code;
+    }
+
     public const string DrExpr = "IF(l.transactionType='DR', CAST(l.transaction_amount AS SIGNED), 0)";
     public const string CrExpr = "IF(l.transactionType='CR', CAST(l.transaction_amount AS SIGNED), 0)";
     /// <summary>Debit positive, credit negative, for a table aliased l.</summary>

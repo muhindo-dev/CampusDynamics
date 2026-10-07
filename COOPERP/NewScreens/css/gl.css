@@ -12,6 +12,7 @@
 .fa-table th.is-sort:hover { text-decoration: underline; }
 .fa-table th .gl-arrow { opacity: .8; margin-left: 4px; }
 .gl-neg { color: var(--fa-bad); }
+.gl-nowrap { white-space: nowrap; }
 .gl-link { color: var(--fa-accent); text-decoration: none; font-weight: 600; }
 .gl-link:hover { text-decoration: underline; }
 

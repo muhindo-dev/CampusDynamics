@@ -191,7 +191,7 @@ public static class GlExport
         sb.AppendLine("#");
         sb.AppendLine(Line(vis.Select(i => (object)r.Cols[i].Header).ToList(), null, vis, r));
         for (int n = 0; n < r.Rows.Count; n++) sb.AppendLine(Line(vis.Select(i => i < r.Rows[n].Length ? r.Rows[n][i] : null).ToList(), r.Kinds[n], vis, r));
-        if (r.Totals != null) sb.AppendLine(Line(vis.Select(i => r.Totals[i]).ToList(), "t", vis, r));
+        if (r.Totals != null) sb.AppendLine(Line(vis.Select(i => r.Totals[i]).ToList(), "TOTALS", vis, r));
         FaExport.Send(resp, sb.ToString(), "text/csv", FileBase(r) + ".csv");
     }
 
@@ -203,7 +203,7 @@ public static class GlExport
             if (j > 0) sb.Append(',');
             object o = cells[j]; GlCol col = kind == null ? null : r.Cols[vis[j]];
             string v;
-            if (o == null || o is DBNull) v = (kind == "t" && j == 0) ? "Total" : "";
+            if (o == null || o is DBNull) v = (kind == "TOTALS" && j == 0) ? "Total" : "";
             else if (col != null && col.Numeric && (o is decimal || o is long || o is int)) v = Convert.ToDecimal(o, CultureInfo.InvariantCulture).ToString(CultureInfo.InvariantCulture);
             else if (o is DateTime) v = GlFmt.Iso((DateTime)o);
             else { v = Convert.ToString(o, CultureInfo.InvariantCulture); if (v.Length > 0 && "=+-@".IndexOf(v[0]) >= 0) v = "'" + v; }
@@ -279,7 +279,7 @@ public static class GlPdf
         }
         if (!string.IsNullOrEmpty(r.Basis))
         {
-            head.Controls.Add(L("BASIS", 0, y, 130, 11, 7f, FontStyle.Bold, MUTE));
+            head.Controls.Add(L("INCLUDES", 0, y, 130, 11, 7f, FontStyle.Bold, MUTE));
             var b = L(r.Basis, 130, y, page - 130, 24, 7.5f, FontStyle.Regular, INK); b.Multiline = true; b.CanGrow = true; head.Controls.Add(b); y += 27;
         }
         head.Controls.Add(L("EXTRACTED", 0, y, 130, 11, 7f, FontStyle.Bold, MUTE));

@@ -203,6 +203,16 @@ public static partial class GlReports
         return r;
     }
 
+    /// <summary>Shapes a result built outside a report definition (account card lists) exactly as Run does.</summary>
+    public static GlResult Finish(GlResult r, GlRunCtx x)
+    {
+        while (r.Links.Count < r.Rows.Count) r.Links.Add(null);
+        while (r.Kinds.Count < r.Rows.Count) r.Kinds.Add("");
+        if (!r.Paged && !r.Structured) Shape(r, x); else if (!r.Paged) r.TotalRows = r.Rows.Count;
+        if (r.Totals == null && !r.NoTotals) r.Totals = SumTotals(r);
+        return r;
+    }
+
     /// <summary>Search, sort and page an in-memory result. Totals are taken over every matching row, before paging.</summary>
     private static void Shape(GlResult r, GlRunCtx x)
     {

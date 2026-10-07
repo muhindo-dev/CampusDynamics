@@ -849,6 +849,15 @@ public static class GlWarnings
         }
     }
 
+    /// <summary>People a warning can be assigned to: holders of a finance role.</summary>
+    public static List<object> FinanceUsers(MySqlConnection c)
+    {
+        return GlDb.Table(c, null,
+            "SELECT DISTINCT ur.username, r.role_name FROM campus_dynamics.sys_user_roles ur JOIN campus_dynamics.sys_roles r ON r.id = ur.role_id " +
+            "WHERE ur.is_active = 1 AND r.role_code IN ('bursar','accountant','finance_officer','auditor') AND (ur.expires_at IS NULL OR ur.expires_at > NOW()) ORDER BY ur.username").Rows.Cast<DataRow>()
+            .Select(r => (object)new { id = GlDb.S(r[0]), name = GlDb.S(r[0]) + " (" + GlDb.S(r[1]) + ")" }).ToList();
+    }
+
     // ── Counts for the sidebar badge and dashboard ─────────────────
 
     public class Summary { public int Open, Critical, High, Medium, Info, Acknowledged, FixedThisMonth, Health; public DateTime? LastRun, OldestOpen; public bool Running; }
