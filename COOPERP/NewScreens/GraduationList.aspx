@@ -20,6 +20,9 @@
       <select id="fSort"><option value="prog">Programme, then name</option><option value="cgpa">Highest CGPA</option>
         <option value="class">Class of award</option><option value="name">Name</option>
         <option value="regno">Student number</option></select></div>
+    <div class="g-f" style="flex:0 0 130px;"><label for="fFin">Finance</label>
+      <select id="fFin"><option value="">Everyone</option><option value="cleared">Cleared by Finance</option>
+        <option value="notcleared">Not yet cleared</option></select></div>
     <div class="g-f" style="flex:1 1 140px;"><label for="fQ">Search</label>
       <input type="text" id="fQ" placeholder="Number or name&hellip;" autocomplete="off" /></div>
     <div class="g-bar__sp">
@@ -36,7 +39,7 @@
     <div class="g-wrap">
       <table class="g-tbl"><thead><tr>
         <th>Student</th><th>Programme</th><th class="g-num">CGPA</th><th>Class of award</th>
-        <th>Approved by</th><th>Transcript</th><th></th>
+        <th>Approved by</th><th>Finance</th><th>Transcript</th><th></th>
       </tr></thead><tbody id="gBody"></tbody></table>
     </div>
   </div>
@@ -60,7 +63,7 @@ var PAGE = 'GraduationList.aspx', BOOT = null, rows = [];
 
 function state() {
     return { year: G.qs('fYear').value, faculty: G.qs('fFac').value, dept: G.qs('fDep').value,
-             prog: G.qs('fProg').value, award: G.qs('fAward').value,
+             prog: G.qs('fProg').value, award: G.qs('fAward').value, fin: G.qs('fFin').value,
              sort: G.qs('fSort').value === 'prog' ? '' : G.qs('fSort').value,
              q: G.qs('fQ').value.trim() };
 }
@@ -68,7 +71,7 @@ function cfg() {
     var s = state();
     return JSON.stringify({ acadYear: s.year, faculty: s.faculty, department: s.dept,
                             programme: s.prog, award: s.award, sort: G.qs('fSort').value,
-                            search: s.q });
+                            search: s.q, finance: s.fin });
 }
 function sync() { G.writeUrl(state()); chips(); load(); }
 
@@ -84,6 +87,7 @@ function chips() {
         { k: 'fDep',   label: 'Department', value: G.qs('fDep').value ? txt('fDep') : '' },
         { k: 'fProg',  label: 'Programme',  value: G.qs('fProg').value ? txt('fProg') : '' },
         { k: 'fAward', label: 'Class',      value: G.qs('fAward').value },
+        { k: 'fFin',   label: 'Finance',    value: G.qs('fFin').value ? txt('fFin') : '' },
         { k: 'fQ',     label: 'Search',     value: G.qs('fQ').value.trim() }
     ], function (k) {
         if (k === '*') resetFilters(); else G.qs(k).value = '';
@@ -93,7 +97,7 @@ function chips() {
 }
 
 function resetFilters() {
-    ['fFac', 'fDep', 'fProg', 'fAward'].forEach(function (id) { G.qs(id).value = ''; });
+    ['fFac', 'fDep', 'fProg', 'fAward', 'fFin'].forEach(function (id) { G.qs(id).value = ''; });
     G.qs('fQ').value = '';
 }
 
@@ -113,6 +117,16 @@ function fillAwards() {
     if (cur) sel.value = cur;
 }
 
+/* Finance clearance, as decided in Graduation > Fees Clearance. */
+function finCell(r) {
+    if (r.fin === 'CLEARED')
+        return '<span class="g-chip g-chip--ready">Cleared' + (r.finBasis === 'OVERRIDE' ? ' · override' : '') + '</span>' +
+               (r.finBy ? '<div class="g-sub">' + G.esc(r.finBy) + ' · ' + G.esc(r.finAt) + '</div>' : '');
+    if (!r.finGated) return '<span class="g-sub">not required</span>';
+    if (r.fin === 'HELD') return '<span class="g-chip g-chip--held">Finance hold</span>';
+    return '<span class="g-chip g-chip--blocked">Not cleared</span>';
+}
+
 /* ── export ── */
 function openExport() {
     var sum = [
@@ -124,6 +138,9 @@ function openExport() {
     ];
     if (G.qs('fAward').value) sum.push({ label: 'Class of award', value: G.qs('fAward').value });
     if (G.qs('fQ').value.trim()) sum.push({ label: 'Search', value: G.qs('fQ').value.trim() });
+    var held = 0;
+    for (var hi = 0; hi < rows.length; hi++) if (rows[hi].finGated && rows[hi].fin !== 'CLEARED') held++;
+    if (held) sum.push({ label: 'Left out', value: held + ' not yet cleared by Finance' });
 
     G.exportDialog({
         page: PAGE,
@@ -168,7 +185,7 @@ function openExport() {
 }
 
 function load() {
-    G.qs('gBody').innerHTML = '<tr><td colspan="7" class="g-load">Loading&hellip;</td></tr>';
+    G.qs('gBody').innerHTML = '<tr><td colspan="8" class="g-load">Loading&hellip;</td></tr>';
     G.ajax(PAGE, 'GetList', { configJson: cfg() }, function (d) {
         if (!d || !d.success) { G.toast((d && d.message) || 'Could not load the list.', false); return; }
         rows = d.rows || [];
@@ -182,10 +199,11 @@ function load() {
                 '<td>' + G.esc(r.degclass) + '</td>' +
                 '<td>' + (r.clearedBy ? G.esc(r.clearedBy) + '<div class="g-sub">' + G.esc(r.clearedAt) + '</div>'
                                       : '<span class="g-sub">before this module</span>') + '</td>' +
+                '<td>' + finCell(r) + '</td>' +
                 '<td class="g-sub">' + G.esc(r.transStatus || '&ndash;') + '</td>' +
                 '<td><button type="button" class="g-btn g-btn--sm" data-open="' + G.esc(r.regno) + '">Open</button></td></tr>';
         }
-        G.qs('gBody').innerHTML = h || '<tr><td colspan="7" class="g-empty">Nobody is on this list yet.</td></tr>';
+        G.qs('gBody').innerHTML = h || '<tr><td colspan="8" class="g-empty">Nobody is on this list yet.</td></tr>';
         G.qs('gMeta').textContent = rows.length + ' on the ' + (G.qs('fYear').value || 'combined') + ' list';
         fillAwards();
 
@@ -202,7 +220,12 @@ function load() {
    programme, which is how a graduation list is read out and signed. Built from the rows on
    screen, so what prints is what was reviewed. */
 function doPrint() {
-    if (!rows.length) { G.toast('There is nothing on this list to print.', false); return; }
+    var all = rows, withheld = 0;
+    rows = all.filter(function (r) { var ok = !(r.finGated && r.fin !== 'CLEARED'); if (!ok) withheld++; return ok; });
+    try { doPrintRows(withheld); } finally { rows = all; }
+}
+function doPrintRows(withheld) {
+    if (!rows.length) { G.toast(withheld ? 'Nobody on this list has been cleared by Finance yet, so there is nothing to print.' : 'There is nothing on this list to print.', false); return; }
     var w = window.open('', '_blank');
     if (!w) { G.toast('Pop-up blocked: allow pop-ups to open the print view.', false); return; }
 
@@ -281,7 +304,9 @@ function doPrint() {
          '<div class="band">GRADUATION LIST &middot; ' + G.esc(year.toUpperCase()) + '</div>' +
          '<div class="meta">' + (scope.length ? G.esc(scope.join(' / ')) + ' &middot; ' : '') +
          plural(total, 'graduand', 'graduands') + ' &middot; ' + plural(fOrder.length, 'faculty', 'faculties') + ' &middot; ' +
-         plural(totalProgs, 'programme', 'programmes') + ' &middot; prepared ' + today + '</div>';
+         plural(totalProgs, 'programme', 'programmes') + ' &middot; prepared ' + today + '</div>' +
+         (withheld ? '<div class="meta" style="color:#b3261e;font-weight:700;">' + plural(withheld, 'name', 'names') +
+                     ' on the list not yet cleared by Finance ' + (withheld === 1 ? 'is' : 'are') + ' not included.</div>' : '');
 
     // Summary of graduands by faculty
     h += '<div class="cap">Summary of graduands by faculty</div><table class="sum"><thead><tr>' +
@@ -370,7 +395,7 @@ document.addEventListener('DOMContentLoaded', function () {
         var tr = e.target.closest ? e.target.closest('#gBody tr[data-reg]') : null;
         if (tr) open(tr.getAttribute('data-reg'));
     });
-    ['fYear', 'fProg', 'fAward', 'fSort'].forEach(function (id) {
+    ['fYear', 'fProg', 'fAward', 'fSort', 'fFin'].forEach(function (id) {
         G.qs(id).addEventListener('change', sync);
     });
     G.qs('fFac').addEventListener('change', function () { G.cascade('fFac', 'fDep', 'fProg'); sync(); });
@@ -406,6 +431,7 @@ document.addEventListener('DOMContentLoaded', function () {
         if (pre.prog) G.qs('fProg').value = pre.prog;
         if (pre.q) G.qs('fQ').value = pre.q;
         if (pre.sort) G.qs('fSort').value = pre.sort;
+        if (pre.fin) G.qs('fFin').value = pre.fin;
         // The class list is built from the rows, so a pre-selected one has to be planted first.
         if (pre.award) {
             var o2 = document.createElement('option');

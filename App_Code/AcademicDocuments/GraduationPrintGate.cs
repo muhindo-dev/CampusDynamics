@@ -165,6 +165,18 @@ public static class GraduationPrintGate
                     v.Reason = v.RegNo + ": " + (kv.Value.Summary == "" ? "results are withheld under a disciplinary decision" : kv.Value.Summary) +
                                ". A " + (kind == CERTIFICATE ? "certificate" : "transcript") + " cannot be issued while the sanction is in force.";
                 }
+
+                // Fees clearance: from the gated graduation year onward, a graduand's certificate
+                // (or both documents, per Fees Clearance settings) needs the Bursar's clearance.
+                // Approval by the Registry and clearance by Finance are two separate decisions.
+                GradFeesClearance.Settings fin = GradFeesClearance.GetSettings();
+                foreach (string reg in wanted)
+                {
+                    Verdict v;
+                    if (!found.TryGetValue(reg, out v) || !v.Allowed || !v.OnList) continue;
+                    string why = GradFeesClearance.DocumentBlock(c, reg, kind, fin);
+                    if (why != "") { v.Allowed = false; v.Reason = why; }
+                }
             }
         }
         catch (Exception ex)

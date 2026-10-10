@@ -26,6 +26,10 @@ public partial class COOPERP_NewScreens_GraduationList : System.Web.UI.Page
         public double cgpa;
         public string degclass = "", year = "", gender = "", nationality = "";
         public string transStatus = "", certStatus = "", clearedBy = "", clearedAt = "";
+        /// <summary>Finance clearance (Fees Clearance module): CLEARED, HELD or "" (not yet).</summary>
+        public string fin = "", finBy = "", finAt = "", finBasis = "";
+        /// <summary>True when the list year needs finance clearance before a name is exported.</summary>
+        public bool finGated;
         /// <summary>Position within the student's own programme, the way a graduation list is
         /// read out and signed off. Filled in once the rows are in their final order.</summary>
         public int seq;
@@ -34,9 +38,25 @@ public partial class COOPERP_NewScreens_GraduationList : System.Web.UI.Page
     /// <summary>Ceiling on one export. The largest list on record is 599 names.</summary>
     private const int EXPORT_CAP = 20000;
 
+    /// <summary>The Finance filter, which GradFilter does not carry: "", cleared or notcleared.</summary>
+    private static string FinFilter(string configJson)
+    {
+        try
+        {
+            var d = J.Deserialize<Dictionary<string, object>>(configJson ?? "");
+            string v = GraduationBootstrap.S(d, "finance");
+            return v == "cleared" || v == "notcleared" ? v : "";
+        }
+        catch { return ""; }
+    }
+
     private static List<Row> Fetch(MarksScope scope, GraduationEngine.GradFilter f)
+    { return Fetch(scope, f, ""); }
+
+    private static List<Row> Fetch(MarksScope scope, GraduationEngine.GradFilter f, string finance)
     {
         var rows = new List<Row>();
+        GradFeesClearance.Settings fin = GradFeesClearance.GetSettings();
         using (var c = new MySqlConnection(Conn()))
         {
             c.Open();
@@ -69,8 +89,10 @@ public partial class COOPERP_NewScreens_GraduationList : System.Web.UI.Page
                 " IFNULL((SELECT v.actor FROM acad_grad_review v WHERE v.regno=g.regno AND v.verdict='CLEARED' " +
                 "         ORDER BY v.id DESC LIMIT 1),''), " +
                 " IFNULL((SELECT DATE_FORMAT(v.created_at,'%e %b %Y') FROM acad_grad_review v " +
-                "         WHERE v.regno=g.regno AND v.verdict='CLEARED' ORDER BY v.id DESC LIMIT 1),'') " +
+                "         WHERE v.regno=g.regno AND v.verdict='CLEARED' ORDER BY v.id DESC LIMIT 1),''), " +
+                " IFNULL(fs.status,''), IFNULL(fs.actor,''), IFNULL(DATE_FORMAT(fs.decided_at,'%e %b %Y'),''), IFNULL(fs.basis,'') " +
                 "FROM acad_graduands g LEFT JOIN acad_programme p ON p.progcode=g.progcode " +
+                "LEFT JOIN acad_grad_finance_state fs ON fs.regno=g.regno AND fs.acadyear=g.acadyear " +
                 w + order + " LIMIT " + (EXPORT_CAP + 1), c))
             {
                 if (names.Contains("@ay")) cmd.Parameters.AddWithValue("@ay", f.acadYear);
@@ -89,6 +111,11 @@ public partial class COOPERP_NewScreens_GraduationList : System.Web.UI.Page
                         x.gender = r[8].ToString(); x.nationality = r[9].ToString();
                         x.transStatus = r[10].ToString(); x.certStatus = r[11].ToString();
                         x.clearedBy = r[12].ToString(); x.clearedAt = r[13].ToString();
+                        x.fin = r[14].ToString(); x.finBy = r[15].ToString(); x.finAt = r[16].ToString();
+                        x.finBasis = r[17].ToString();
+                        x.finGated = fin.IsGated(x.year);
+                        if (finance == "cleared" && x.fin != "CLEARED") continue;
+                        if (finance == "notcleared" && x.fin == "CLEARED") continue;
                         rows.Add(x);
                     }
             }
@@ -150,6 +177,7 @@ public partial class COOPERP_NewScreens_GraduationList : System.Web.UI.Page
         c.Add(new GraduationExport.Col<Row>("by", "Approved By", GV, F_by));
         c.Add(new GraduationExport.Col<Row>("on", "Approved On", GV, F_on));
 
+        c.Add(new GraduationExport.Col<Row>("fin", "Finance Clearance", GV, F_fin));
         c.Add(new GraduationExport.Col<Row>("trans", "Transcript", DOC, F_trans).Off());
         c.Add(new GraduationExport.Col<Row>("cert", "Certificate", DOC, F_cert).Off());
         return c;
@@ -169,6 +197,24 @@ public partial class COOPERP_NewScreens_GraduationList : System.Web.UI.Page
     private static string F_by(Row r) { return r.clearedBy == "" ? "(before this module)" : r.clearedBy; }
     private static string F_on(Row r) { return r.clearedAt; }
     private static string F_trans(Row r) { return r.transStatus; }
+    private static string F_fin(Row r)
+    {
+        if (r.fin == "CLEARED") return "Cleared" + (r.finBasis == "OVERRIDE" ? " (override)" : "") +
+                                       (r.finBy != "" ? " by " + r.finBy + " on " + r.finAt : "");
+        if (!r.finGated) return "Not required for this year";
+        return r.fin == "HELD" ? "On finance hold" : "Not yet cleared";
+    }
+
+    /// <summary>
+    /// Names that may not leave the system on an exported list: from the gated year onward a
+    /// graduand must be cleared by Finance (Fees Clearance) before they appear on any export.
+    /// Lists compiled before fees clearance existed are exported as they stand.
+    /// </summary>
+    private static int WithholdUncleared(List<Row> rows)
+    {
+        int n = rows.RemoveAll(delegate (Row r) { return r.finGated && r.fin != "CLEARED"; });
+        return n;
+    }
     private static string F_cert(Row r) { return r.certStatus; }
 
     protected void Page_Load(object sender, EventArgs e)
@@ -184,7 +230,8 @@ public partial class COOPERP_NewScreens_GraduationList : System.Web.UI.Page
         // The export dialog's "order by" is authoritative for a file, whatever the screen was
         // showing. Fetch already knows how to order; it just needs telling.
         if (f.orderBy != "") f.sort = f.orderBy;
-        List<Row> rows = Fetch(scope, f);
+        List<Row> rows = Fetch(scope, f, FinFilter(Request.Form["gradConfig"] ?? ""));
+        int withheld = WithholdUncleared(rows);
 
         bool truncated = rows.Count > EXPORT_CAP;
         if (truncated) rows.RemoveRange(EXPORT_CAP, rows.Count - EXPORT_CAP);
@@ -223,6 +270,10 @@ public partial class COOPERP_NewScreens_GraduationList : System.Web.UI.Page
         cover.Add(new KeyValuePair<string, string>("Names on this list",
             rows.Count.ToString(CultureInfo.InvariantCulture)));
         cover.Add(new KeyValuePair<string, string>("Ordered by", OrderLabel(f.sort)));
+        if (withheld > 0)
+            cover.Add(new KeyValuePair<string, string>("Not included",
+                withheld.ToString(CultureInfo.InvariantCulture) + " name" + (withheld == 1 ? "" : "s") +
+                " on the list not yet cleared by Finance (Graduation > Fees Clearance)"));
         string file = GraduationExport.FileName("graduation-list", f.acadYear);
         try
         {
@@ -378,8 +429,12 @@ public partial class COOPERP_NewScreens_GraduationList : System.Web.UI.Page
             MarksScope scope = MarksScopeResolver.Resolve();
             if (!scope.HasAccess) return GraduationBootstrap.Denied();
             GraduationEngine.GradFilter f = GraduationBootstrap.Parse(configJson);
-            int n = Fetch(scope, f).Count;
-            return J.Serialize(new { success = true, total = n, note = "",
+            List<Row> rows = Fetch(scope, f, FinFilter(configJson));
+            int withheld = WithholdUncleared(rows);
+            int n = rows.Count;
+            return J.Serialize(new { success = true, total = n,
+                                     note = withheld > 0 ? withheld + " name" + (withheld == 1 ? " is" : "s are") +
+                                            " left out: not yet cleared by Finance." : "",
                                      capped = n > EXPORT_CAP ? EXPORT_CAP : 0 });
         }
         catch (Exception ex) { return J.Serialize(new { success = false, message = ex.Message }); }
@@ -395,7 +450,7 @@ public partial class COOPERP_NewScreens_GraduationList : System.Web.UI.Page
         {
             MarksScope scope = MarksScopeResolver.Resolve();
             if (!scope.HasAccess) return GraduationBootstrap.Denied();
-            List<Row> rows = Fetch(scope, GraduationBootstrap.Parse(configJson));
+            List<Row> rows = Fetch(scope, GraduationBootstrap.Parse(configJson), FinFilter(configJson));
             return J.Serialize(new { success = true, rows = rows, total = rows.Count });
         }
         catch (Exception ex) { return J.Serialize(new { success = false, message = ex.Message }); }
