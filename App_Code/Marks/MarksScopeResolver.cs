@@ -23,7 +23,7 @@ public class MarksScope
     public List<int> DepartmentIds = new List<int>();
     public List<string> AllowedProgCodes = new List<string>(); // null => unrestricted (admin)
 
-    public bool HasAccess { get { return IsAdmin || (AllowedProgCodes != null && AllowedProgCodes.Count > 0); } }
+    public bool HasAccess { get { return IsAdmin || AllowedProgCodes == null || AllowedProgCodes.Count > 0; } }   // null => unrestricted (admin, Graduation Officer)
 
     /// <summary>SQL fragment restricting &lt;alias&gt;.prog_id to the user's scope.</summary>
     public string ProgFilter(string alias) { return ProgFilter(alias, "prog_id"); }
@@ -118,6 +118,34 @@ public static class MarksScopeResolver
                 scope.Label = "All faculties & departments";
                 scope.RoleNote = "Administrator";
                 return scope;
+            }
+        }
+        catch { }
+
+        // 1b) Institution-wide offices. The Graduation Officer runs graduation for every
+        //     faculty, so a scope derived from a home department (or none, when no department
+        //     is linked) would show them nobody to act on. Role-based, like the Registrar's
+        //     right in GraduationRights.
+        try
+        {
+            using (var conn = new MySqlConnection(ConnStr()))
+            {
+                conn.Open();
+                using (var cmd = new MySqlCommand(
+                    "SELECT COUNT(*) FROM sys_user_roles ur JOIN sys_roles r ON r.id=ur.role_id " +
+                    "WHERE ur.username=@u AND ur.is_active=1 AND r.is_active=1 " +
+                    "  AND (ur.expires_at IS NULL OR ur.expires_at>NOW()) AND r.role_code='graduation_officer'", conn))
+                {
+                    cmd.Parameters.AddWithValue("@u", username);
+                    if (Convert.ToInt32(cmd.ExecuteScalar()) > 0)
+                    {
+                        scope.Mode = "all";
+                        scope.AllowedProgCodes = null;
+                        scope.Label = "All faculties & departments";
+                        scope.RoleNote = "Graduation Officer";
+                        return scope;
+                    }
+                }
             }
         }
         catch { }

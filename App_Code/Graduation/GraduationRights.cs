@@ -23,6 +23,7 @@ using MySql.Data.MySqlClient;
 public static class GraduationRights
 {
     public const string ROLE_REGISTRAR = "registrar";
+    public const string ROLE_GRADUATION_OFFICER = "graduation_officer";
 
     /// <summary>May the signed-in user approve, hold, release or remove?</summary>
     public static bool CanDecide(MarksScope scope)
@@ -46,6 +47,8 @@ public static class GraduationRights
         if (string.Equals(note, "Head of Department", StringComparison.OrdinalIgnoreCase)) return true;
 
         if (IsRegistrar()) return true;
+        if (string.Equals(note, "Graduation Officer", StringComparison.OrdinalIgnoreCase) ||
+            HasRole(ROLE_GRADUATION_OFFICER)) return true;
 
         why = "Only a head of department, a dean or the Academic Registrar can approve a " +
               "student for graduation or place one on hold. " +
@@ -63,6 +66,7 @@ public static class GraduationRights
         if (string.Equals(note, "Dean", StringComparison.OrdinalIgnoreCase)) return "Dean";
         if (string.Equals(note, "Head of Department", StringComparison.OrdinalIgnoreCase)) return "Head of Department";
         if (IsRegistrar()) return "Academic Registrar";
+        if (HasRole(ROLE_GRADUATION_OFFICER)) return "Graduation Officer";
         return note;
     }
 
@@ -72,11 +76,13 @@ public static class GraduationRights
     /// checked first because it is free, and the user's role assignments are only read when it
     /// does not already answer yes.
     /// </summary>
-    private static bool IsRegistrar()
+    private static bool IsRegistrar() { return HasRole(ROLE_REGISTRAR); }
+
+    private static bool HasRole(string roleCode)
     {
         try
         {
-            if (string.Equals(RoleAccessService.GetRoleCode(), ROLE_REGISTRAR,
+            if (string.Equals(RoleAccessService.GetRoleCode(), roleCode,
                               StringComparison.OrdinalIgnoreCase)) return true;
         }
         catch { }
@@ -99,7 +105,7 @@ public static class GraduationRights
                     "  AND r.role_code = @rc", c))
                 {
                     cmd.Parameters.AddWithValue("@u", user);
-                    cmd.Parameters.AddWithValue("@rc", ROLE_REGISTRAR);
+                    cmd.Parameters.AddWithValue("@rc", roleCode);
                     return Convert.ToInt32(cmd.ExecuteScalar()) > 0;
                 }
             }
