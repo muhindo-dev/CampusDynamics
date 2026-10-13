@@ -29,6 +29,39 @@
     .rx-aa__tag--lock{background:#fff8e1;color:#92400e;} .rx-aa__tag--del{background:#fdecea;color:#8c2019;}
     .rx-aa__note{font-size:11.5px;color:#4b5563;border:1px dashed #d6dde8;border-radius:4px;padding:6px 9px;margin-bottom:4px;background:#fafbfd;}
     .rx-aa__empty{padding:22px;text-align:center;color:#0b5c3a;font-weight:600;}
+    /* ── Duplicates: one colour and letter per group, on the right edge (the left edge is the pending-change colour) ── */
+    .rx-course.rx-dup{box-shadow:inset -4px 0 0 var(--dup);}
+    .rx-course.rx-dup .rx-course__hd{background-image:linear-gradient(90deg,transparent 70%,color-mix(in srgb,var(--dup) 9%,transparent));}
+    .rx-dupchip{display:inline-flex;align-items:center;gap:3px;border:0;border-radius:9px;padding:1px 7px 1px 3px;cursor:pointer;
+                font:700 10px/1.5 inherit;color:#fff;background:var(--dup);flex:0 0 auto;font-variant-numeric:tabular-nums;}
+    .rx-dupchip b{display:inline-block;min-width:14px;text-align:center;background:rgba(255,255,255,.28);border-radius:7px;padding:0 3px;}
+    .rx-dupchip.is-contested{background-image:repeating-linear-gradient(135deg,rgba(255,255,255,.18) 0 4px,transparent 4px 8px);}
+    .rx-dupchip:hover,.rx-dupchip.is-on{box-shadow:0 0 0 2px #fff,0 0 0 4px var(--dup);}
+    .rx-groups--focus .rx-course{opacity:.28;transition:opacity .2s;}
+    .rx-groups--focus .rx-course.is-dupfocus{opacity:1;outline:2px solid var(--dup);outline-offset:1px;animation:rx-dup-pulse 1.4s ease-out 2;}
+    @keyframes rx-dup-pulse{0%{box-shadow:inset -4px 0 0 var(--dup),0 0 0 0 var(--dup);}70%{box-shadow:inset -4px 0 0 var(--dup),0 0 0 8px transparent;}100%{box-shadow:inset -4px 0 0 var(--dup);}}
+    .rx-dupdots{display:inline-flex;gap:3px;align-items:center;margin-left:4px;}
+    .rx-dupdots i{display:block;width:8px;height:8px;border-radius:50%;box-shadow:0 0 0 1px #fff;}
+    .rx-dups{margin:0 0 10px;}
+    .rx-dups:empty{display:none;}
+    .rx-dups__ok{display:flex;align-items:center;gap:6px;color:#0b5c3a;font-size:12px;font-weight:600;padding:7px 11px;background:#e6f4ec;border:1px solid #c3e6cb;border-radius:4px;}
+    .rx-dups__hd{display:flex;align-items:center;gap:10px;flex-wrap:wrap;padding:8px 11px;background:#fff;border:1px solid #e0e5ed;border-bottom:0;border-radius:4px 4px 0 0;}
+    .rx-dups__hd b{color:#05275C;font-size:13px;}
+    .rx-dups__hd span{color:#4b5563;font-size:11.5px;}
+    .rx-dups__hd em{font-style:normal;color:#92400e;font-weight:700;}
+    .rx-dups__fix{margin-left:auto;padding:4px 10px;font-size:11.5px;}
+    .rx-dups__clear{background:none;border:1px solid #cbd5e1;border-radius:3px;font:600 11px inherit;padding:3px 8px;cursor:pointer;color:#174DA4;}
+    .rx-dups__list{display:flex;flex-wrap:wrap;gap:6px;padding:8px 11px;background:#fafbfd;border:1px solid #e0e5ed;border-radius:0 0 4px 4px;}
+    .rx-dups__g{display:inline-flex;align-items:center;gap:6px;border:1px solid color-mix(in srgb,var(--dup) 45%,#fff);background:#fff;
+                border-radius:14px;padding:2px 9px 2px 2px;cursor:pointer;font:inherit;font-size:11.5px;color:#1a1a2e;transition:all .15s;}
+    .rx-dups__g i{font-style:normal;display:inline-flex;align-items:center;justify-content:center;width:20px;height:20px;border-radius:50%;
+                  background:var(--dup);color:#fff;font-weight:700;font-size:10.5px;}
+    .rx-dups__g span{color:#8a94a6;font-weight:700;}
+    .rx-dups__g svg{color:#b45309;}
+    .rx-dups__g.is-contested{border-style:dashed;}
+    .rx-dups__g:hover,.rx-dups__g.is-on{background:var(--dup);color:#fff;border-color:var(--dup);}
+    .rx-dups__g:hover span,.rx-dups__g.is-on span,.rx-dups__g:hover svg,.rx-dups__g.is-on svg{color:#fff;}
+    .rx-dups__g:hover i,.rx-dups__g.is-on i{background:#fff;color:var(--dup);}
     @media(max-width:720px){.rx-aa__row{grid-template-columns:22px minmax(0,1fr);} .rx-aa__row > :nth-child(n+3){grid-column:2;}}
     </style>
 </asp:Content>
@@ -114,6 +147,7 @@
       </div>
     </div>
 
+    <div id="rx-dups" class="rx-dups"></div>
     <div id="rx-groups"></div>
   </div>
 
@@ -264,5 +298,5 @@
   </div>
 </div>
 
-<script src="js/rearrange-manage.js?v=20261013b" type="text/javascript"></script>
+<script src="js/rearrange-manage.js?v=20261013c" type="text/javascript"></script>
 </asp:Content>

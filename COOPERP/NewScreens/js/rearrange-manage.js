@@ -409,6 +409,8 @@ function pendingCount() {
 /* ── render ───────────────────────────────────────────────────────────── */
 function render() {
     var rows = allRows();
+    DUPS = dupCompute(rows);
+    if (FOCUS_DUP && !DUPS.groups.some(function (g) { return g.key === FOCUS_DUP; })) FOCUS_DUP = '';
 
     // Every (year, semester) the student holds, plus any the pending set introduces.
     var slots = {};
@@ -479,6 +481,8 @@ function render() {
         h += '</div></div>';
     }
     qs('rx-groups').innerHTML = h;
+    qs('rx-groups').className = FOCUS_DUP ? 'rx-groups--focus' : '';
+    dupLegend();
 
     var n = pendingCount();
     var pill = qs('rx-pending');
@@ -497,6 +501,7 @@ function render() {
     if (eb) eb.textContent = shutCount > 0 ? 'Expand all' : 'Collapse all';
 
     wire();
+    dupWire();
     aaBadge();
 }
 
@@ -552,6 +557,7 @@ function renderSem(sl) {
              ' course(s) here are placed somewhere else by the curriculum">' + misplaced +
              ' misplaced</span>' : '') +
          (changed ? '<span class="rx-sem__chg">' + changed + ' changed</span>' : '') +
+         dupDots(sl) +
          '</div>';
 
     h += '<div class="rx-sem__body">';
@@ -578,6 +584,8 @@ function renderCourse(c, sl) {
     else if (moved) cls += ' rx-is-moved';
     else if (markChanged) cls += ' rx-is-mark';
     if (open) cls += ' is-open';
+    var dupD = DUPS.byReg[c.regId];
+    if (dupD) cls += ' rx-dup' + (dupD.g.contested ? ' rx-dup--contested' : '') + (FOCUS_DUP === dupD.g.key ? ' is-dupfocus' : '');
 
     var cw = mk && mk.cw ? mk.cw.to : c.cw;
     var ex = mk && mk.exam ? mk.exam.to : c.exam;
@@ -593,7 +601,8 @@ function renderCourse(c, sl) {
 
     // Classic results drag like any other row: the server re-terms the result itself, there
     // being no registration to move.
-    var h = '<div class="' + cls + '" draggable="' + (del ? 'false' : 'true') + '" data-reg="' + c.regId + '" ' +
+    var h = '<div class="' + cls + '"' + (dupD ? ' style="--dup:' + dupD.g.color + '"' : '') +
+            ' draggable="' + (del ? 'false' : 'true') + '" data-reg="' + c.regId + '" ' +
             'data-year="' + sl.year + '" data-sem="' + sl.sem + '">';
 
     /* ── the line you always see ── */
@@ -605,6 +614,7 @@ function renderCourse(c, sl) {
                         'old system that has no course registration behind it. It still counts towards ' +
                         'the transcript and the CGPA.">*</span>' : '') + '</span>';
     h += '<span class="rx-course__title" title="' + esc(c.title) + '">' + esc(c.title) + '</span>';
+    h += dupChip(c);
     if (c.isRetake) h += '<span class="rx-retake" title="Retake \u2014 never changed by a move">RT</span>';
     if (c.locked) h += '<span class="rx-lock' + (c.lockStatus === 'FINAL_PUBLISHED' ? ' rx-lock--final' : '') +
                        '" title="Results status: ' + esc(c.lockStatus) + '">' +
@@ -1785,6 +1795,149 @@ qs('rx-regno').addEventListener('keydown', function (e) {
     if (e.key !== 'Enter' && e.keyCode !== 13) return;
     if (qs('rx-stu-list').classList.contains('is-open')) return;   // the list handles Enter
     if (!qs('rx-open').disabled) { e.preventDefault(); openSession(); }
+});
+
+/* ── Duplicate detection ───────────────────────────────────────────────────
+   A course held more than once (retakes apart) is drawn so the copies find each
+   other at a glance: every copy of one course wears the same colour and the same
+   letter, each group a different one. The letter is there so the groups can be
+   told apart without relying on colour. The pending-change colours keep the left
+   edge; duplicates use the right edge and a chip, so the two never compete.
+
+   Codes are compared without spaces: "BHL 2101" is the pre-2025 code of BHL2101.
+   A copy marked for removal leaves its group at once, so tidying shows as you go. */
+var DUPS = { groups: [], byReg: {} };
+var FOCUS_DUP = '';
+// 24 colours: a bright set and a deep set of the same twelve hues, so neighbouring groups
+// differ in lightness as well as hue. None is the blue, green, red or orange the pending
+// changes use. Past 24 (rare) the golden angle keeps hues apart, and the letter always does.
+var DUP_PALETTE = ['#7c3aed', '#db2777', '#0891b2', '#d97706', '#0f766e', '#4338ca',
+                   '#e11d48', '#65a30d', '#c026d3', '#0284c7', '#a16207', '#475569',
+                   '#4c1d95', '#831843', '#164e63', '#78350f', '#134e4a', '#312e81',
+                   '#881337', '#365314', '#701a75', '#0c4a6e', '#57534e', '#1e293b'];
+var DUP_WARN = '<svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" ' +
+               'stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3 2 21h20L12 3z"/>' +
+               '<path d="M12 10v5M12 18v.5"/></svg>';
+
+function dupKey(code) { return String(code || '').toUpperCase().replace(/\s+/g, ''); }
+function dupHash(s) { var h = 0; for (var i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) >>> 0; return h; }
+function dupLetter(i) { var s = ''; i++; while (i > 0) { var m = (i - 1) % 26; s = String.fromCharCode(65 + m) + s; i = Math.floor((i - 1) / 26); } return s; }
+function dupMarked(c) {
+    function v(x) { return x !== null && x !== undefined && x !== ''; }
+    var st = String(c.markStage || '').toUpperCase();
+    return v(c.cw) || v(c.exam) || v(c.total) || (st !== '' && st !== 'NOT_ENTERED');
+}
+function dupWhere(c) {
+    var e = effective(c);
+    var t = c.total !== null && c.total !== undefined && c.total !== '' ? c.total
+          : ((c.cw !== null && c.cw !== undefined) || (c.exam !== null && c.exam !== undefined) ? (+(c.cw || 0) + +(c.exam || 0)) : null);
+    return 'Y' + e.year + ' S' + e.sem + (c.acadYear ? ' ' + c.acadYear : '') + ' — ' + c.course + ': ' +
+           (t === null ? 'no marks' : t + (c.grade ? ' (' + c.grade + ')' : '')) +
+           (c.markStage ? ', ' + String(c.markStage).replace(/_/g, ' ').toLowerCase() : '') +
+           (c._isNew ? ', being added' : '');
+}
+
+function dupCompute(rows) {
+    var by = {};
+    rows.forEach(function (c) {
+        if (c.isClassic || c.isRetake || PEND.deletes[c.regId]) return;
+        var k = dupKey(c.course);
+        (by[k] = by[k] || []).push(c);
+    });
+    var keys = Object.keys(by).filter(function (k) { return by[k].length > 1; }).sort();
+    var used = {}, out = { groups: [], byReg: {} };
+    keys.forEach(function (k, i) {
+        // Stable colour: a course keeps its colour from one redraw to the next however the
+        // other groups come and go, probing on so no two groups on one record share one.
+        var n = DUP_PALETTE.length, slot = dupHash(k) % n, tries = 0;
+        while (used[slot] && tries < n) { slot = (slot + 1) % n; tries++; }
+        var color = tries < n ? DUP_PALETTE[slot] : 'hsl(' + Math.round((i * 137.508) % 360) + ',' + (i % 2 ? '70%,30%' : '65%,42%') + ')';
+        used[slot] = 1;
+        var members = by[k].slice().sort(function (a, b) {
+            var ea = effective(a), eb = effective(b);
+            return (ea.year - eb.year) || (ea.sem - eb.sem) || (a.regId - b.regId);
+        });
+        var marked = members.filter(dupMarked).length;
+        var g = { key: k, letter: dupLetter(i), color: color, members: members, contested: marked > 1,
+                  marked: marked, code: members[0].course };
+        out.groups.push(g);
+        members.forEach(function (c, j) { out.byReg[c.regId] = { g: g, pos: j + 1 }; });
+    });
+    return out;
+}
+
+function dupTitle(g) {
+    return g.code + ' is held ' + g.members.length + ' times' +
+           (g.contested ? ' and ' + g.marked + ' of the copies carry marks: a person must decide which sitting stands.'
+                        : (g.marked ? '. The copy with marks is the real one; the empty copies are leftovers.'
+                                    : ', none with marks yet.')) + '\n\n' +
+           g.members.map(dupWhere).join('\n') + '\n\nClick to pick these out on the record.';
+}
+
+function dupChip(c) {
+    var d = DUPS.byReg[c.regId];
+    if (!d) return '';
+    var g = d.g;
+    return '<button type="button" class="rx-dupchip' + (g.contested ? ' is-contested' : '') +
+           (FOCUS_DUP === g.key ? ' is-on' : '') + '" data-dup="' + esc(g.key) + '" style="--dup:' + g.color + '" ' +
+           'title="' + esc(dupTitle(g)) + '">' + (g.contested ? DUP_WARN : '') +
+           '<b>' + g.letter + '</b>' + d.pos + '/' + g.members.length + '</button>';
+}
+
+function dupDots(sl) {
+    var seen = {}, h = '';
+    sl.rows.forEach(function (c) {
+        var d = DUPS.byReg[c.regId];
+        if (d && !seen[d.g.key]) { seen[d.g.key] = 1; h += '<i style="background:' + d.g.color + '" title="' + esc(d.g.code) + ' (' + d.g.letter + ')"></i>'; }
+    });
+    return h ? '<span class="rx-dupdots" title="Duplicate courses in this semester">' + h + '</span>' : '';
+}
+
+function dupLegend() {
+    var el = qs('rx-dups');
+    if (!el) return;
+    var G = DUPS.groups;
+    if (!G.length) {
+        el.innerHTML = DATA && DATA.courses.length
+            ? '<div class="rx-dups__ok"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 6 9 17l-5-5"/></svg>No duplicate courses on this record.</div>'
+            : '';
+        return;
+    }
+    var contested = G.filter(function (g) { return g.contested; }).length;
+    var copies = 0; G.forEach(function (g) { copies += g.members.length; });
+    var h = '<div class="rx-dups__hd"><b>Duplicates</b><span>' + G.length + ' course' + (G.length === 1 ? '' : 's') +
+            ' held more than once · ' + copies + ' copies' +
+            (contested ? ' · <em>' + contested + ' with marks on more than one copy</em>' : '') + '</span>' +
+            (FOCUS_DUP ? '<button type="button" class="rx-dups__clear" data-dupclear="1">Show everything</button>' : '') +
+            '<button type="button" class="rx-btn rx-btn--auto rx-dups__fix" data-dupfix="1">Resolve with Auto-arrange</button></div>' +
+            '<div class="rx-dups__list">';
+    G.forEach(function (g) {
+        h += '<button type="button" class="rx-dups__g' + (FOCUS_DUP === g.key ? ' is-on' : '') + (g.contested ? ' is-contested' : '') +
+             '" data-dup="' + esc(g.key) + '" style="--dup:' + g.color + '" title="' + esc(dupTitle(g)) + '">' +
+             '<i>' + g.letter + '</i><b>' + esc(g.code) + '</b><span>×' + g.members.length + '</span>' +
+             (g.contested ? DUP_WARN : '') + '</button>';
+    });
+    el.innerHTML = h + '</div>';
+}
+
+function dupWire() {
+    bindAll('[data-dup]', 'click', function (e) {
+        e.stopPropagation(); e.preventDefault();
+        var k = e.currentTarget.getAttribute('data-dup');
+        FOCUS_DUP = FOCUS_DUP === k ? '' : k;
+        render();
+        if (FOCUS_DUP) {
+            var first = document.querySelector('.rx-course.is-dupfocus');
+            if (first && first.scrollIntoView) first.scrollIntoView({ block: 'center', behavior: 'smooth' });
+        }
+    });
+    bindAll('[data-dupclear]', 'click', function () { FOCUS_DUP = ''; render(); });
+    bindAll('[data-dupfix]', 'click', function () { aaOpen(); });
+}
+
+document.addEventListener('keydown', function (e) {
+    if ((e.key === 'Escape' || e.keyCode === 27) && FOCUS_DUP &&
+        !document.querySelector('.rx-modal.is-open')) { FOCUS_DUP = ''; render(); }
 });
 
 /* ── Auto-arrange ──────────────────────────────────────────────────────────
