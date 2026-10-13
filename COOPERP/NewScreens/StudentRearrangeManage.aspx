@@ -218,5 +218,5 @@
   </div>
 </div>
 
-<script src="js/rearrange-manage.js?v=20261003c" type="text/javascript"></script>
+<script src="js/rearrange-manage.js?v=20261013a" type="text/javascript"></script>
 </asp:Content>

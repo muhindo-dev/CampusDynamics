@@ -904,8 +904,9 @@ function retermCheck() {
         for (var j = 0; j < DATA.semesters.length; j++) {
             var o = DATA.semesters[j];
             if (o.acadYear === to && o.semester === ts.semester && o.studyYear === RT.year)
-                bad.push('The student is already registered for ' + esc(to) + ' Year ' + RT.year +
-                         ' Semester ' + ts.semester + '. Two registrations for one term would contradict each other.');
+                warn.push('The student is already registered for ' + esc(to) + ' Year ' + RT.year +
+                          ' Semester ' + ts.semester + '. The duplicate semester registration will be <b>merged</b> into it ' +
+                          '(archived in the log, reversible) and its courses will join it.');
         }
     }
 
@@ -924,9 +925,9 @@ function retermCheck() {
         }
     }
     if (clash.length)
-        bad.push('Would collide on ' + clash.map(esc).join(', ') +
-                 ' — the student already holds ' + (clash.length === 1 ? 'it' : 'them') +
-                 ' in ' + esc(to) + ' in the same semester.');
+        warn.push('Already held in ' + esc(to) + ' in the same semester: ' + clash.map(esc).join(', ') +
+                  '. Each pair will be <b>harmonised into one</b> when you save: an empty copy gives way to the one with marks, ' +
+                  'otherwise the more advanced (published) copy stays. The copy removed is archived in the log and reversible.');
 
     // 4. Chronology: years of study must not cross over each other.
     var byY = acadByStudyYear();
@@ -1544,7 +1545,9 @@ qs('rx-save').addEventListener('click', function () {
     }
     if (warns.length) h += '<div class="rx-warn"><b>Warnings</b><br />• ' + warns.join('<br />• ') + '</div>';
 
-    var order = ['REGSEM', 'ADD', 'MOVE', 'MARK', 'DELETE', 'DELETE_RESULT'], n = 0;
+    // The server applies removals before adds and moves (so a slot is free before anything
+    // lands in it); numbering here follows the same order so "Change 5" means the same change.
+    var order = ['REGSEM', 'DELETE', 'DELETE_RESULT', 'ADD', 'MOVE', 'MARK'], n = 0;
     for (var g = 0; g < order.length; g++) {
         var kind = order[g];
         var items = ops.filter(function (o) { return o.op === kind; });

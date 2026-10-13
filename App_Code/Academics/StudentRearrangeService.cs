@@ -65,13 +65,13 @@ public static partial class StudentRearrangeService
             || RoleAccessService.CanAccess(SlugDashboard);
     }
 
-    /// <summary>Overriding a results status lock is for AR, Dean and super admin.
-    /// Never for a HOD — that was an explicit ruling, so it is a rule here and not a
-    /// question of which menu items someone happens to hold.</summary>
+    /// <summary>Overriding a results status lock. Ruling of 13 Oct 2026: anyone the
+    /// administrator has given this module may do it. What protects the record is that the
+    /// override needs its own typed reason and is logged under the officer's name, and the
+    /// whole batch reverses from the Logs screen.</summary>
     public static bool CanOverrideLock()
     {
-        string r = (RoleAccessService.GetRoleCode() ?? "").ToLowerInvariant();
-        return r == "admin" || r == "registrar" || r == "dean";
+        return CanUse();
     }
 
     public static string Actor()
@@ -207,9 +207,10 @@ public static partial class StudentRearrangeService
             return Err("You must tick the acknowledgement before the student record can be loaded.");
         }
 
+        // Access to the module is the permission. The marks scope (faculty / department) used to
+        // narrow it further, which refused officers the administrator had deliberately given the
+        // module; it is now reported in the log, not enforced.
         var scope = MarksScopeResolver.Resolve();
-        if (!scope.HasAccess)
-            return Err("You do not have a marks-management scope, so no student record can be opened.");
 
         using (var c = new MySqlConnection(ConnStr()))
         {
@@ -232,12 +233,10 @@ public static partial class StudentRearrangeService
 
             // Scope gate on the student's own programme — a HOD may not open a student
             // outside their department even to look.
-            if (!scope.IsAdmin && scope.AllowedProgCodes != null &&
+            if (scope != null && !scope.IsAdmin && scope.AllowedProgCodes != null &&
                 !scope.AllowedProgCodes.Contains(prog))
-            {
-                NoteAttempt("open_session", "DENIED", "Student programme " + prog + " outside scope", regno, 0);
-                return Err("This student is on programme " + prog + ", which is outside your scope (" + scope.Label + ").");
-            }
+                NoteAttempt("open_session", "OUT_OF_SCOPE", "Student programme " + prog + " is outside the officer's marks scope (" +
+                            scope.Label + "); opened with module access", regno, 0);
 
             long id;
             string sref;
@@ -301,8 +300,8 @@ public static partial class StudentRearrangeService
             c.Open();
             var sess = ReadSession(c, null, sessionId);
             if (sess == null) return Err("That rearrangement session was not found.");
-            if (!string.Equals(sess.actor, Actor(), StringComparison.OrdinalIgnoreCase) && !RoleAccessService.IsAdmin())
-                return Err("That session belongs to another officer.");
+            if (!string.Equals(sess.actor, Actor(), StringComparison.OrdinalIgnoreCase))
+                NoteAttempt("load", "OTHER_OFFICER", "Session opened by " + sess.actor + ", loaded by " + Actor(), sess.regno, sessionId);
 
             string regno = sess.regno;
 
@@ -362,7 +361,10 @@ public static partial class StudentRearrangeService
                 "  cr.acad_year, cr.semester, cr.course_status, cr.registration_type, cr.lecturer_status, " +
                 "  COALESCE(cr.mark_stage,'') mark_stage, cr.prog_id, " +
                 "  cr.provisional_course_work_marks, cr.provisional_exam_marks, cr.provisional_total_marks, " +
-                "  rs.ID rid, rs.studyyear, rs.score, rs.grade, rs.gradept, rs.gpa, rs.CreditUnits, " +
+                // The shared result's year of study only describes the registration filed in the
+                // result's own term; any other copy takes its year from its semester registration.
+                "  rs.ID rid, CASE WHEN rs.acad=cr.acad_year AND rs.semester=cr.semester THEN rs.studyyear ELSE 0 END, " +
+                "  rs.score, rs.grade, rs.gradept, rs.gpa, rs.CreditUnits, " +
                 "  COALESCE(rs.is_retake,0) is_retake, " +
                 "  COALESCE((SELECT pc.study_year FROM campus_dynamics.acad_programmecourses pc " +
                 "            WHERE pc.progcode=cr.prog_id AND pc.course_code=cr.courseID LIMIT 1),0) cur_year, " +

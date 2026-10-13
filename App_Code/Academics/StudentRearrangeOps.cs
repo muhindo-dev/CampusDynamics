@@ -19,7 +19,10 @@ public static partial class StudentRearrangeService
     // a semester must exist before a course can move into it, and a course must exist
     // before its marks can be changed. Deletes go last so nothing is removed that a
     // later operation still needs.
-    private static readonly string[] OpOrder = { "REGSEM", "ADD", "MOVE", "MARK", "DELETE" };
+    // Removals run BEFORE adds and moves. They used to run last, so the advice "remove the copy
+    // already sitting there first, in this same sitting" could never be followed: the move hit the
+    // copy before its removal had run, and the whole batch was refused (sitting SR-20261013-0002).
+    private static readonly string[] OpOrder = { "REGSEM", "DELETE", "DELETE_RESULT", "ADD", "MOVE", "MARK" };
 
     private static string GS(Dictionary<string, object> d, string k)
     {
@@ -109,11 +112,9 @@ public static partial class StudentRearrangeService
 
             var sess = ReadSession(c, null, sessionId);
             if (sess == null) return Err("That rearrangement session was not found.");
-            if (!string.Equals(sess.actor, Actor(), StringComparison.OrdinalIgnoreCase) && !RoleAccessService.IsAdmin())
-            {
-                NoteAttempt("save", "DENIED", "Session belongs to " + sess.actor, sess.regno, sessionId);
-                return Err("That session belongs to another officer.");
-            }
+            // Any module user may continue a sitting; whose it was is recorded, not enforced.
+            if (!string.Equals(sess.actor, Actor(), StringComparison.OrdinalIgnoreCase))
+                NoteAttempt("save", "OTHER_OFFICER", "Session opened by " + sess.actor + ", saved by " + Actor(), sess.regno, sessionId);
 
             // ── Idempotency. The unique index on client_op_id is the guarantee; a replay
             //    collides and replays the stored answer instead of doing the work twice. ──
@@ -401,8 +402,12 @@ public static partial class StudentRearrangeService
 
     private class RegRow
     {
-        public int id, semester, studyYear, resultId;
-        public string course, acadYear, courseStatus, progId, markStage, grade;
+        public int id, semester, studyYear, resultId, resultSem;
+        public string course, acadYear, courseStatus, progId, markStage, grade, resultAcad = "";
+        /// <summary>The course's one published result is filed under THIS registration's term,
+        /// or no other registration of the course holds that term. Only then does it travel
+        /// with this registration: moving an empty duplicate must not drag a real mark.</summary>
+        public bool ownsResult;
         public object cw, exam, total, score;
     }
 
@@ -411,7 +416,18 @@ public static partial class StudentRearrangeService
         using (var cmd = Cmd(
             "SELECT cr.ID, cr.courseID, cr.acad_year, cr.semester, cr.course_status, cr.prog_id, " +
             "  COALESCE(cr.mark_stage,''), cr.provisional_course_work_marks, cr.provisional_exam_marks, " +
-            "  cr.provisional_total_marks, COALESCE(rs.ID,0), COALESCE(rs.studyyear,0), rs.score, COALESCE(rs.grade,'') " +
+            "  cr.provisional_total_marks, COALESCE(rs.ID,0), " +
+            // The year of study is the registration's own term's, not the shared result's: a
+            // duplicate in another year used to borrow the result's year and look already moved.
+            "  COALESCE((SELECT MAX(ar.studyyear) FROM campus_dynamics.acad_registration ar " +
+            "            WHERE ar.regno=cr.regno AND ar.acad_year=cr.acad_year AND ar.semester=cr.semester), " +
+            "           CASE WHEN rs.acad=cr.acad_year AND rs.semester=cr.semester THEN rs.studyyear END, 0), " +
+            "  rs.score, COALESCE(rs.grade,''), COALESCE(rs.acad,''), COALESCE(rs.semester,0), " +
+            "  CASE WHEN rs.ID IS NULL THEN 0 " +
+            "       WHEN rs.acad=cr.acad_year AND rs.semester=cr.semester THEN 1 " +
+            "       WHEN EXISTS(SELECT 1 FROM campus_dynamics_portal.acad_course_registration o " +
+            "                   WHERE o.regno=cr.regno AND o.courseID=cr.courseID AND o.ID<>cr.ID " +
+            "                     AND o.acad_year=rs.acad AND o.semester=rs.semester) THEN 0 ELSE 1 END " +
             "FROM campus_dynamics_portal.acad_course_registration cr " +
             "LEFT JOIN campus_dynamics.acad_results rs ON rs.regno=cr.regno AND rs.courseid=cr.courseID " +
             "WHERE cr.ID=@i AND cr.regno=@r LIMIT 1", c, t))
@@ -426,6 +442,7 @@ public static partial class StudentRearrangeService
                 x.courseStatus = S(r, 4); x.progId = S(r, 5); x.markStage = S(r, 6);
                 x.cw = NI(r, 7); x.exam = NI(r, 8); x.total = NI(r, 9);
                 x.resultId = I(r, 10); x.studyYear = I(r, 11); x.score = NI(r, 12); x.grade = S(r, 13);
+                x.resultAcad = S(r, 14); x.resultSem = I(r, 15); x.ownsResult = I(r, 16) == 1;
                 return x;
             }
         }
@@ -449,7 +466,7 @@ public static partial class StudentRearrangeService
         if (!CanOverrideLock())
             return "These results are at status " + status + " and are locked. Your role (" +
                    (ActorRole().Length > 0 ? ActorRole() : "unknown") +
-                   ") may not override a results lock — only the Academic Registrar, a Dean or a system administrator may.";
+                   ") does not have access to this module.";
         if (ov.Length < MinOverrideReason)
             return "These results are at status " + status + ". To override the lock you must type a reason of at least " +
                    MinOverrideReason + " characters (you typed " + ov.Length + ").";
@@ -609,43 +626,38 @@ public static partial class StudentRearrangeService
             return res;
         }
 
-        // acad_course_registration is UNIQUE(regno, courseID, acad_year, semester, course_status)
-        using (var cmd = Cmd(
-            "SELECT COUNT(*) FROM campus_dynamics_portal.acad_course_registration " +
-            "WHERE regno=@r AND courseID=@c AND acad_year=@a AND semester=@s AND course_status=@st AND ID<>@i", c, t))
+        // acad_course_registration is UNIQUE(regno, courseID, acad_year, semester, course_status).
+        // A copy already in the destination is a duplicate, almost always the empty one the 2025
+        // migration left behind. The two are harmonised into one instead of refusing the batch.
+        bool movingMerged; string dupNote;
+        string dupErr = ResolveDuplicate(c, t, sess, batchId, seq, x, toAcad, toSem, op, out movingMerged, out dupNote);
+        if (dupErr != null) { res.error = dupErr; return res; }
+        // When the copy being moved was the duplicate that gave way, the registration already in
+        // the destination stands and there is nothing left to move; its result and transcript
+        // rows still follow into the destination term below.
+        if (!movingMerged)
         {
-            cmd.Parameters.AddWithValue("@r", sess.regno); cmd.Parameters.AddWithValue("@c", x.course);
-            cmd.Parameters.AddWithValue("@a", toAcad); cmd.Parameters.AddWithValue("@s", toSem);
-            cmd.Parameters.AddWithValue("@st", x.courseStatus); cmd.Parameters.AddWithValue("@i", x.id);
-            if (Convert.ToInt32(cmd.ExecuteScalar()) > 0)
+            var beforeReg = ReadRow(c, t, "campus_dynamics_portal.acad_course_registration", "ID", x.id);
+
+            using (var cmd = Cmd("UPDATE campus_dynamics_portal.acad_course_registration " +
+                                 "SET acad_year=@a, semester=@s WHERE ID=@i", c, t))
             {
-                res.error = "The student already holds " + x.course + " (" + x.courseStatus + ") in " +
-                            toAcad + " Semester " + toSem + ", and a student cannot hold the same course " +
-                            "twice in one term. Remove or move the copy already sitting there first, in " +
-                            "this same sitting, and both changes will be saved together.";
-                return res;
+                cmd.Parameters.AddWithValue("@a", toAcad); cmd.Parameters.AddWithValue("@s", toSem);
+                cmd.Parameters.AddWithValue("@i", x.id);
+                cmd.ExecuteNonQuery();
             }
+            var afterReg = ReadRow(c, t, "campus_dynamics_portal.acad_course_registration", "ID", x.id);
+
+            LogEntry(c, t, sess, batchId, seq, "MOVE", "campus_dynamics_portal", "acad_course_registration", "ID",
+                     Convert.ToString(x.id), x.course, Json.Serialize(beforeReg), Json.Serialize(afterReg),
+                     reason, isOverride, isOverride ? "STATUS_LOCK" : null,
+                     isOverride ? GS(op, "overrideReason") : null, lockStatus);
         }
-
-        var beforeReg = ReadRow(c, t, "campus_dynamics_portal.acad_course_registration", "ID", x.id);
-
-        using (var cmd = Cmd("UPDATE campus_dynamics_portal.acad_course_registration " +
-                             "SET acad_year=@a, semester=@s WHERE ID=@i", c, t))
-        {
-            cmd.Parameters.AddWithValue("@a", toAcad); cmd.Parameters.AddWithValue("@s", toSem);
-            cmd.Parameters.AddWithValue("@i", x.id);
-            cmd.ExecuteNonQuery();
-        }
-        var afterReg = ReadRow(c, t, "campus_dynamics_portal.acad_course_registration", "ID", x.id);
-
-        LogEntry(c, t, sess, batchId, seq, "MOVE", "campus_dynamics_portal", "acad_course_registration", "ID",
-                 Convert.ToString(x.id), x.course, Json.Serialize(beforeReg), Json.Serialize(afterReg),
-                 reason, isOverride, isOverride ? "STATUS_LOCK" : null,
-                 isOverride ? GS(op, "overrideReason") : null, lockStatus);
 
         // The published result and the transcript snapshot carry the term too. The retake flag
         // is deliberately untouched: a move never converts a retake into a first sitting.
-        if (x.resultId > 0)
+        // Only a result this registration owns travels with it (see RegRow.ownsResult).
+        if (x.resultId > 0 && x.ownsResult)
         {
             var b2 = ReadRow(c, t, "campus_dynamics.acad_results", "ID", x.resultId);
             using (var cmd = Cmd("UPDATE campus_dynamics.acad_results " +
@@ -663,6 +675,7 @@ public static partial class StudentRearrangeService
         }
 
         var trIds = new List<int>();
+        if (x.resultId == 0 || x.ownsResult)
         using (var cmd = Cmd("SELECT ID FROM campus_dynamics.acad_transcript_results " +
                              "WHERE regno=@r AND courseid=@c", c, t))
         {
@@ -686,11 +699,153 @@ public static partial class StudentRearrangeService
         }
 
         res.applied = true;
+        if (movingMerged) { res.summary = dupNote; return res; }
         res.summary = x.course + " moved from Year " + x.studyYear + " Semester " + x.semester +
                       " to Year " + toYear + " Semester " + toSem + " (" + toAcad +
                       (yearBasis == "registration" ? "" : ", academic year taken from " + yearBasis) + ")" +
-                      (isOverride ? " (results lock overridden at " + lockStatus + ")" : "");
+                      (isOverride ? " (results lock overridden at " + lockStatus + ")" : "") +
+                      (dupNote.Length > 0 ? "; " + dupNote : "");
         return res;
+    }
+
+    // ═════════════════════════════════════════════════════════════════════════
+    //  Duplicate harmonisation
+    // ═════════════════════════════════════════════════════════════════════════
+
+    private static int StageRank(string st)
+    {
+        st = (st ?? "").Trim().ToUpperInvariant();
+        if (st == "PUBLISHED") return 5;
+        if (st.IndexOf("APPROV", StringComparison.Ordinal) >= 0) return 4;
+        if (st.IndexOf("SUBMIT", StringComparison.Ordinal) >= 0) return 3;
+        if (st == "" || st == "NOT_ENTERED") return 0;
+        return 2;
+    }
+    private static bool HasMarks(RegRow x) { return x.cw != null || x.exam != null || x.total != null; }
+    private static bool IsEmptyReg(RegRow x) { return !HasMarks(x) && StageRank(x.markStage) == 0; }
+    private static bool SameMarks(RegRow a, RegRow b)
+    {
+        return Convert.ToString(a.cw) == Convert.ToString(b.cw) && Convert.ToString(a.exam) == Convert.ToString(b.exam) &&
+               Convert.ToString(a.total) == Convert.ToString(b.total);
+    }
+    /// <summary>The registration whose total is the published result's score is the official one.</summary>
+    private static bool MatchesResult(RegRow x)
+    {
+        return x.resultId > 0 && x.total != null && x.score != null && Convert.ToInt32(x.total) == Convert.ToInt32(x.score);
+    }
+    private static string MarksText(RegRow x)
+    {
+        if (!HasMarks(x)) return "no marks";
+        return "CW " + (x.cw == null ? "-" : Convert.ToString(x.cw)) + ", exam " + (x.exam == null ? "-" : Convert.ToString(x.exam)) +
+               ", total " + (x.total == null ? "-" : Convert.ToString(x.total));
+    }
+
+    /// <summary>
+    /// The course is about to land in a term where the student already holds it. Instead of
+    /// refusing the batch, the two copies are harmonised into one:
+    ///   - an empty copy (no marks, never entered) always gives way to one with marks or a stage;
+    ///   - two empty copies, or two with identical marks: the one already in the term stays;
+    ///   - two different sets of marks: the more advanced stage stays (PUBLISHED over APPROVED over
+    ///     SUBMITTED over entered); at the same stage, the one matching the published result;
+    ///     failing that, the copy the officer is moving, which is what they asked for.
+    /// The copy that gives way is archived whole into the log and removed, so the batch's ordinary
+    /// reversal puts it back. A retake pointing at it is re-pointed at the copy that stays.
+    /// The one published result per course (acad_results is unique on regno+course) is then
+    /// re-homed to the surviving registration's term by Harmonise at the end of the save.
+    /// movingMerged = true means the copy being moved was the one that gave way: the course
+    /// already sits in the destination, so the move is complete.
+    /// </summary>
+    private static string ResolveDuplicate(MySqlConnection c, MySqlTransaction t, SessionInfo sess, long batchId, int seq,
+                                           RegRow moving, string toAcad, int toSem, Dictionary<string, object> op,
+                                           out bool movingMerged, out string note)
+    {
+        movingMerged = false; note = "";
+        var ids = new List<int>();
+        using (var cmd = Cmd(
+            "SELECT ID FROM campus_dynamics_portal.acad_course_registration " +
+            "WHERE regno=@r AND UPPER(TRIM(courseID))=UPPER(TRIM(@c)) AND acad_year=@a AND semester=@s " +
+            "  AND course_status=@st AND ID<>@i ORDER BY ID", c, t))
+        {
+            cmd.Parameters.AddWithValue("@r", sess.regno); cmd.Parameters.AddWithValue("@c", moving.course);
+            cmd.Parameters.AddWithValue("@a", toAcad); cmd.Parameters.AddWithValue("@s", toSem);
+            cmd.Parameters.AddWithValue("@st", moving.courseStatus); cmd.Parameters.AddWithValue("@i", moving.id);
+            using (var r = cmd.ExecuteReader()) while (r.Read()) ids.Add(I(r, 0));
+        }
+        if (ids.Count == 0) return null;
+
+        var notes = new List<string>();
+        foreach (int oid in ids)
+        {
+            var other = LoadReg(c, t, sess.regno, oid);
+            if (other == null) continue;
+
+            bool me = IsEmptyReg(moving), oe = IsEmptyReg(other), keepMoving; string why;
+            if (oe && !me) { keepMoving = true; why = "the copy already there was empty"; }
+            else if (me && !oe) { keepMoving = false; why = "the copy being moved was empty"; }
+            else if (me && oe) { keepMoving = false; why = "both copies were empty"; }
+            else if (SameMarks(moving, other)) { keepMoving = false; why = "both copies held the same marks"; }
+            else
+            {
+                int rm = StageRank(moving.markStage), ro = StageRank(other.markStage);
+                if (rm != ro) { keepMoving = rm > ro; why = "the copy kept is further along (" + (keepMoving ? moving.markStage : other.markStage) + ")"; }
+                else
+                {
+                    bool mm = MatchesResult(moving), mo = MatchesResult(other);
+                    if (mm != mo) { keepMoving = mm; why = "the copy kept matches the published result"; }
+                    else { keepMoving = true; why = "the copy being moved was kept, as instructed"; }
+                }
+            }
+            RegRow keep = keepMoving ? moving : other, lose = keepMoving ? other : moving;
+
+            // Removing a copy that holds marks is a results change: it passes the same lock as
+            // any other. Every module user may override; the reason typed for the change, or
+            // else the sitting's own reason, is the justification recorded.
+            bool isOverride = false; string lockStatus = null;
+            string ovReason = GS(op, "overrideReason");
+            if (ovReason.Length < MinOverrideReason) ovReason = "Duplicate " + lose.course + " harmonised: " + sess.reason;
+            if (!IsEmptyReg(lose))
+            {
+                var lop = new Dictionary<string, object>(op);
+                lop["overrideReason"] = ovReason;
+                string lockErr = CheckLock(lose, lop, out isOverride, out lockStatus);
+                if (lockErr != null) return lockErr + " (" + lose.course + ")";
+            }
+
+            // A retake that points at the copy going away now points at the one that stays.
+            var retakes = new List<int>();
+            using (var cmd = Cmd("SELECT ID FROM campus_dynamics_portal.acad_course_registration " +
+                                 "WHERE regno=@r AND retake_registration_id=@i", c, t))
+            {
+                cmd.Parameters.AddWithValue("@r", sess.regno); cmd.Parameters.AddWithValue("@i", lose.id);
+                using (var r = cmd.ExecuteReader()) while (r.Read()) retakes.Add(I(r, 0));
+            }
+            foreach (int rt in retakes)
+            {
+                var b = ReadRow(c, t, "campus_dynamics_portal.acad_course_registration", "ID", rt);
+                using (var cmd = Cmd("UPDATE campus_dynamics_portal.acad_course_registration SET retake_registration_id=@k WHERE ID=@i", c, t))
+                { cmd.Parameters.AddWithValue("@k", keep.id); cmd.Parameters.AddWithValue("@i", rt); cmd.ExecuteNonQuery(); }
+                var a = ReadRow(c, t, "campus_dynamics_portal.acad_course_registration", "ID", rt);
+                LogEntry(c, t, sess, batchId, seq, "HARMONISE", "campus_dynamics_portal", "acad_course_registration", "ID",
+                         Convert.ToString(rt), lose.course, Json.Serialize(b), Json.Serialize(a),
+                         "Retake re-pointed from duplicate registration #" + lose.id + " to #" + keep.id, false, null, null, null);
+            }
+
+            string text = "Duplicate " + lose.course + " in " + toAcad + " Semester " + toSem + " harmonised: kept registration #" +
+                          keep.id + " (" + MarksText(keep) + "), removed #" + lose.id + " (" + MarksText(lose) + ", from " +
+                          lose.acadYear + " Semester " + lose.semester + ") because " + why;
+            var before = ReadRow(c, t, "campus_dynamics_portal.acad_course_registration", "ID", lose.id);
+            LogEntry(c, t, sess, batchId, seq, "DELETE", "campus_dynamics_portal", "acad_course_registration", "ID",
+                     Convert.ToString(lose.id), lose.course, Json.Serialize(before), null,
+                     text + ". " + GS(op, "reason"), isOverride, isOverride ? "STATUS_LOCK" : null,
+                     isOverride ? ovReason : null, lockStatus);
+            using (var cmd = Cmd("DELETE FROM campus_dynamics_portal.acad_course_registration WHERE ID=@i", c, t))
+            { cmd.Parameters.AddWithValue("@i", lose.id); cmd.ExecuteNonQuery(); }
+            notes.Add(text + " (archived and reversible)");
+
+            if (!keepMoving) { movingMerged = true; break; }
+        }
+        note = string.Join("; ", notes.ToArray());
+        return null;
     }
 
     private static OpResult DoMark(MySqlConnection c, MySqlTransaction t, SessionInfo sess,
@@ -1137,7 +1292,7 @@ public static partial class StudentRearrangeService
             {
                 res.error = x.course + " has a published result (" + (x.score == null ? "no score" : Convert.ToString(x.score)) +
                             ", grade " + x.grade + "). Removing the registration also removes that result. " +
-                            "Only the Academic Registrar, a Dean or a system administrator may do that.";
+                            "You need access to this module to do that.";
                 return res;
             }
             isOverride = true;
@@ -1221,7 +1376,7 @@ public static partial class StudentRearrangeService
         // Deleting somebody's mark is the same weight of act whichever table it sits in.
         if (!CanOverrideLock())
         {
-            res.error = "Only the Academic Registrar, a Dean or a system administrator may remove a result.";
+            res.error = "You need access to this module to remove a result.";
             return res;
         }
 
@@ -1322,7 +1477,13 @@ public static partial class StudentRearrangeService
             cmd.Parameters.AddWithValue("@r", sess.regno); cmd.Parameters.AddWithValue("@c", course);
             cmd.Parameters.AddWithValue("@a", toAcad); cmd.Parameters.AddWithValue("@s", toSem);
             if (Convert.ToInt32(cmd.ExecuteScalar()) > 0)
-            { res.error = "The student already holds " + course + " in " + toAcad + " Semester " + toSem + "."; return res; }
+            {
+                // The course the officer asked for is already where they want it. That is the
+                // outcome they wanted, so it is not a reason to throw away the rest of the batch.
+                res.applied = true;
+                res.summary = course + " is already registered in " + toAcad + " Semester " + toSem + " - left as it is";
+                return res;
+            }
         }
 
         string sessName = "";
@@ -1523,6 +1684,8 @@ public static partial class StudentRearrangeService
             return res;
         }
 
+        var semMerge = new HashSet<int>();
+        int semsMerged = 0;
         // V3 — the target must not already hold this (studyyear, semester) for this student.
         // acad_registration has no unique key, so nothing but this check stands in the way of a
         // duplicate semester registration.
@@ -1535,13 +1698,10 @@ public static partial class StudentRearrangeService
             {
                 cmd.Parameters.AddWithValue("@r", sess.regno); cmd.Parameters.AddWithValue("@a", toAcad);
                 cmd.Parameters.AddWithValue("@s", sm); cmd.Parameters.AddWithValue("@y", studyYear);
-                if (Convert.ToInt32(cmd.ExecuteScalar()) > 0)
-                {
-                    res.error = "The student already has a registration for " + toAcad + " Year " + studyYear +
-                                " Semester " + sm + ". Re-terming into it would create a second one for the " +
-                                "same term. Remove or re-term that registration first, in this same sitting.";
-                    return res;
-                }
+                // Already registered there: the travelling semester registration is a duplicate of
+                // it. It is archived and removed when the re-term is applied, and its courses
+                // join the registration that is already there.
+                if (Convert.ToInt32(cmd.ExecuteScalar()) > 0) semMerge.Add(sm);
             }
         }
 
@@ -1572,28 +1732,20 @@ public static partial class StudentRearrangeService
         bool anyOverride = false; string worstLock = null;
         var rows = new List<RegRow>();
         var lockOf = new Dictionary<int, string>();   // RegRow has no lock field; CheckLock reports it
+        var dupNotes = new List<string>();
         foreach (int rid in regIds)
         {
             var x = LoadReg(c, t, sess.regno, rid);
             if (x == null) continue;
-            rows.Add(x);
 
-            using (var cmd = Cmd(
-                "SELECT COUNT(*) FROM campus_dynamics_portal.acad_course_registration " +
-                "WHERE regno=@r AND courseID=@c AND acad_year=@a AND semester=@s AND course_status=@st AND ID<>@i", c, t))
-            {
-                cmd.Parameters.AddWithValue("@r", sess.regno); cmd.Parameters.AddWithValue("@c", x.course);
-                cmd.Parameters.AddWithValue("@a", toAcad); cmd.Parameters.AddWithValue("@s", x.semester);
-                cmd.Parameters.AddWithValue("@st", x.courseStatus); cmd.Parameters.AddWithValue("@i", x.id);
-                if (Convert.ToInt32(cmd.ExecuteScalar()) > 0)
-                {
-                    res.error = "Re-terming into " + toAcad + " would collide on " + x.course + ": the student " +
-                                "already holds it (" + x.courseStatus + ") in " + toAcad + " Semester " + x.semester +
-                                ", and the same course cannot be held twice in one term. Deal with that copy " +
-                                "first, in this same sitting.";
-                    return res;
-                }
-            }
+            // A copy already in the destination term is harmonised into one registration, as
+            // for a single move, rather than refusing the whole re-term.
+            bool merged; string dn;
+            string dupErr = ResolveDuplicate(c, t, sess, batchId, seq, x, toAcad, x.semester, op, out merged, out dn);
+            if (dupErr != null) { res.error = dupErr; return res; }
+            if (dn.Length > 0) dupNotes.Add(dn);
+            if (merged) continue;            // this copy was the duplicate and is gone; the other stands
+            rows.Add(x);
 
             // V6 — published results are locked exactly as they are for a move.
             bool ovr; string st2;
@@ -1644,6 +1796,20 @@ public static partial class StudentRearrangeService
             }
             if (regRowId == 0) continue;
 
+            if (semMerge.Contains(sm))
+            {
+                var dupSem = ReadRow(c, t, "campus_dynamics.acad_registration", "ID", regRowId);
+                LogEntry(c, t, sess, batchId, seq, "DELETE", "campus_dynamics", "acad_registration", "ID",
+                         Convert.ToString(regRowId), null, Json.Serialize(dupSem), null,
+                         "Duplicate semester registration: " + toAcad + " Year " + studyYear + " Semester " + sm +
+                         " is already registered, so this copy from " + fromA + " was merged into it. " + reason,
+                         false, null, null, null);
+                using (var cmd = Cmd("DELETE FROM campus_dynamics.acad_registration WHERE ID=@i", c, t))
+                { cmd.Parameters.AddWithValue("@i", regRowId); cmd.ExecuteNonQuery(); }
+                semsMerged++;
+                continue;
+            }
+
             var beforeSem = ReadRow(c, t, "campus_dynamics.acad_registration", "ID", regRowId);
             using (var cmd = Cmd("UPDATE campus_dynamics.acad_registration SET acad_year=@a WHERE ID=@i", c, t))
             {
@@ -1674,7 +1840,7 @@ public static partial class StudentRearrangeService
                      anyOverride ? GS(op, "overrideReason") : null, LockOf(lockOf, x.id));
             coursesMoved++;
 
-            if (x.resultId > 0)
+            if (x.resultId > 0 && x.ownsResult)
             {
                 var b2 = ReadRow(c, t, "campus_dynamics.acad_results", "ID", x.resultId);
                 using (var cmd = Cmd("UPDATE campus_dynamics.acad_results SET acad=@a WHERE ID=@i", c, t))
@@ -1738,7 +1904,9 @@ public static partial class StudentRearrangeService
                       " moved to " + toAcad + " — " + coursesMoved + " course" + (coursesMoved == 1 ? "" : "s") +
                       ", " + resultsMoved + " result" + (resultsMoved == 1 ? "" : "s") +
                       ", " + transcriptsMoved + " transcript row" + (transcriptsMoved == 1 ? "" : "s") +
-                      billNote + (anyOverride ? " (results lock overridden at " + worstLock + ")" : "");
+                      billNote + (anyOverride ? " (results lock overridden at " + worstLock + ")" : "") +
+                      (dupNotes.Count > 0 ? "; duplicates harmonised: " + string.Join("; ", dupNotes.ToArray()) : "") +
+                      (semsMerged > 0 ? "; " + semsMerged + " duplicate semester registration" + (semsMerged == 1 ? "" : "s") + " merged" : "");
         return res;
     }
 
