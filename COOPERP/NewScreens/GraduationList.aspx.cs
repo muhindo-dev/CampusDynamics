@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Globalization;
 using System.Configuration;
@@ -67,6 +67,9 @@ public partial class COOPERP_NewScreens_GraduationList : System.Web.UI.Page
             int dep;
             if (f.department != "" && int.TryParse(f.department, out dep)) { w += " AND p.department_id=@dep "; names.Add("@dep"); }
             if (f.programme != "") { w += " AND g.progcode=@prog "; names.Add("@prog"); }
+            int campusId;
+            bool byCampus = f.campus != "" && int.TryParse(f.campus, out campusId);
+            if (byCampus) { w += " AND EXISTS (SELECT 1 FROM acad_student cs WHERE cs.regno=g.regno AND cs.studCampus=@campus) "; names.Add("@campus"); }
             if (f.search != "") { w += " AND (g.regno LIKE @q OR g.stud_name LIKE @q) "; names.Add("@q"); }
             // Matched as a prefix so "First" catches "First Class Honours" and "First Class" alike.
             if (f.award != "") { w += " AND g.degclass LIKE @aw "; names.Add("@aw"); }
@@ -99,6 +102,7 @@ public partial class COOPERP_NewScreens_GraduationList : System.Web.UI.Page
                 if (names.Contains("@fac")) cmd.Parameters.AddWithValue("@fac", f.faculty);
                 if (names.Contains("@dep")) cmd.Parameters.AddWithValue("@dep", int.Parse(f.department));
                 if (names.Contains("@prog")) cmd.Parameters.AddWithValue("@prog", f.programme);
+                if (names.Contains("@campus")) cmd.Parameters.AddWithValue("@campus", int.Parse(f.campus));
                 if (names.Contains("@q")) cmd.Parameters.AddWithValue("@q", "%" + f.search + "%");
                 if (names.Contains("@aw")) cmd.Parameters.AddWithValue("@aw", f.award + "%");
                 using (var r = cmd.ExecuteReader())

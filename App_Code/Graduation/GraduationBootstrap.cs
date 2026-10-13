@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Configuration;
 using System.Web.Script.Serialization;
@@ -59,6 +59,7 @@ public static class GraduationBootstrap
             f.faculty = S(d, "faculty");
             f.department = S(d, "department");
             f.programme = S(d, "programme");
+            f.campus = S(d, "campus");
             f.entryYear = S(d, "entryYear");
             f.finishedIn = S(d, "finishedIn");
             f.search = S(d, "search");
@@ -75,6 +76,41 @@ public static class GraduationBootstrap
         }
         catch { }
         return f;
+    }
+
+    /// <summary>The campuses a student can belong to (acad_campuses, the "ALL" row excluded).</summary>
+    public static List<object> Campuses()
+    {
+        var l = new List<object>();
+        try
+        {
+            using (var c = new MySql.Data.MySqlClient.MySqlConnection(
+                       System.Configuration.ConfigurationManager.ConnectionStrings["vacConnectionString"].ConnectionString))
+            {
+                c.Open();
+                using (var cmd = new MySql.Data.MySqlClient.MySqlCommand(
+                    "SELECT ID, campus_name FROM acad_campuses WHERE ID>0 ORDER BY campus_name", c))
+                using (var r = cmd.ExecuteReader())
+                    while (r.Read())
+                    {
+                        string nm = Convert.ToString(r[1]).Trim();
+                        nm = System.Globalization.CultureInfo.InvariantCulture.TextInfo.ToTitleCase(nm.ToLowerInvariant());
+                        l.Add(new { v = Convert.ToString(r[0]), t = nm });
+                    }
+            }
+        }
+        catch { }
+        return l;
+    }
+
+    public static string CampusName(string id)
+    {
+        foreach (object o in Campuses())
+        {
+            var t = o.GetType();
+            if (Convert.ToString(t.GetProperty("v").GetValue(o, null)) == id) return Convert.ToString(t.GetProperty("t").GetValue(o, null));
+        }
+        return id;
     }
 
     public static string S(Dictionary<string, object> d, string k)
@@ -200,6 +236,7 @@ public static class GraduationBootstrap
                 faculties = faculties,
                 departments = departments,
                 programmes = programmes,
+                campuses = Campuses(),
                 intakes = intakes
             });
         }
@@ -223,6 +260,7 @@ public static class GraduationBootstrap
         l.Add(new KeyValuePair<string, string>("Faculty", f.faculty == "" ? "All faculties" : n.faculty));
         l.Add(new KeyValuePair<string, string>("Department", f.department == "" ? "All departments" : n.department));
         l.Add(new KeyValuePair<string, string>("Programme", f.programme == "" ? "All programmes" : n.programme));
+        if (f.campus != "") l.Add(new KeyValuePair<string, string>("Campus", CampusName(f.campus)));
 
         if (f.entryYear != "") l.Add(new KeyValuePair<string, string>("Intake", f.entryYear));
         if (f.finishedIn != "") l.Add(new KeyValuePair<string, string>("Last sat a paper in", f.finishedIn));

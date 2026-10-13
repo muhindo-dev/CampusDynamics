@@ -16,6 +16,7 @@
     <div class="g-f" style="flex:1 1 130px;"><label for="fFac">Faculty</label><select id="fFac"></select></div>
     <div class="g-f" style="flex:1 1 130px;"><label for="fDep">Department</label><select id="fDep"></select></div>
     <div class="g-f" style="flex:1 1 150px;"><label for="fProg">Programme</label><select id="fProg"></select></div>
+    <div class="g-f" style="flex:0 0 130px;"><label for="fCampus">Campus</label><select id="fCampus"></select></div>
     <div class="g-f" style="flex:0 0 88px;"><label for="fIntake">Intake</label><select id="fIntake"></select></div>
     <div class="g-f" style="flex:0 0 150px;"><label for="fOnList">Graduation list</label>
       <select id="fOnList"><option value="pending">Not yet on a list</option>
@@ -77,7 +78,7 @@ var PAGE = 'GraduationCandidates.aspx', BOOT = null, page = 1, rows = [];
 
 function state() {
     return { year: G.qs('fYear').value, focus: G.qs('fFocus').value, faculty: G.qs('fFac').value,
-             dept: G.qs('fDep').value, prog: G.qs('fProg').value, intake: G.qs('fIntake').value,
+             dept: G.qs('fDep').value, prog: G.qs('fProg').value, campus: G.qs('fCampus').value, intake: G.qs('fIntake').value,
              ready: G.qs('fReady').value, sort: G.qs('fSort').value === 'regno' ? '' : G.qs('fSort').value,
              onlist: G.qs('fOnList').value === 'pending' ? '' : G.qs('fOnList').value,
              q: G.qs('fQ').value.trim(), page: page > 1 ? page : '' };
@@ -85,7 +86,7 @@ function state() {
 function cfg(extra) {
     var s = state();
     var c = { acadYear: s.year, focus: s.focus, faculty: s.faculty, department: s.dept,
-              programme: s.prog, entryYear: s.intake, readiness: s.ready, search: s.q,
+              programme: s.prog, campus: s.campus, entryYear: s.intake, readiness: s.ready, search: s.q,
               sort: G.qs('fSort').value, state: G.qs('fOnList').value,
               page: String(page), size: '50' };
     if (extra) for (var k in extra) if (extra.hasOwnProperty(k)) c[k] = extra[k];
@@ -104,6 +105,7 @@ function chips() {
         { k: 'fFac',    label: 'Faculty',    value: G.qs('fFac').value ? txt('fFac') : '' },
         { k: 'fDep',    label: 'Department', value: G.qs('fDep').value ? txt('fDep') : '' },
         { k: 'fProg',   label: 'Programme',  value: G.qs('fProg').value ? txt('fProg') : '' },
+        { k: 'fCampus', label: 'Campus',     value: G.qs('fCampus').value ? txt('fCampus') : '' },
         { k: 'fIntake', label: 'Intake',     value: G.qs('fIntake').value },
         { k: 'fReady',  label: 'Readiness',  value: G.qs('fReady').value ? txt('fReady') : '' },
         { k: 'fOnList', label: 'List',       value: G.qs('fOnList').value === 'pending' ? '' : txt('fOnList') },
@@ -126,7 +128,7 @@ function syncFocusEnabled() {
 }
 
 function resetFilters() {
-    ['fFac', 'fDep', 'fProg', 'fIntake', 'fReady'].forEach(function (id) { G.qs(id).value = ''; });
+    ['fFac', 'fDep', 'fProg', 'fCampus', 'fIntake', 'fReady'].forEach(function (id) { G.qs(id).value = ''; });
     // Not '', the default for this one is the pending queue, which is the page's whole point.
     G.qs('fOnList').value = 'pending';
     G.qs('fQ').value = '';
@@ -496,7 +498,7 @@ document.addEventListener('DOMContentLoaded', function () {
         syncBulk();
     });
 
-    ['fYear', 'fFocus', 'fProg', 'fIntake', 'fReady', 'fOnList'].forEach(function (id) {
+    ['fYear', 'fFocus', 'fProg', 'fCampus', 'fIntake', 'fReady', 'fOnList'].forEach(function (id) {
         G.qs(id).addEventListener('change', function () { page = 1; sync(); });
     });
     G.qs('fFac').addEventListener('change', function () { G.cascade('fFac', 'fDep', 'fProg'); page = 1; sync(); });
@@ -536,12 +538,14 @@ document.addEventListener('DOMContentLoaded', function () {
         G.fill('fDep', o.departments, 'All departments');
         G.fill('fProg', o.programmes, 'All programmes');
         G.fill('fIntake', (o.intakes || []).map(function (y) { return { v: y, t: y }; }), 'All');
+        G.fill('fCampus', o.campuses || [], 'All campuses');
         G.qs('fYear').value = pre.year || o.currentYear || '';
         G.qs('fFocus').value = pre.focus || 'cycle';
         if (pre.faculty) G.qs('fFac').value = pre.faculty;
         if (pre.dept) G.qs('fDep').value = pre.dept;
         if (pre.prog) G.qs('fProg').value = pre.prog;
         if (pre.intake) G.qs('fIntake').value = pre.intake;
+        if (pre.campus) G.qs('fCampus').value = pre.campus;
         if (pre.ready) G.qs('fReady').value = pre.ready;
         if (pre.onlist) G.qs('fOnList').value = pre.onlist;
         if (pre.sort) G.qs('fSort').value = pre.sort;

@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Configuration;
 using System.Globalization;
@@ -267,6 +267,8 @@ public static class GraduationEngine
         public string faculty = "";
         public string department = "";
         public string programme = "";
+        /// <summary>acad_campuses.ID of the student's campus (acad_student.studCampus); '' = all.</summary>
+        public string campus = "";
         public string entryYear = "";
         public string finishedIn = "";    // '' = any; else the academic year they last sat
 
@@ -370,6 +372,8 @@ public static class GraduationEngine
         if (f.department != "" && int.TryParse(f.department, out dep))
         { w.Append(" AND p.department_id=@dep "); p["@dep"] = dep; }
         if (f.programme != "") { w.Append(" AND s.progid=@prog "); p["@prog"] = f.programme; }
+        int cmp;
+        if (f.campus != "" && int.TryParse(f.campus, out cmp)) { w.Append(" AND s.studCampus=@campus "); p["@campus"] = cmp; }
         if (f.entryYear != "") { w.Append(" AND s.entryyear=@ey "); p["@ey"] = f.entryYear; }
         // The focus is only meaningful for people not yet on a list; the graduation list and
         // the held queue are already narrow by definition.
@@ -527,7 +531,7 @@ public static class GraduationEngine
         var c = new GradFilter();
         if (f == null) return c;
         c.acadYear = f.acadYear; c.faculty = f.faculty; c.department = f.department;
-        c.programme = f.programme; c.entryYear = f.entryYear; c.finishedIn = f.finishedIn;
+        c.programme = f.programme; c.campus = f.campus; c.entryYear = f.entryYear; c.finishedIn = f.finishedIn;
         c.focus = f.focus; c.state = f.state; c.readiness = f.readiness;
         c.search = f.search; c.sort = f.sort; c.page = f.page; c.size = f.size;
         return c;

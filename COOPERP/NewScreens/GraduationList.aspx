@@ -14,6 +14,7 @@
     <div class="g-f" style="flex:1 1 150px;"><label for="fFac">Faculty</label><select id="fFac"></select></div>
     <div class="g-f" style="flex:1 1 150px;"><label for="fDep">Department</label><select id="fDep"></select></div>
     <div class="g-f" style="flex:1 1 170px;"><label for="fProg">Programme</label><select id="fProg"></select></div>
+    <div class="g-f" style="flex:0 0 130px;"><label for="fCampus">Campus</label><select id="fCampus"></select></div>
     <div class="g-f" style="flex:0 0 132px;"><label for="fAward">Class of award</label>
       <select id="fAward"><option value="">Every class</option></select></div>
     <div class="g-f" style="flex:0 0 118px;"><label for="fSort">Order</label>
@@ -63,14 +64,14 @@ var PAGE = 'GraduationList.aspx', BOOT = null, rows = [];
 
 function state() {
     return { year: G.qs('fYear').value, faculty: G.qs('fFac').value, dept: G.qs('fDep').value,
-             prog: G.qs('fProg').value, award: G.qs('fAward').value, fin: G.qs('fFin').value,
+             prog: G.qs('fProg').value, campus: G.qs('fCampus').value, award: G.qs('fAward').value, fin: G.qs('fFin').value,
              sort: G.qs('fSort').value === 'prog' ? '' : G.qs('fSort').value,
              q: G.qs('fQ').value.trim() };
 }
 function cfg() {
     var s = state();
     return JSON.stringify({ acadYear: s.year, faculty: s.faculty, department: s.dept,
-                            programme: s.prog, award: s.award, sort: G.qs('fSort').value,
+                            programme: s.prog, campus: s.campus, award: s.award, sort: G.qs('fSort').value,
                             search: s.q, finance: s.fin });
 }
 function sync() { G.writeUrl(state()); chips(); load(); }
@@ -86,6 +87,7 @@ function chips() {
         { k: 'fFac',   label: 'Faculty',    value: G.qs('fFac').value ? txt('fFac') : '' },
         { k: 'fDep',   label: 'Department', value: G.qs('fDep').value ? txt('fDep') : '' },
         { k: 'fProg',  label: 'Programme',  value: G.qs('fProg').value ? txt('fProg') : '' },
+        { k: 'fCampus', label: 'Campus',    value: G.qs('fCampus').value ? txt('fCampus') : '' },
         { k: 'fAward', label: 'Class',      value: G.qs('fAward').value },
         { k: 'fFin',   label: 'Finance',    value: G.qs('fFin').value ? txt('fFin') : '' },
         { k: 'fQ',     label: 'Search',     value: G.qs('fQ').value.trim() }
@@ -97,7 +99,7 @@ function chips() {
 }
 
 function resetFilters() {
-    ['fFac', 'fDep', 'fProg', 'fAward', 'fFin'].forEach(function (id) { G.qs(id).value = ''; });
+    ['fFac', 'fDep', 'fProg', 'fCampus', 'fAward', 'fFin'].forEach(function (id) { G.qs(id).value = ''; });
     G.qs('fQ').value = '';
 }
 
@@ -134,6 +136,7 @@ function openExport() {
         { label: 'Faculty', value: G.qs('fFac').value ? txt('fFac') : 'All faculties' },
         { label: 'Department', value: G.qs('fDep').value ? txt('fDep') : 'All departments' },
         { label: 'Programme', value: G.qs('fProg').value ? txt('fProg') : 'All programmes' },
+        { label: 'Campus', value: G.qs('fCampus').value ? txt('fCampus') : 'All campuses' },
         { label: 'Order', value: txt('fSort') }
     ];
     if (G.qs('fAward').value) sum.push({ label: 'Class of award', value: G.qs('fAward').value });
@@ -254,6 +257,7 @@ function doPrintRows(withheld) {
     if (G.qs('fFac').value) scope.push(txt('fFac'));
     if (G.qs('fDep').value) scope.push(txt('fDep'));
     if (G.qs('fProg').value) scope.push(txt('fProg'));
+    if (G.qs('fCampus').value) scope.push(txt('fCampus'));
     var crest = new URL('../images/mru-crest.png', window.location.href).href;
     var today = new Date().toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric' });
     function pct(n) { return total ? (Math.round(n * 1000 / total) / 10) + '%' : '0%'; }
@@ -395,7 +399,7 @@ document.addEventListener('DOMContentLoaded', function () {
         var tr = e.target.closest ? e.target.closest('#gBody tr[data-reg]') : null;
         if (tr) open(tr.getAttribute('data-reg'));
     });
-    ['fYear', 'fProg', 'fAward', 'fSort', 'fFin'].forEach(function (id) {
+    ['fYear', 'fProg', 'fCampus', 'fAward', 'fSort', 'fFin'].forEach(function (id) {
         G.qs(id).addEventListener('change', sync);
     });
     G.qs('fFac').addEventListener('change', function () { G.cascade('fFac', 'fDep', 'fProg'); sync(); });
@@ -425,10 +429,12 @@ document.addEventListener('DOMContentLoaded', function () {
         G.fill('fFac', o.faculties, 'All faculties');
         G.fill('fDep', o.departments, 'All departments');
         G.fill('fProg', o.programmes, 'All programmes');
+        G.fill('fCampus', o.campuses || [], 'All campuses');
         G.qs('fYear').value = pre.year || o.currentYear || '';
         if (pre.faculty) G.qs('fFac').value = pre.faculty;
         if (pre.dept) G.qs('fDep').value = pre.dept;
         if (pre.prog) G.qs('fProg').value = pre.prog;
+        if (pre.campus) G.qs('fCampus').value = pre.campus;
         if (pre.q) G.qs('fQ').value = pre.q;
         if (pre.sort) G.qs('fSort').value = pre.sort;
         if (pre.fin) G.qs('fFin').value = pre.fin;
