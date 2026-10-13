@@ -1249,9 +1249,24 @@ public static partial class StudentRearrangeService
         var x = LoadReg(c, t, sess.regno, regId);
         if (x == null) { res.error = "That course registration is no longer on the student's record."; return res; }
 
-        bool isOverride; string lockStatus;
-        string lockErr = CheckLock(x, op, out isOverride, out lockStatus);
-        if (lockErr != null) { res.error = lockErr; return res; }
+        // An EMPTY duplicate (no marks, never entered, another registration of the course exists)
+        // holds nothing a results lock protects, so removing it needs no override.
+        bool emptyDuplicate = false;
+        if (IsEmptyReg(x))
+            using (var cmd = Cmd("SELECT COUNT(*) FROM campus_dynamics_portal.acad_course_registration " +
+                                 "WHERE regno=@r AND UPPER(TRIM(courseID))=UPPER(TRIM(@c)) AND ID<>@i", c, t))
+            {
+                cmd.Parameters.AddWithValue("@r", sess.regno); cmd.Parameters.AddWithValue("@c", x.course);
+                cmd.Parameters.AddWithValue("@i", x.id);
+                emptyDuplicate = Convert.ToInt32(cmd.ExecuteScalar()) > 0;
+            }
+
+        bool isOverride = false; string lockStatus = ResultsStatusService.STATUS_DRAFT;
+        if (!emptyDuplicate)
+        {
+            string lockErr = CheckLock(x, op, out isOverride, out lockStatus);
+            if (lockErr != null) { res.error = lockErr; return res; }
+        }
 
         // A published result used to stop this outright unless a SECOND reason was typed into
         // a field called overrideReason. Every other operation on this screen sends that field;

@@ -1,6 +1,36 @@
 <%@ Page Language="C#" MasterPageFile="~/COOPERP/NewScreens/SidebarMaster.master" AutoEventWireup="true" CodeFile="StudentRearrangeManage.aspx.cs" Inherits="COOPERP_NewScreens_StudentRearrangeManage" Title="Rearrange Student Record - Campus Dynamics" %>
 <asp:Content ID="HeadContent" ContentPlaceHolderID="HeadContent" runat="server">
     <link href="css/rearrange.css?v=20261003b" rel="stylesheet" type="text/css" />
+    <style>
+    /* ── Auto-arrange ── */
+    .rx-btn--auto{display:inline-flex;align-items:center;gap:6px;background:#0b5c3a;border-color:#0b5c3a;color:#fff;}
+    .rx-btn--auto:hover{background:#09492e;}
+    .rx-btn--auto svg{flex:0 0 auto;}
+    .rx-btn--auto em{font-style:normal;background:rgba(255,255,255,.22);border-radius:9px;padding:0 7px;font-size:11px;font-weight:700;}
+    .rx-btn--auto[disabled]{background:#9aa5b1;border-color:#9aa5b1;}
+    .rx-aa .rx-modal__box{max-width:980px;width:96%;}
+    .rx-aa__sum{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px;}
+    .rx-aa__tile{flex:1 1 150px;border:1px solid #e0e5ed;border-left:3px solid #174DA4;border-radius:4px;padding:7px 10px;background:#fff;}
+    .rx-aa__tile b{display:block;font-size:19px;color:#05275C;line-height:1.1;}
+    .rx-aa__tile span{font-size:10.5px;text-transform:uppercase;letter-spacing:.4px;color:#8a94a6;font-weight:700;}
+    .rx-aa__tile--ok{border-left-color:#0b5c3a;} .rx-aa__tile--warn{border-left-color:#d97706;} .rx-aa__tile--del{border-left-color:#8c2019;}
+    .rx-aa__sec{margin:12px 0 4px;font-weight:700;color:#05275C;font-size:12.5px;display:flex;align-items:center;gap:8px;}
+    .rx-aa__sec small{font-weight:600;color:#4b5563;}
+    .rx-aa__sec a{margin-left:auto;font-size:11px;font-weight:600;color:#174DA4;cursor:pointer;}
+    .rx-aa__row{display:grid;grid-template-columns:22px minmax(0,1.6fr) minmax(0,1.3fr) minmax(0,1fr);gap:8px;align-items:center;
+                padding:6px 8px;border:1px solid #eef2f6;border-radius:4px;margin-bottom:4px;background:#fff;font-size:12px;}
+    .rx-aa__row.is-off{opacity:.5;}
+    .rx-aa__row b{color:#05275C;}
+    .rx-aa__row .rx-aa__t{color:#4b5563;font-size:11px;display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+    .rx-aa__path{font-variant-numeric:tabular-nums;white-space:nowrap;}
+    .rx-aa__path i{font-style:normal;color:#174DA4;font-weight:700;margin:0 4px;}
+    .rx-aa__why{font-size:11px;color:#4b5563;}
+    .rx-aa__tag{display:inline-block;font-size:9.5px;font-weight:700;padding:1px 6px;border-radius:9px;margin-left:4px;background:#eef3ff;color:#174DA4;}
+    .rx-aa__tag--lock{background:#fff8e1;color:#92400e;} .rx-aa__tag--del{background:#fdecea;color:#8c2019;}
+    .rx-aa__note{font-size:11.5px;color:#4b5563;border:1px dashed #d6dde8;border-radius:4px;padding:6px 9px;margin-bottom:4px;background:#fafbfd;}
+    .rx-aa__empty{padding:22px;text-align:center;color:#0b5c3a;font-weight:600;}
+    @media(max-width:720px){.rx-aa__row{grid-template-columns:22px minmax(0,1fr);} .rx-aa__row > :nth-child(n+3){grid-column:2;}}
+    </style>
 </asp:Content>
 <asp:Content ID="MainContent" ContentPlaceHolderID="ContentPlaceHolder1" runat="server">
 <div class="rx-wrap">
@@ -73,6 +103,9 @@
         <span class="rx-pending rx-pending--zero" id="rx-pending">No pending changes</span>
       </div>
       <div class="rx-card__bd" style="border-top:1px solid #eef2f6; display:flex; gap:8px; flex-wrap:wrap">
+        <button type="button" class="rx-btn rx-btn--auto" id="rx-auto" disabled="disabled" title="Find courses in the wrong semester and empty duplicates, and propose the fix">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3v3M12 18v3M4.2 4.2l2.1 2.1M17.7 17.7l2.1 2.1M3 12h3M18 12h3M4.2 19.8l2.1-2.1M17.7 6.3l2.1-2.1"/><circle cx="12" cy="12" r="3.5"/></svg>
+          Auto-arrange<em id="rx-auto-n" style="display:none"></em></button>
         <button type="button" class="rx-btn" id="rx-save" disabled="disabled">Review &amp; save…</button>
         <button type="button" class="rx-btn rx-btn--ghost" id="rx-discard" disabled="disabled">Discard pending changes</button>
         <button type="button" class="rx-btn rx-btn--ghost" id="rx-regsem">Register a new semester…</button>
@@ -86,6 +119,19 @@
 
   <div id="rx-boot" class="rx-state" style="display:none">
     <div class="rx-spin"></div>Loading the student record…
+  </div>
+</div>
+
+<!-- ══ Auto-arrange: the proposal ══ -->
+<div class="rx-modal rx-aa" id="rx-aa-modal">
+  <div class="rx-modal__box">
+    <div class="rx-modal__hd"><span>Auto-arrange this record</span>
+      <button type="button" class="rx-modal__x" data-close="rx-aa-modal">&times;</button></div>
+    <div class="rx-modal__bd" id="rx-aa-body"></div>
+    <div class="rx-modal__ft">
+      <button type="button" class="rx-btn rx-btn--ghost" data-close="rx-aa-modal">Cancel</button>
+      <button type="button" class="rx-btn" id="rx-aa-apply">Add to pending changes</button>
+    </div>
   </div>
 </div>
 
@@ -218,5 +264,5 @@
   </div>
 </div>
 
-<script src="js/rearrange-manage.js?v=20261013a" type="text/javascript"></script>
+<script src="js/rearrange-manage.js?v=20261013b" type="text/javascript"></script>
 </asp:Content>

@@ -497,6 +497,7 @@ function render() {
     if (eb) eb.textContent = shutCount > 0 ? 'Expand all' : 'Collapse all';
 
     wire();
+    aaBadge();
 }
 
 /* Open courses and shut semesters. render() rebuilds the markup wholesale, so this state
@@ -1785,6 +1786,261 @@ qs('rx-regno').addEventListener('keydown', function (e) {
     if (qs('rx-stu-list').classList.contains('is-open')) return;   // the list handles Enter
     if (!qs('rx-open').disabled) { e.preventDefault(); openSession(); }
 });
+
+/* ── Auto-arrange ──────────────────────────────────────────────────────────
+   The screen already knows two things about every course: where the programme
+   curriculum puts it, and whether another registration of the same course exists.
+   Auto-arrange turns those into a proposal the officer can read and trim:
+
+     1. Empty duplicates. A copy with no marks that was never entered, beside another
+        copy of the same course, is the 2025 migration's leftover. It is removed; the
+        copy with marks (or, among empties, the one at the curriculum's slot) stays.
+     2. Wrong semester. A course sitting somewhere other than its curriculum year and
+        semester is moved there.
+     3. Missing semester. If that destination semester is not registered but the same
+        year of study is, it is registered in the same academic year (no billing).
+
+   Nothing is saved here. The proposal becomes ordinary pending changes, shown with
+   the usual colours, and goes through the same Review & save, the same locks, the
+   same server-side harmonising and the same reversal as a change made by hand.
+   Retakes and anything needing judgement are listed, never touched. */
+var AA = null;
+var AA_REASON = 'Auto-arranged to the programme curriculum: courses recorded against the wrong semester after the 2025 migration.';
+
+function aaStage(st) {
+    st = String(st || '').toUpperCase();
+    if (st === 'PUBLISHED') return 5;
+    if (st.indexOf('APPROV') >= 0) return 4;
+    if (st.indexOf('SUBMIT') >= 0) return 3;
+    if (st === '' || st === 'NOT_ENTERED') return 0;
+    return 2;
+}
+function aaHasMarks(c) {
+    function v(x) { return x !== null && x !== undefined && x !== ''; }
+    return v(c.cw) || v(c.exam) || v(c.total);
+}
+function aaEmpty(c) { return !aaHasMarks(c) && aaStage(c.markStage) === 0; }
+function aaKey(code) { return String(code || '').toUpperCase().replace(/\s+/g, ''); }
+function aaMarks(c) {
+    if (!aaHasMarks(c)) return 'no marks';
+    var t = (c.total !== null && c.total !== undefined && c.total !== '') ? c.total
+          : (+(c.cw || 0) + +(c.exam || 0));
+    return t + (c.grade ? ' (' + c.grade + ')' : '');
+}
+
+function aaAnalyse() {
+    var plan = { dels: [], moves: [], regsems: {}, notes: [] };
+    if (!DATA) return plan;
+
+    // where each (year, semester) sits, and the academic years each year of study uses
+    var reg = {}, yearAcad = {};
+    function addSem(y, s, a) {
+        reg[y + '/' + s] = a || reg[y + '/' + s] || '';
+        if (a) { (yearAcad[y] = yearAcad[y] || []); if (yearAcad[y].indexOf(a) < 0) yearAcad[y].push(a); }
+    }
+    DATA.semesters.forEach(function (s) { addSem(s.studyYear, s.semester, s.acadYear); });
+    PEND.regsems.forEach(function (r) { addSem(r.toYear, r.toSem, r.acadYear); });
+
+    var rows = DATA.courses.filter(function (c) {
+        return !c._isNew && !PEND.deletes[c.regId] && !PEND.moves[c.regId];
+    });
+
+    // 1. duplicates
+    var byCourse = {}, gone = {}, contested = {};
+    rows.forEach(function (c) {
+        if (c.isClassic) return;
+        (byCourse[aaKey(c.course)] = byCourse[aaKey(c.course)] || []).push(c);
+    });
+    Object.keys(byCourse).forEach(function (k) {
+        var g = byCourse[k];
+        if (g.length < 2) return;
+        var firsts = g.filter(function (c) { return !c.isRetake; });
+        if (firsts.length < 2) return;
+        function score(c) {
+            var cy = c.curriculum ? c.curriculum.year : 0, cs = c.curriculum ? c.curriculum.semester : 0;
+            return (aaHasMarks(c) ? 100 : 0) + aaStage(c.markStage) * 10 +
+                   (cy && cs && c.studyYear === cy && c.semester === cs ? 2 : 0) +
+                   (reg[c.studyYear + '/' + c.semester] !== undefined ? 1 : 0);
+        }
+        firsts.sort(function (a, b) { return score(b) - score(a) || b.regId - a.regId; });
+        var keep = firsts[0];
+        var withMarks = firsts.filter(function (c) { return !aaEmpty(c); });
+        if (withMarks.length > 1) contested[k] = 1;
+        if (withMarks.length > 1)
+            plan.notes.push('<b>' + esc(keep.course) + '</b> is held ' + withMarks.length + ' times with marks (' +
+                withMarks.map(function (c) { return 'Y' + c.studyYear + ' S' + c.semester + ' ' + c.acadYear + ': ' + esc(aaMarks(c)); }).join('; ') +
+                '). Which sitting is right needs a person: remove the wrong one by hand.');
+        firsts.slice(1).forEach(function (c) {
+            if (!aaEmpty(c)) return;
+            gone[c.regId] = 1;
+            var older = c.course !== keep.course
+                ? 'Older code ' + c.course + ' of ' + keep.course + '. ' : '';
+            plan.dels.push({ c: c, keep: keep, on: true,
+                why: older + 'Empty copy. ' + (aaEmpty(keep)
+                    ? 'The copy in Year ' + keep.studyYear + ' Semester ' + keep.semester + ' (also empty) is kept, being where the curriculum puts it.'
+                    : 'The copy in Year ' + keep.studyYear + ' Semester ' + keep.semester + ', ' + keep.acadYear + ' holds the marks (' + esc(aaMarks(keep)) + ').') });
+        });
+    });
+
+    // 2. wrong semester
+    rows.forEach(function (c) {
+        if (gone[c.regId]) return;
+        if (contested[aaKey(c.course)]) return;     // two marked sittings: a person decides first
+        var cy = c.curriculum ? c.curriculum.year : 0, cs = c.curriculum ? c.curriculum.semester : 0;
+        if (!(cy > 0 && cs > 0)) return;
+        if (c.studyYear === cy && c.semester === cs) return;
+        if (c.isRetake) {
+            plan.notes.push('<b>' + esc(c.course) + '</b> is a retake in Year ' + c.studyYear + ' Semester ' + c.semester +
+                            ' (curriculum: Year ' + cy + ' Semester ' + cs + '). A retake is sat later by design, so it was left where it is.');
+            return;
+        }
+        var dest = cy + '/' + cs, needs = null;
+        if (reg[dest] === undefined) {
+            var ays = yearAcad[cy] || [];
+            if (ays.length === 1) needs = { toYear: cy, toSem: cs, acadYear: ays[0] };
+            else {
+                plan.notes.push('<b>' + esc(c.course) + '</b> belongs in Year ' + cy + ' Semester ' + cs + ', but ' +
+                    (ays.length ? 'Year ' + cy + ' spans ' + ays.join(' and ') + ', so the academic year is unclear'
+                                : 'Year ' + cy + ' is not on this student’s record') +
+                    '. Register that semester first, then run Auto-arrange again.');
+                return;
+            }
+        }
+        plan.moves.push({ c: c, toYear: cy, toSem: cs, needs: needs, on: true });
+        if (needs) plan.regsems[dest] = needs;
+    });
+    return plan;
+}
+
+function aaCount(plan) { return plan.dels.length + plan.moves.length; }
+
+function aaBadge() {
+    var b = qs('rx-auto'), n = qs('rx-auto-n');
+    if (!b) return;
+    if (!DATA || SAVING) { b.disabled = true; n.style.display = 'none'; return; }
+    var k = aaCount(aaAnalyse());
+    b.disabled = false;
+    n.textContent = k; n.style.display = k ? '' : 'none';
+    b.title = k ? k + ' fix' + (k === 1 ? '' : 'es') + ' found: courses in the wrong semester and empty duplicates'
+                : 'Nothing to arrange: every mapped course is in its curriculum semester';
+}
+
+function aaOpen() {
+    AA = aaAnalyse();
+    aaDraw();
+    openModal('rx-aa-modal');
+}
+
+function aaSlot(y, s, acad) { return 'Y' + y + ' S' + s + (acad ? ' <span class="rx-aa__t" style="display:inline">' + esc(acad) + '</span>' : ''); }
+
+function aaDraw() {
+    var p = AA, h = '';
+    var nDel = p.dels.filter(function (x) { return x.on; }).length;
+    var nMov = p.moves.filter(function (x) { return x.on; }).length;
+    var nReg = Object.keys(aaNeededRegsems()).length;
+    var nLock = p.moves.filter(function (x) { return x.on && x.c.locked; }).length;
+
+    h += '<div class="rx-aa__sum">' +
+         '<div class="rx-aa__tile rx-aa__tile--ok"><b>' + nMov + '</b><span>to move</span></div>' +
+         '<div class="rx-aa__tile rx-aa__tile--del"><b>' + nDel + '</b><span>empty duplicates</span></div>' +
+         '<div class="rx-aa__tile"><b>' + nReg + '</b><span>semesters to register</span></div>' +
+         '<div class="rx-aa__tile rx-aa__tile--warn"><b>' + p.notes.length + '</b><span>need a person</span></div></div>';
+
+    if (!aaCount(p) && !p.notes.length)
+        h += '<div class="rx-aa__empty">Nothing to arrange. Every course mapped on the curriculum is already in its semester, and there are no empty duplicates.</div>';
+
+    if (p.dels.length) {
+        h += '<div class="rx-aa__sec">Remove empty duplicates <small>' + p.dels.length + '</small><a data-aa-all="dels">select all / none</a></div>';
+        p.dels.forEach(function (x, i) {
+            var c = x.c;
+            h += '<label class="rx-aa__row' + (x.on ? '' : ' is-off') + '"><input type="checkbox" data-aa="dels" data-i="' + i + '"' + (x.on ? ' checked' : '') + ' />' +
+                 '<span><b>' + esc(c.course) + '</b><span class="rx-aa__tag rx-aa__tag--del">remove</span><span class="rx-aa__t">' + esc(c.title) + '</span></span>' +
+                 '<span class="rx-aa__path">' + aaSlot(c.studyYear, c.semester, c.acadYear) + '</span>' +
+                 '<span class="rx-aa__why">' + x.why + '</span></label>';
+        });
+    }
+    if (p.moves.length) {
+        h += '<div class="rx-aa__sec">Move to the curriculum semester <small>' + p.moves.length + '</small><a data-aa-all="moves">select all / none</a></div>';
+        p.moves.forEach(function (x, i) {
+            var c = x.c;
+            h += '<label class="rx-aa__row' + (x.on ? '' : ' is-off') + '"><input type="checkbox" data-aa="moves" data-i="' + i + '"' + (x.on ? ' checked' : '') + ' />' +
+                 '<span><b>' + esc(c.course) + '</b>' + (c.locked ? '<span class="rx-aa__tag rx-aa__tag--lock">' + esc(c.lockStatus === 'FINAL_PUBLISHED' ? 'FINAL' : 'LOCKED') + '</span>' : '') +
+                 (c.isClassic ? '<span class="rx-aa__tag">classic</span>' : '') + '<span class="rx-aa__t">' + esc(c.title) + '</span></span>' +
+                 '<span class="rx-aa__path">Y' + c.studyYear + ' S' + c.semester + '<i>→</i>Y' + x.toYear + ' S' + x.toSem + '</span>' +
+                 '<span class="rx-aa__why">' + esc(aaMarks(c)) + (x.needs ? ' · registers Y' + x.toYear + ' S' + x.toSem + ' in ' + esc(x.needs.acadYear) : '') + '</span></label>';
+        });
+    }
+    if (p.notes.length) {
+        h += '<div class="rx-aa__sec">Left for a person to decide <small>' + p.notes.length + '</small></div>';
+        p.notes.forEach(function (n) { h += '<div class="rx-aa__note">' + n + '</div>'; });
+    }
+    if (aaCount(p)) {
+        h += '<div class="rx-aa__sec">Reason recorded against every change</div>' +
+             '<textarea id="rx-aa-reason" class="rx-ta" style="min-height:52px">' + esc(qs('rx-aa-reason') ? qs('rx-aa-reason').value : AA_REASON) + '</textarea>' +
+             '<div class="rx-aa__why" style="margin-top:4px">Nothing is saved yet: these become pending changes, highlighted on the record, and go through <b>Review &amp; save</b> like any other. ' +
+             (nLock ? nLock + ' locked course' + (nLock === 1 ? '' : 's') + ' will be moved as a results-lock override under this reason. ' : '') +
+             'Where a moved course meets a copy already in its new semester, the two are merged on save. Every change can be reversed from the Logs.</div>';
+    }
+    qs('rx-aa-body').innerHTML = h;
+    var ap = qs('rx-aa-apply');
+    ap.disabled = !(nDel + nMov);
+    ap.textContent = (nDel + nMov) ? 'Add ' + (nDel + nMov + nReg) + ' change' + ((nDel + nMov + nReg) === 1 ? '' : 's') + ' to pending' : 'Nothing selected';
+}
+
+function aaNeededRegsems() {
+    var need = {};
+    if (!AA) return need;
+    AA.moves.forEach(function (x) { if (x.on && x.needs) need[x.toYear + '/' + x.toSem] = x.needs; });
+    return need;
+}
+
+function aaApply() {
+    var p = AA; if (!p) return;
+    var reason = (qs('rx-aa-reason') ? qs('rx-aa-reason').value : AA_REASON).trim();
+    var anyLock = p.moves.some(function (x) { return x.on && x.c.locked; });
+    var min = Math.max(DATA.minOpReason || 10, anyLock ? (DATA.minOverrideReason || 20) : 0);
+    if (reason.length < min) { toast('Give a reason of at least ' + min + ' characters.', true); return; }
+
+    var regs = aaNeededRegsems(), added = 0;
+    Object.keys(regs).forEach(function (k) {
+        var r = regs[k];
+        var dup = PEND.regsems.some(function (x) { return x.toYear === r.toYear && x.toSem === r.toSem; });
+        if (!dup) { PEND.regsems.push({ acadYear: r.acadYear, toYear: r.toYear, toSem: r.toSem, bill: false, reason: reason }); added++; }
+    });
+    p.dels.forEach(function (x) {
+        if (!x.on) return;
+        delete PEND.moves[x.c.regId];
+        PEND.deletes[x.c.regId] = { reason: 'Empty duplicate removed. ' + reason };
+        added++;
+    });
+    p.moves.forEach(function (x) {
+        if (!x.on) return;
+        PEND.moves[x.c.regId] = { toYear: x.toYear, toSem: x.toSem, fromYear: x.c.studyYear, fromSem: x.c.semester,
+                                  overrideReason: x.c.locked ? reason : '' };
+        added++;
+    });
+    closeModal('rx-aa-modal');
+    render();
+    toast(added + ' change' + (added === 1 ? '' : 's') + ' added. Check the highlighted courses, then Review & save.');
+}
+
+qs('rx-auto').addEventListener('click', aaOpen);
+qs('rx-aa-apply').addEventListener('click', aaApply);
+qs('rx-aa-body').addEventListener('change', function (e) {
+    var t = e.target;
+    if (!t || !t.getAttribute || !t.getAttribute('data-aa')) return;
+    AA[t.getAttribute('data-aa')][+t.getAttribute('data-i')].on = t.checked;
+    aaDraw();
+});
+qs('rx-aa-body').addEventListener('click', function (e) {
+    var a = e.target && e.target.getAttribute && e.target.getAttribute('data-aa-all');
+    if (!a) return;
+    e.preventDefault();
+    var list = AA[a], allOn = list.every(function (x) { return x.on; });
+    list.forEach(function (x) { x.on = !allOn; });
+    aaDraw();
+});
+
 gateCheck();
 
 })();

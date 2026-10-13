@@ -60,6 +60,7 @@ public static partial class StudentRearrangeService
     /// read ones included — a hidden menu item is not access control.</summary>
     public static bool CanUse()
     {
+        RestoreSession();
         return RoleAccessService.CanAccess(SlugManage)
             || RoleAccessService.CanAccess(SlugLogs)
             || RoleAccessService.CanAccess(SlugDashboard);
@@ -72,6 +73,29 @@ public static partial class StudentRearrangeService
     public static bool CanOverrideLock()
     {
         return CanUse();
+    }
+
+    /// <summary>
+    /// After an app-pool recycle or a deploy, the in-process session is empty while the browser
+    /// still holds a valid Forms-Authentication ticket. Every save then ran as "system" with no
+    /// role and was refused ("You do not have permission to save rearrangements") although the
+    /// officer was signed in. Restore the identity from the ticket and reload its access, the
+    /// same recovery MarksSessionSecurity already performs for the marks screens.
+    /// </summary>
+    private static void RestoreSession()
+    {
+        try
+        {
+            var ctx = HttpContext.Current;
+            if (ctx == null || ctx.Session == null) return;
+            if (!string.IsNullOrEmpty(ctx.Session["username"] as string)) return;
+            if (ctx.User == null || ctx.User.Identity == null || !ctx.User.Identity.IsAuthenticated) return;
+            string name = ctx.User.Identity.Name;
+            if (string.IsNullOrEmpty(name)) return;
+            ctx.Session["username"] = name;
+            RoleAccessService.LoadUserAccess(name);
+        }
+        catch { }
     }
 
     public static string Actor()
