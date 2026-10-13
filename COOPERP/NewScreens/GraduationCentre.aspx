@@ -33,6 +33,26 @@
   <div id="gIntegrity"></div>
   <div class="g-kpis" id="gKpis"></div>
 
+  <div class="g-card gd-card" id="gdCard" style="display:none;">
+    <div class="g-card__h"><span>Graduation dates</span>
+      <small>printed on certificates (ceremony) and transcripts (date of completion)</small></div>
+    <div class="g-card__b">
+      <div class="gd-edit" id="gdEdit">
+        <div class="g-f"><label for="gdYear">Graduation year</label><select id="gdYear"></select></div>
+        <div class="g-f"><label for="gdGrad">Graduation date <em>certificate</em></label><input type="date" id="gdGrad" /></div>
+        <div class="g-f"><label for="gdComp">Date of completion <em>transcript</em></label><input type="date" id="gdComp" /></div>
+        <label class="gd-cur"><input type="checkbox" id="gdCurrent" checked="checked" /> This is the current graduation</label>
+        <button type="button" class="g-btn g-btn--p" id="gdSave">Save and apply</button>
+      </div>
+      <div class="gd-preview" id="gdPreview"></div>
+      <div class="g-wrap"><table class="g-tbl gd-tbl"><thead><tr>
+        <th>Year</th><th class="g-num">Graduands</th><th>Certificate: graduation date</th>
+        <th>Transcript: date of completion</th><th>Last set</th><th></th></tr></thead>
+        <tbody id="gdRows"></tbody></table></div>
+      <div class="g-note g-note--info" style="margin:8px 0 0;" id="gdNote"></div>
+    </div>
+  </div>
+
   <div class="g-card">
     <div class="g-card__h">Where the blockers are <small>what stands between these candidates and a list</small></div>
     <div class="g-card__b" id="gBlockers"><div class="g-load">Loading&hellip;</div></div>
@@ -277,6 +297,127 @@ document.addEventListener('DOMContentLoaded', function () {
 
     if (window.G_BOOT) applyBoot(window.G_BOOT);
     else G.ajax(PAGE, 'GetBootstrap', {}, applyBoot);
+});
+})();
+</script>
+<style>
+.gd-edit{display:flex;align-items:flex-end;gap:10px;flex-wrap:wrap;margin-bottom:8px;}
+.gd-edit .g-f{flex:0 0 190px;}
+.gd-edit label em{font-style:normal;font-weight:600;color:var(--accent);text-transform:none;letter-spacing:0;margin-left:4px;}
+.gd-edit input[type=date],.gd-edit select{width:100%;box-sizing:border-box;height:30px;border:1px solid var(--line);padding:0 7px;font:inherit;font-size:12.5px;background:#fff;}
+.gd-cur{display:inline-flex;align-items:center;gap:6px;font-size:12px;font-weight:600;color:var(--ink2);height:30px;}
+.gd-preview{display:flex;gap:10px;flex-wrap:wrap;margin-bottom:10px;}
+.gd-doc{flex:1 1 260px;border:1px solid var(--line);border-left:3px solid var(--accent);border-radius:4px;padding:8px 11px;background:#fff;}
+.gd-doc span{display:block;font-size:9.5px;text-transform:uppercase;letter-spacing:.5px;color:var(--mute);font-weight:700;}
+.gd-doc b{display:block;font-size:15px;color:var(--navy);margin-top:2px;font-family:Georgia,"Times New Roman",serif;}
+.gd-doc small{display:block;font-size:10.5px;color:var(--ink2);margin-top:2px;}
+.gd-doc--empty b{color:var(--mute);font-family:inherit;font-size:12.5px;font-weight:600;}
+.gd-tbl td,.gd-tbl th{font-size:11.5px;}
+.gd-tbl tr.is-cur td{background:#f5f8ff;}
+.gd-tag{display:inline-block;font-size:9.5px;font-weight:700;padding:1px 7px;border-radius:9px;background:var(--navy);color:#fff;margin-left:6px;}
+.gd-unset{color:var(--mute);font-style:italic;}
+.gd-pend{color:var(--warn);font-weight:700;font-size:10.5px;}
+</style>
+<script type="text/javascript">
+/* ── Graduation dates ───────────────────────────────────────────────────
+   One ceremony date and one completion date per graduation list year. Saving writes them onto
+   every graduand of that year, so whichever document is generated next carries them. */
+(function () {
+'use strict';
+var PAGE = 'GraduationCentre.aspx', DATA = null;
+
+function longDate(iso) {
+    if (!iso) return '';
+    var p = iso.split('-'), m = ['January','February','March','April','May','June','July','August','September','October','November','December'];
+    var d = +p[2], suf = (d % 10 === 1 && d !== 11) ? 'st' : (d % 10 === 2 && d !== 12) ? 'nd' : (d % 10 === 3 && d !== 13) ? 'rd' : 'th';
+    return d + suf + ' ' + m[+p[1] - 1] + ', ' + p[0];
+}
+function rowFor(y) { if (!DATA) return null; for (var i = 0; i < DATA.years.length; i++) if (DATA.years[i].year === y) return DATA.years[i]; return null; }
+
+function preview() {
+    var g = G.qs('gdGrad').value, c = G.qs('gdComp').value;
+    function doc(label, iso, what) {
+        return '<div class="gd-doc' + (iso ? '' : ' gd-doc--empty') + '"><span>' + label + '</span><b>' +
+               (iso ? G.esc(longDate(iso)) : 'Not set') + '</b><small>' + what + '</small></div>';
+    }
+    G.qs('gdPreview').innerHTML =
+        doc('Certificate will read', g, g ? 'graduation date, as printed on every certificate for this year'
+                                          : 'certificates use whatever date each graduand already carries') +
+        doc('Transcript will read', c, c ? 'date of completion, unless a student has their own completion date'
+                                          : 'transcripts fall back to 30 June of the final academic year');
+}
+
+function fillEditor(y) {
+    var r = rowFor(y);
+    G.qs('gdGrad').value = r ? r.graduationDate : '';
+    G.qs('gdComp').value = r ? r.completionDate : '';
+    G.qs('gdCurrent').checked = r ? (r.isCurrent || !DATA.years.some(function (x) { return x.isCurrent; })) : true;
+    preview();
+}
+
+function draw() {
+    var d = DATA, h = '';
+    d.years.forEach(function (r) {
+        h += '<tr' + (r.isCurrent ? ' class="is-cur"' : '') + '><td><b>' + G.esc(r.year) + '</b>' + (r.isCurrent ? '<span class="gd-tag">current</span>' : '') + '</td>' +
+             '<td class="g-num">' + r.graduands + '</td>' +
+             '<td>' + (r.graduationDate ? G.esc(longDate(r.graduationDate)) : '<span class="gd-unset">not set</span>') + '</td>' +
+             '<td>' + (r.completionDate ? G.esc(longDate(r.completionDate)) : '<span class="gd-unset">not set (30 June default)</span>') + '</td>' +
+             '<td>' + (r.by ? G.esc(r.by) + ' &middot; ' + G.esc(r.at) : '<span class="g-sub">never</span>') +
+               (r.pending ? '<div class="gd-pend">' + r.pending + ' graduand row(s) not yet carrying these dates</div>' : '') + '</td>' +
+             '<td>' + (d.canSet ? '<button type="button" class="g-btn g-btn--sm" data-gdy="' + G.esc(r.year) + '">Edit</button>' : '') + '</td></tr>';
+    });
+    G.qs('gdRows').innerHTML = h || '<tr><td colspan="6" class="g-empty">No graduation lists yet.</td></tr>';
+    G.qs('gdNote').innerHTML = 'Saving applies the dates to every graduand on that year’s list, so the next certificate or transcript generated carries them. ' +
+        'A student given their own completion date (Student Information, quick edit) keeps it' +
+        (d.studentOverrides ? ' — ' + d.studentOverrides + ' graduand' + (d.studentOverrides === 1 ? ' has' : 's have') + ' one' : '') + '. ' +
+        (d.canSet ? 'Every change is logged with the old and new dates.' : 'Only an administrator, the Academic Registrar or the Graduation Officer can change these dates.');
+    G.qs('gdEdit').style.display = d.canSet ? 'flex' : 'none';
+    G.qs('gdPreview').style.display = d.canSet ? 'flex' : 'none';
+    var sel = G.qs('gdYear'), keep = sel.value;
+    sel.innerHTML = d.years.map(function (r) { return '<option>' + G.esc(r.year) + '</option>'; }).join('');
+    var cur = d.years.filter(function (r) { return r.isCurrent; })[0];
+    var top = (G.qs('fYear') && G.qs('fYear').value) || '';
+    sel.value = keep || (cur ? cur.year : '') || (rowFor(top) ? top : (d.years[0] ? d.years[0].year : ''));
+    fillEditor(sel.value);
+    var b = document.querySelectorAll('#gdRows [data-gdy]');
+    for (var i = 0; i < b.length; i++) b[i].addEventListener('click', function () {
+        sel.value = this.getAttribute('data-gdy'); fillEditor(sel.value);
+        G.qs('gdEdit').scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+    });
+}
+
+function load() {
+    G.ajax(PAGE, 'GetGradDates', {}, function (d) {
+        if (!d || !d.success) return;
+        DATA = d;
+        G.qs('gdCard').style.display = '';
+        draw();
+    });
+}
+
+function save() {
+    var y = G.qs('gdYear').value, g = G.qs('gdGrad').value, c = G.qs('gdComp').value;
+    if (!y) { G.toast('Choose the graduation year.', false); return; }
+    var r = rowFor(y);
+    var msg = 'Set the ' + y + ' graduation dates?\n\nCertificate: ' + (g ? longDate(g) : 'not set') +
+              '\nTranscript (date of completion): ' + (c ? longDate(c) : 'not set (30 June default)') +
+              '\n\nThis is applied to ' + (r ? r.graduands : 0) + ' graduand(s) on the ' + y + ' list.';
+    if (!confirm(msg)) return;
+    var btn = G.qs('gdSave'); btn.disabled = true; btn.textContent = 'Saving…';
+    G.ajax(PAGE, 'SaveGradDates', { acadYear: y, graduationDate: g, completionDate: c, makeCurrent: G.qs('gdCurrent').checked }, function (d) {
+        btn.disabled = false; btn.textContent = 'Save and apply';
+        G.toast((d && d.message) || 'Nothing was saved.', !!(d && d.success));
+        if (d && d.success) load();
+    });
+}
+
+document.addEventListener('DOMContentLoaded', function () {
+    if (!G.qs('gdCard')) return;
+    G.qs('gdYear').addEventListener('change', function () { fillEditor(this.value); });
+    G.qs('gdGrad').addEventListener('input', preview);
+    G.qs('gdComp').addEventListener('input', preview);
+    G.qs('gdSave').addEventListener('click', save);
+    load();
 });
 })();
 </script>

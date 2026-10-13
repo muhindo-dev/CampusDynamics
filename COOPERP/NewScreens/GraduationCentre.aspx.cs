@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Globalization;
 using System.Collections.Generic;
 using System.Web.Script.Serialization;
@@ -234,6 +234,24 @@ public partial class COOPERP_NewScreens_GraduationCentre : System.Web.UI.Page
         MarksScope scope = MarksScopeResolver.Resolve();
         if (!scope.HasAccess) return GraduationBootstrap.Denied();
         return GraduationStats.Rebuild();
+    }
+
+    /// <summary>Graduation dates per list year: certificate (ceremony) and transcript (completion).</summary>
+    [WebMethod(EnableSession = true)]
+    public static string GetGradDates()
+    {
+        MarksScope scope = MarksScopeResolver.Resolve();
+        if (!scope.HasAccess && !GraduationDates.CanSet()) return GraduationBootstrap.Denied();
+        try { return GraduationDates.List(); }
+        catch (Exception ex) { return J.Serialize(new { success = false, message = ex.Message }); }
+    }
+
+    /// <summary>Re-checks the right inside GraduationDates.Save: a PageMethod runs without Page_Load.</summary>
+    [WebMethod(EnableSession = true)]
+    public static string SaveGradDates(string acadYear, string graduationDate, string completionDate, bool makeCurrent)
+    {
+        try { return GraduationDates.Save(acadYear, graduationDate, completionDate, makeCurrent); }
+        catch (Exception ex) { return J.Serialize(new { success = false, message = ex.Message }); }
     }
 
     [WebMethod(EnableSession = true)]

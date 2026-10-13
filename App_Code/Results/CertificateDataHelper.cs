@@ -50,14 +50,15 @@ public static class CertificateDataHelper
                         IFNULL(s.photo, '') AS photo,
                         TRIM(g.regno) AS regno,
                         IFNULL(s.entryno, '') AS entryno,
-                        IFNULL(DATE_FORMAT(g.grad_date, '%D %M, %Y'), '') AS formated_grad_date,
-                        g.grad_date,
+                        IFNULL(DATE_FORMAT(COALESCE(gd.graduation_date, g.grad_date), '%D %M, %Y'), '') AS formated_grad_date,
+                        COALESCE(gd.graduation_date, g.grad_date) AS grad_date,
                         g.comp_date,
                         IFNULL(DATE_FORMAT(g.comp_date, '%D %M, %Y'), '') AS formated_comp_date,
                         IFNULL(g.convocation, '') AS convocation,
                         IFNULL(gr.res_topic, '') AS thesis_title,
                         IFNULL(sv.supervior_name, '') AS supervisor_name
                         FROM acad_graduands g
+                        LEFT JOIN acad_grad_dates gd ON gd.acadyear = g.acadyear
                         LEFT JOIN acad_student s ON TRIM(s.regno) = TRIM(g.regno)
                         LEFT JOIN acad_graduate_research gr ON TRIM(gr.regno) = TRIM(g.regno)
                         LEFT JOIN acad_superviors sv ON sv.Id = gr.supervior_id

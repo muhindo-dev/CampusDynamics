@@ -418,6 +418,11 @@ public sealed class AcademicDocumentPdfService
 					compCmd.Parameters.AddWithValue("@reg", safeRegno);
 					compCmd.ExecuteNonQuery();
 				}
+
+				// 4. The graduation dates set for the student's list year (Graduation Centre) are the
+				//    active ones: ceremony date for the certificate, completion date for the
+				//    transcript. A per-student completion_date still wins inside ApplyToStudent.
+				GraduationDates.ApplyToStudent(conn, safeRegno);
 			}
 		}
 		catch

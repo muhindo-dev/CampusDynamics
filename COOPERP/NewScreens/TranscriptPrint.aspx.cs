@@ -116,7 +116,11 @@ public partial class COOPERP_NewScreens_TranscriptPrint : System.Web.UI.Page
                        s.regno, IFNULL(s.entryno,'') entryno, IFNULL(s.gender,'') gender,
                        IFNULL(s.nationality,'') nationality,
                        CASE WHEN s.dob IS NULL OR s.dob='0000-00-00' THEN '' ELSE DATE_FORMAT(s.dob,'%d %M, %Y') END dob,
-                       CASE WHEN s.completion_date IS NULL OR s.completion_date='0000-00-00' THEN '' ELSE DATE_FORMAT(s.completion_date,'%d %M, %Y') END compdate,
+                       CASE WHEN s.completion_date IS NOT NULL AND s.completion_date<>'0000-00-00' THEN DATE_FORMAT(s.completion_date,'%d %M, %Y')
+                            ELSE IFNULL((SELECT DATE_FORMAT(d.completion_date,'%d %M, %Y') FROM acad_graduands g
+                                          JOIN acad_grad_dates d ON d.acadyear=g.acadyear
+                                         WHERE g.regno=s.regno AND d.completion_date IS NOT NULL
+                                         ORDER BY g.acadyear DESC LIMIT 1),'') END compdate,
                        IFNULL(p.progname,'') progname, IFNULL(p.mincredit,0) minLoad,
                        IFNULL(p.study_system,'Semester') study_system, IFNULL(f.faculty_name,'') faculty,
                        IFNULL(p.levelCode,'3') levelCode, IFNULL(s.photofile,'') photofile
