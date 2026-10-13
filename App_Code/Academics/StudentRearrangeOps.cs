@@ -329,7 +329,13 @@ public static partial class StudentRearrangeService
         using (var cmd = Cmd(
             "SELECT cr.ID, cr.courseID, cr.acad_year, cr.semester, cr.course_status, " +
             "  COALESCE(cr.mark_stage,''), cr.provisional_course_work_marks, cr.provisional_exam_marks, " +
-            "  cr.provisional_total_marks, COALESCE(rs.ID,0), COALESCE(rs.studyyear,0), rs.score, COALESCE(rs.grade,'') " +
+            // Same rule as the workspace (LoadWorkspace): the shared result's year of study only
+            // describes the registration filed in the result's own term. Reading it raw here while
+            // the workspace did not made every save on a student with duplicates report "changed
+            // by someone else while you were working" when nobody had.
+            "  cr.provisional_total_marks, COALESCE(rs.ID,0), " +
+            "  CASE WHEN rs.acad=cr.acad_year AND rs.semester=cr.semester THEN COALESCE(rs.studyyear,0) ELSE 0 END, " +
+            "  rs.score, COALESCE(rs.grade,'') " +
             "FROM campus_dynamics_portal.acad_course_registration cr " +
             "LEFT JOIN campus_dynamics.acad_results rs ON rs.regno=cr.regno AND rs.courseid=cr.courseID " +
             "WHERE cr.regno=@r", c, t))

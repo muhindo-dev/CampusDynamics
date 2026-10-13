@@ -136,7 +136,7 @@
         <span class="rx-pending rx-pending--zero" id="rx-pending">No pending changes</span>
       </div>
       <div class="rx-card__bd" style="border-top:1px solid #eef2f6; display:flex; gap:8px; flex-wrap:wrap">
-        <button type="button" class="rx-btn rx-btn--auto" id="rx-auto" disabled="disabled" title="Find courses in the wrong semester and empty duplicates, and propose the fix">
+        <button type="button" class="rx-btn rx-btn--auto" id="rx-autoarr" disabled="disabled" title="Find courses in the wrong semester and empty duplicates, and propose the fix">
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3v3M12 18v3M4.2 4.2l2.1 2.1M17.7 17.7l2.1 2.1M3 12h3M18 12h3M4.2 19.8l2.1-2.1M17.7 6.3l2.1-2.1"/><circle cx="12" cy="12" r="3.5"/></svg>
           Auto-arrange<em id="rx-auto-n" style="display:none"></em></button>
         <button type="button" class="rx-btn" id="rx-save" disabled="disabled">Review &amp; save…</button>
@@ -298,5 +298,5 @@
   </div>
 </div>
 
-<script src="js/rearrange-manage.js?v=20261013c" type="text/javascript"></script>
+<script src="js/rearrange-manage.js?v=20261013d" type="text/javascript"></script>
 </asp:Content>

@@ -2068,7 +2068,7 @@ function aaAnalyse() {
 function aaCount(plan) { return plan.dels.length + plan.moves.length; }
 
 function aaBadge() {
-    var b = qs('rx-auto'), n = qs('rx-auto-n');
+    var b = qs('rx-autoarr'), n = qs('rx-auto-n');
     if (!b) return;
     if (!DATA || SAVING) { b.disabled = true; n.style.display = 'none'; return; }
     var k = aaCount(aaAnalyse());
@@ -2177,7 +2177,7 @@ function aaApply() {
     toast(added + ' change' + (added === 1 ? '' : 's') + ' added. Check the highlighted courses, then Review & save.');
 }
 
-qs('rx-auto').addEventListener('click', aaOpen);
+qs('rx-autoarr').addEventListener('click', aaOpen);
 qs('rx-aa-apply').addEventListener('click', aaApply);
 qs('rx-aa-body').addEventListener('change', function (e) {
     var t = e.target;
