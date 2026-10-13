@@ -137,3 +137,10 @@ FROM sys_roles r
 WHERE r.role_code IN ('bursar','fees_officer','finance_officer','accountant','auditor','registrar','vc')
   AND NOT EXISTS (SELECT 1 FROM sys_role_permissions p WHERE p.role_id = r.id
                   AND p.menu_slug = 'academics.graduation.fees_clearance');
+
+-- 2026-10-13: Graduation Fee by category of graduand (suggested and billed per student).
+INSERT INTO acad_grad_finance_setting (k, v, note, updated_by, updated_at) VALUES
+ ('fee_graduate_school', '570000', 'Graduation Fee (UGX): Graduate School (postgraduate diplomas, masters, doctorates)', 'muhindo', NOW()),
+ ('fee_undergraduate',   '555000', 'Graduation Fee (UGX): Undergraduate Degree', 'muhindo', NOW()),
+ ('fee_diploma',         '505000', 'Graduation Fee (UGX): Diploma', 'muhindo', NOW())
+ON DUPLICATE KEY UPDATE v=VALUES(v), note=VALUES(note), updated_by=VALUES(updated_by), updated_at=NOW();

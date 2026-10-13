@@ -129,6 +129,20 @@ mark.gf-hl{background:#fff1a8;color:inherit;padding:0;border-radius:2px;}
 .gf-links a:hover{border-color:var(--accent);}
 .g-modal__f .gf-sp{margin-left:auto;}
 .gf-pos{font-size:10.5px;color:var(--mute);margin-right:4px;white-space:nowrap;}
+/* Graduation Fee suggestions: click a category to fill the amount */
+.gf-fees{display:flex;gap:5px;flex-wrap:wrap;align-items:center;margin-top:5px;}
+.gf-fees > span{font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.4px;color:var(--mute);}
+.gf-fee{display:inline-flex;align-items:baseline;gap:5px;border:1px solid var(--line);background:#fff;border-radius:14px;
+        padding:3px 10px;font:inherit;font-size:11px;color:var(--ink2);cursor:pointer;white-space:nowrap;}
+.gf-fee b{font-variant-numeric:tabular-nums;color:var(--navy);}
+.gf-fee:hover{border-color:var(--accent);color:var(--accent);}
+.gf-fee.is-sug{border-color:var(--ok-line);background:var(--ok-bg);}
+.gf-fee.is-sug::after{content:"suggested";font-size:9px;font-weight:700;text-transform:uppercase;color:var(--ok);margin-left:2px;}
+.gf-fee.is-on{background:var(--navy);border-color:var(--navy);color:#fff;}
+.gf-fee.is-on b{color:#fff;} .gf-fee.is-on::after{color:#cfe0ff;}
+.gf-bulk .gf-fee{border-color:rgba(255,255,255,.35);background:transparent;color:#fff;}
+.gf-bulk .gf-fee b{color:#fff;} .gf-bulk .gf-fee.is-on{background:#fff;color:var(--navy);} .gf-bulk .gf-fee.is-on b{color:var(--navy);}
+.gf-feesub{display:block;font-size:10px;color:var(--ink2);font-weight:600;}
 @media(max-width:700px){.gf-big b{font-size:17px;} .gf-sum__age{margin-left:0;} .gf-keys{display:none;} .gf-search kbd{display:none;}}
 </style>
 </asp:Content>
@@ -223,6 +237,29 @@ function money(v) {
     var s = Math.abs(v).toString().replace(/\B(?=(\d{3})+(?!\d))/g, ',');
     return (v < 0 ? '-' : '') + s;
 }
+/* Graduation Fee by category. sel = the category to mark "suggested" (the graduand's own). */
+function feeCats() { return (BOOT && BOOT.settings && BOOT.settings.feeCategories) || []; }
+function catLabel(k) { var c = feeCats().filter(function (x) { return x.key === k; })[0]; return c ? c.label : ''; }
+function feeChips(target, sel, extra) {
+    var h = '<div class="gf-fees" data-fees="' + target + '"><span>Graduation Fee</span>' + (extra || '');
+    feeCats().forEach(function (c) {
+        h += '<button type="button" class="gf-fee' + (c.key === sel ? ' is-sug' : '') + '" data-fee="' + (+c.amount) +
+             '" data-feecat="' + c.key + '" title="Fill in the ' + G.esc(c.label) + ' fee">' + G.esc(c.label) + ' <b>' + money(c.amount) + '</b></button>';
+    });
+    return h + '</div>';
+}
+/* A click on a chip fills its input. Delegated once, so it works on chips drawn at any time. */
+document.addEventListener('click', function (e) {
+    var b = e.target && e.target.closest ? e.target.closest('.gf-fee[data-fee]') : null;
+    if (!b) return;
+    var box = b.closest('[data-fees]'), inp = box && G.qs(box.getAttribute('data-fees'));
+    var all = box ? box.querySelectorAll('.gf-fee') : [];
+    for (var i = 0; i < all.length; i++) all[i].classList.toggle('is-on', all[i] === b);
+    if (inp) { inp.value = +b.getAttribute('data-fee') > 0 ? money(+b.getAttribute('data-fee')) : ''; inp.dispatchEvent(new Event('input')); }
+    if (box && box.getAttribute('data-fees') === 'bFeeAmt') bulkMode = +b.getAttribute('data-fee') > 0 ? 'fixed' : 'category';
+});
+var bulkMode = 'category';
+
 function short(v) {
     v = Math.abs(+v || 0);
     if (v >= 1e9) return (v / 1e9).toFixed(2).replace(/\.?0+$/, '') + 'B';
@@ -473,7 +510,9 @@ function rowHtml(r, ts) {
         '<td class="g-num">' + balCell(r.balance) + '</td>' +
         '<td>' + (!r.gradFeeRequired ? '<span class="g-sub">not required</span>'
                   : r.gradFeeBilled ? '<span class="gf-cr" style="font-weight:700;">Billed</span>'
-                  : '<span class="gf-owe" style="font-weight:700;">Not billed</span>') + '</td>' +
+                  : '<span class="gf-owe" style="font-weight:700;">Not billed</span>' +
+                    (r.suggestedFee ? '<span class="gf-feesub">' + money(r.suggestedFee) + ' \u00b7 ' + G.esc(catLabel(r.feeCategory)) + '</span>'
+                                    : '<span class="gf-feesub">no category: choose the fee</span>')) + '</td>' +
         '<td>' + flags(r) + '</td>' +
         '<td>' + chipFor(r) + (r.actor ? '<div class="g-sub">' + G.esc(r.actor) + ' · ' + G.esc(r.decidedAt) + '</div>' : '') + '</td>' +
         '<td class="gf-act-cell">' + quick + '<button type="button" class="g-btn g-btn--sm" data-open="' + G.esc(r.regno) + '">Open</button></td></tr>';
@@ -578,8 +617,10 @@ function quickClear(reg) {
 }
 function quickFee(reg) {
     var r = BYREG[reg]; if (!r) return;
-    if (!confirm('Bill the Graduation Fee of UGX ' + money(BOOT.settings.gradFeeAmount) + ' to ' + (r.name || reg) + ' for the ' + r.acadyear + ' graduation?')) return;
-    G.ajax(PAGE, 'BillGradFee', { regno: reg, amount: BOOT.settings.gradFeeAmount }, function (d) {
+    if (!r.suggestedFee) { TAB = 'bill'; open(reg); return; }     // no category: pick the fee in the workspace
+    if (!confirm('Bill the Graduation Fee of UGX ' + money(r.suggestedFee) + ' (' + catLabel(r.feeCategory) + ') to ' +
+                 (r.name || reg) + ' for the ' + r.acadyear + ' graduation?')) return;
+    G.ajax(PAGE, 'BillGradFee', { regno: reg, amount: r.suggestedFee }, function (d) {
         G.toast((d && d.message) || 'Nothing was posted.', !!(d && d.success));
         refreshRows([reg]);
     });
@@ -598,8 +639,10 @@ function bulkBar() {
         (pickableInView > n ? '<a id="bAll">Select all ' + pickableInView + ' in this view</a>' : '') +
         '<button type="button" class="g-btn g-btn--sm g-btn--p" id="bClear"' + (settledSel ? '' : ' disabled') + '>Clear ' + settledSel + ' who owe nothing</button>' +
         (BOOT.settings.requireGradFee
-            ? '<span style="display:inline-flex;align-items:center;gap:4px;"><button type="button" class="g-btn g-btn--sm" id="bFee"' + (feeSel ? '' : ' disabled') + '>Bill Graduation Fee to ' + feeSel + '</button>' +
-              '<input type="text" id="bFeeAmt" inputmode="numeric" value="' + money(BOOT.settings.gradFeeAmount) + '" title="Amount per student (UGX)" /></span>' : '') +
+            ? '<span style="display:inline-flex;align-items:center;gap:6px;flex-wrap:wrap;"><button type="button" class="g-btn g-btn--sm" id="bFee"' + (feeSel ? '' : ' disabled') + '>Bill Graduation Fee to ' + feeSel + '</button>' +
+              '<input type="text" id="bFeeAmt" inputmode="numeric" value="" placeholder="by category" title="Leave empty to bill each student their category\u2019s fee, or type one amount for all" />' +
+              feeChips('bFeeAmt', '', '<button type="button" class="gf-fee' + (bulkMode === 'category' ? ' is-on' : '') + '" data-fee="0" title="Each student is billed their own category\u2019s fee">By category</button>') +
+              '</span>' : '') +
         '<button type="button" class="g-btn g-btn--sm gf-bulk__x" id="bNone">Deselect</button>';
     if (G.qs('bAll')) G.qs('bAll').addEventListener('click', function () { VIEW.forEach(function (r) { if (canPick(r)) picked[r.regno] = true; }); draw(); });
     G.qs('bNone').addEventListener('click', function () { picked = {}; draw(); });
@@ -609,10 +652,25 @@ function bulkBar() {
         bulk('BulkClear', { regnos: go }, 'cleared');
     });
     if (G.qs('bFee')) G.qs('bFee').addEventListener('click', function () {
-        var a = parseInt(String(G.qs('bFeeAmt').value).replace(/[^0-9]/g, ''), 10);
-        if (!(a > 0)) { G.toast('Enter the amount per student.', false); return; }
+        var a = parseInt(String(G.qs('bFeeAmt').value).replace(/[^0-9]/g, ''), 10) || 0;
         var go = ids.filter(function (x) { return BYREG[x] && BYREG[x].gradFeeRequired && !BYREG[x].gradFeeBilled; });
-        if (!confirm('Post a Graduation Fee of UGX ' + money(a) + ' to ' + go.length + ' student(s)?\nThat is UGX ' + money(a * go.length) + ' in total. Each bill goes to the student ledger and the general ledger. Anyone already billed is skipped.')) return;
+        var msg;
+        if (a > 0) {
+            msg = 'Post a Graduation Fee of UGX ' + money(a) + ' to each of ' + go.length + ' student(s)?\nThat is UGX ' + money(a * go.length) + ' in total.';
+        } else {
+            // by category: say exactly what each group is billed
+            var by = {}, none = 0, total = 0;
+            go.forEach(function (x) {
+                var r = BYREG[x];
+                if (!r.suggestedFee) { none++; return; }
+                var k = r.feeCategory; by[k] = by[k] || { n: 0, amt: r.suggestedFee }; by[k].n++; total += +r.suggestedFee;
+            });
+            if (none) { G.toast(none + ' selected student(s) have no fee category (advanced certificates). Untick them or type one amount for all.', false); return; }
+            msg = 'Bill the Graduation Fee by category to ' + go.length + ' student(s)?\n\n' +
+                  Object.keys(by).map(function (k) { return '  ' + catLabel(k) + ': ' + by[k].n + ' x UGX ' + money(by[k].amt); }).join('\n') +
+                  '\n\nTotal UGX ' + money(total) + '.';
+        }
+        if (!confirm(msg + '\nEach bill goes to the student ledger and the general ledger. Anyone already billed is skipped.')) return;
         bulk('BulkGradFee', { regnos: go, amount: a }, 'billed');
     });
 }
@@ -772,13 +830,16 @@ function render() {
     var bl = !canEdit ? '<div class="g-note g-note--warn">You may view this account but not post bills.</div>' : '';
     if (canEdit && s.gradFeeRequired && !s.gradFeeBilled)
         bl += '<div class="gf-quick"><span><b>No Graduation Fee</b> has been billed for the ' + G.esc(s.acadyear) + ' graduation.</span>' +
-              '<input type="text" id="qFee" value="' + money(o.gradFeeAmount) + '" style="width:110px;border:1px solid var(--line);padding:5px 7px;" />' +
-              '<button type="button" class="g-btn g-btn--p g-btn--sm" id="qFeeGo">Bill the Graduation Fee</button></div>';
+              '<input type="text" id="qFee" value="' + (o.feeCategory ? money(o.gradFeeAmount) : '') + '" placeholder="choose below" style="width:110px;border:1px solid var(--line);padding:5px 7px;" />' +
+              '<button type="button" class="g-btn g-btn--p g-btn--sm" id="qFeeGo">Bill the Graduation Fee</button>' +
+              '<div style="flex-basis:100%;">' + feeChips('qFee', o.feeCategory) + '</div>' +
+              (o.feeCategory ? '' : '<div class="g-sub" style="flex-basis:100%;">This programme is not in the fee schedule. Choose the category that applies.</div>') + '</div>';
     if (canEdit) {
         var itemOpts = o.items.map(function (x) { return '<option value="' + G.esc(x.v) + '"' + (+x.v === +o.gradFeeItem ? ' selected' : '') + '>' + G.esc(x.t) + '</option>'; }).join('');
         bl += '<div class="gf-form">' +
               '<div><label for="bItem">Item</label><select id="bItem">' + itemOpts + '</select></div>' +
-              '<div><label for="bAmt">Amount (UGX)</label><input id="bAmt" type="text" inputmode="numeric" placeholder="e.g. 505,000" /></div>' +
+              '<div><label for="bAmt">Amount (UGX)</label><input id="bAmt" type="text" inputmode="numeric" placeholder="e.g. 555,000" /></div>' +
+              '<div class="gf-wide" id="bFeeHelp"' + (+o.items[0] === +o.gradFeeItem ? '' : '') + '>' + feeChips('bAmt', o.feeCategory) + '</div>' +
               '<div><label for="bYear">Academic year</label><select id="bYear">' + yearOptions(o.year) + '</select></div>' +
               '<div><label for="bSem">Semester</label><select id="bSem"><option>1</option><option' + (o.gradFeeSemester === 2 ? ' selected' : '') + '>2</option><option>3</option></select></div>' +
               '<div class="gf-wide"><label for="bDet">Description (optional)</label><input id="bDet" type="text" maxlength="250" placeholder="Defaults to the item name, semester and year" /></div>' +
@@ -854,6 +915,10 @@ function wireMoney() {
         if (!confirm('Bill a Graduation Fee of UGX ' + money(a) + ' to ' + s.name + ' for the ' + s.acadyear + ' graduation?')) return;
         busy(this);
         G.ajax(PAGE, 'BillGradFee', { regno: s.regno, amount: a }, after);
+    });
+    var bh = G.qs('bFeeHelp');
+    if (bh) bh.addEventListener('click', function (e) {
+        if (e.target.closest && e.target.closest('.gf-fee') && G.qs('bItem')) G.qs('bItem').value = String(CUR.options.gradFeeItem);
     });
     if (G.qs('bGo')) G.qs('bGo').addEventListener('click', function () {
         var a = num('bAmt'), it = G.qs('bItem');

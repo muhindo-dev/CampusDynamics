@@ -152,8 +152,45 @@ public static class GradFeesClearance
         public int GradFeeSemester = 2;
         public string DocumentGate = "certificate";
         public int FirstGatedYear = 2026;
+        // Graduation Fee by category of graduand (UGX)
+        public decimal FeeGraduateSchool = 570000m, FeeUndergraduate = 555000m, FeeDiploma = 505000m;
 
         public bool IsGated(string acadYear) { return YearOf(acadYear) >= FirstGatedYear; }
+
+        /// <summary>The categories, for the suggestion chips.</summary>
+        public object[] FeeCategories()
+        {
+            return new object[] {
+                new { key = "graduate", label = "Graduate School", amount = FeeGraduateSchool },
+                new { key = "undergraduate", label = "Undergraduate Degree", amount = FeeUndergraduate },
+                new { key = "diploma", label = "Diploma", amount = FeeDiploma } };
+        }
+
+        /// <summary>
+        /// The category of a programme level: 4 postgraduate diplomas and 5 masters belong to the
+        /// Graduate School, 3 is an undergraduate degree, 2 a diploma. Level 1 (advanced
+        /// certificates) is not in the fee schedule, so no fee is suggested for it.
+        /// </summary>
+        public string CategoryOf(string levelCode)
+        {
+            switch ((levelCode ?? "").Trim())
+            {
+                case "4": case "5": case "6": return "graduate";
+                case "3": return "undergraduate";
+                case "2": return "diploma";
+                default: return "";
+            }
+        }
+        public decimal FeeFor(string category)
+        {
+            switch (category)
+            {
+                case "graduate": return FeeGraduateSchool;
+                case "undergraduate": return FeeUndergraduate;
+                case "diploma": return FeeDiploma;
+                default: return 0m;
+            }
+        }
     }
 
     public static Settings GetSettings()
@@ -178,6 +215,9 @@ public static class GradFeesClearance
                             case "grad_fee_semester": if (int.TryParse(v, out n) && n >= 1 && n <= 3) s.GradFeeSemester = n; break;
                             case "document_gate": s.DocumentGate = v.ToLowerInvariant(); break;
                             case "first_gated_year": if (int.TryParse(v, out n) && n > 2000) s.FirstGatedYear = n; break;
+                            case "fee_graduate_school": if (decimal.TryParse(v, NumberStyles.Number, IC, out d) && d > 0) s.FeeGraduateSchool = d; break;
+                            case "fee_undergraduate": if (decimal.TryParse(v, NumberStyles.Number, IC, out d) && d > 0) s.FeeUndergraduate = d; break;
+                            case "fee_diploma": if (decimal.TryParse(v, NumberStyles.Number, IC, out d) && d > 0) s.FeeDiploma = d; break;
                         }
                     }
             }
@@ -231,6 +271,8 @@ public static class GradFeesClearance
         public string status = "PENDING"; // PENDING | CLEARED | HELD
         public string basis = "", reason = "", actor = "", decidedAt = "";
         public string decidedKey = "";     // yyyyMMddHHmmss, for sorting by decision time
+        public string levelCode = "", feeCategory = "";
+        public decimal suggestedFee;       // Graduation Fee for this graduand's category (0 = none)
         public decimal decidedBalance;
         public bool owesSinceClearance;    // CLEARED but now owes
         public bool eligible;              // could be cleared now without override
@@ -281,7 +323,7 @@ public static class GradFeesClearance
                 "       IFNULL(pr.n,0) AS pend, " +
                 "       IFNULL(s.status,''), IFNULL(s.basis,''), IFNULL(s.reason,''), IFNULL(s.actor,''), " +
                 "       IFNULL(DATE_FORMAT(s.decided_at,'%e %b %Y %H:%i'),''), IFNULL(s.balance,0), " +
-                "       IFNULL(DATE_FORMAT(s.decided_at,'%Y%m%d%H%i%s'),'') " +
+                "       IFNULL(DATE_FORMAT(s.decided_at,'%Y%m%d%H%i%s'),''), IFNULL(TRIM(p.levelCode),'') " +
                 "FROM acad_graduands g " +
                 "LEFT JOIN acad_programme p ON p.progcode=g.progcode " +
                 "LEFT JOIN acad_grad_finance_state s ON s.regno=g.regno AND s.acadyear=g.acadyear " +
@@ -315,6 +357,9 @@ public static class GradFeesClearance
                         x.decidedAt = rd.GetString(14);
                         x.decidedBalance = Convert.ToDecimal(rd[15]);
                         x.decidedKey = rd.GetString(16);
+                        x.levelCode = rd.GetString(17);
+                        x.feeCategory = st.CategoryOf(x.levelCode);
+                        x.suggestedFee = st.FeeFor(x.feeCategory);
                         Assess(x, st);
                         rows.Add(x);
                     }
@@ -438,6 +483,7 @@ public static class GradFeesClearance
             years, currentYear, faculties, departments, programmes,
             settings = new { requireGradFee = st.RequireGradFee, gradFeeAmount = st.GradFeeAmount,
                              gradFeeItem = st.GradFeeItem, firstGatedYear = st.FirstGatedYear,
+                             feeCategories = st.FeeCategories(),
                              documentGate = st.DocumentGate }
         });
     }
@@ -629,7 +675,9 @@ public static class GradFeesClearance
                 " AND AccountName NOT LIKE '%Loan%' AND AccountName NOT LIKE '%CONTROL%' ORDER BY AccountCode", a))
             using (var rd = cmd.ExecuteReader()) while (rd.Read()) banks.Add(new { v = rd[0].ToString().Trim(), t = rd[1].ToString() });
         }
-        return new { items, banks, gradFeeItem = st.GradFeeItem, gradFeeAmount = st.GradFeeAmount,
+        return new { items, banks, gradFeeItem = st.GradFeeItem,
+                     gradFeeAmount = row.suggestedFee > 0 ? row.suggestedFee : st.GradFeeAmount,
+                     feeCategories = st.FeeCategories(), feeCategory = row.feeCategory,
                      gradFeeSemester = st.GradFeeSemester, year = row.acadyear };
     }
 
@@ -876,7 +924,11 @@ public static class GradFeesClearance
         Settings st = GetSettings();
         string year = ListYear(regno);
         if (year == "") return new Outcome { regno = regno, message = regno + " is not on a graduation list." };
-        if (amount <= 0) amount = st.GradFeeAmount;
+        if (amount <= 0)
+        {
+            Row r = FetchOne(regno, st);
+            amount = r != null && r.suggestedFee > 0 ? r.suggestedFee : st.GradFeeAmount;
+        }
         if (HasGradFee(regno, year, st))
             return new Outcome { regno = regno, message = regno + " already has a Graduation Fee for " + year + "." };
         return Bill(rt, regno, st.GradFeeItem, amount, year, st.GradFeeSemester,
