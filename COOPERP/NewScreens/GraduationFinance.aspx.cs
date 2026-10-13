@@ -20,7 +20,7 @@ using System.Web.Services;
 public partial class COOPERP_NewScreens_GraduationFinance : System.Web.UI.Page
 {
     private static readonly JavaScriptSerializer J = new JavaScriptSerializer { MaxJsonLength = int.MaxValue };
-    private const int PAGE_SIZE = 100;
+    private const int QUEUE_CAP = 5000;
     private const int BULK_CAP = 300;
     private const int EXPORT_CAP = 20000;
 
@@ -83,6 +83,12 @@ public partial class COOPERP_NewScreens_GraduationFinance : System.Web.UI.Page
         catch (Exception ex) { return J.Serialize(new { success = false, message = ex.Message }); }
     }
 
+    /// <summary>
+    /// Everyone in the year / faculty / department / programme scope, in one call. A graduation
+    /// list is a few hundred names, so the browser searches, filters, sorts and pages them itself:
+    /// every keystroke and tab is instant and the database is asked once, not once per click.
+    /// Status, search and page in the config are ignored here (they are the browser's job).
+    /// </summary>
     [WebMethod(EnableSession = true)]
     public static string GetQueue(string configJson)
     {
@@ -90,17 +96,32 @@ public partial class COOPERP_NewScreens_GraduationFinance : System.Web.UI.Page
         if (!rt.View) return GradFeesClearance.Denied(null);
         try
         {
+            var sw = System.Diagnostics.Stopwatch.StartNew();
             GradFeesClearance.Filter f = Parse(configJson);
+            f.search = ""; f.status = "";
             GradFeesClearance.Settings st = GradFeesClearance.GetSettings();
             List<GradFeesClearance.Row> all = GradFeesClearance.Fetch(f, st);
-            object kpis = GradFeesClearance.Kpis(all);
-            List<GradFeesClearance.Row> rows = GradFeesClearance.Narrow(all, f.status);
-            int total = rows.Count;
-            int from = (f.page - 1) * PAGE_SIZE;
-            if (from >= total && total > 0) { f.page = (total - 1) / PAGE_SIZE + 1; from = (f.page - 1) * PAGE_SIZE; }
-            List<GradFeesClearance.Row> pageRows = rows.GetRange(Math.Max(0, from), Math.Max(0, Math.Min(PAGE_SIZE, total - from)));
-            return J.Serialize(new { success = true, rows = pageRows, total, page = f.page, size = PAGE_SIZE, kpis,
-                                     gated = st.IsGated(f.acadYear) });
+            bool capped = all.Count > QUEUE_CAP;
+            if (capped) all.RemoveRange(QUEUE_CAP, all.Count - QUEUE_CAP);
+            return J.Serialize(new { success = true, rows = all, total = all.Count, capped, cap = QUEUE_CAP,
+                                     gated = st.IsGated(f.acadYear), asOf = DateTime.Now.ToString("HH:mm", CultureInfo.InvariantCulture),
+                                     ms = sw.ElapsedMilliseconds });
+        }
+        catch (Exception ex) { return J.Serialize(new { success = false, message = ex.Message }); }
+    }
+
+    /// <summary>Fresh rows for named students, so the list updates in place after an action.</summary>
+    [WebMethod(EnableSession = true)]
+    public static string GetRows(List<string> regnos)
+    {
+        GradFeesClearance.Rights rt = GradFeesClearance.GetRights();
+        if (!rt.View) return GradFeesClearance.Denied(null);
+        try
+        {
+            if (regnos == null || regnos.Count == 0) return J.Serialize(new { success = true, rows = new object[0] });
+            if (regnos.Count > BULK_CAP) regnos = regnos.GetRange(0, BULK_CAP);
+            var rows = GradFeesClearance.Fetch(new GradFeesClearance.Filter { regnos = regnos }, GradFeesClearance.GetSettings());
+            return J.Serialize(new { success = true, rows });
         }
         catch (Exception ex) { return J.Serialize(new { success = false, message = ex.Message }); }
     }
@@ -124,9 +145,9 @@ public partial class COOPERP_NewScreens_GraduationFinance : System.Web.UI.Page
         try
         {
             GradFeesClearance.Settings st = GradFeesClearance.GetSettings();
-            foreach (GradFeesClearance.Row r in GradFeesClearance.Fetch(new GradFeesClearance.Filter { search = (regno ?? "").Trim() }, st))
+            GradFeesClearance.Row r = GradFeesClearance.FetchOne(regno, st);
+            if (r != null)
             {
-                if (!string.Equals(r.regno, (regno ?? "").Trim(), StringComparison.OrdinalIgnoreCase)) continue;
                 if (r.balance > 0)
                     sug.Add(new { text = "Outstanding balance of UGX " + GradFeesClearance.Money(r.balance) + ". Clear the balance at the Bursar's office before clearance.",
                                   why = "the account is not settled" });
@@ -351,6 +372,8 @@ public partial class COOPERP_NewScreens_GraduationFinance : System.Web.UI.Page
             case "owing": return "Owing money";
             case "drift": return "Cleared but owing again";
             case "nofee": return "Graduation Fee not billed";
+            case "receipts": return "SchoolPay receipts not yet posted";
+            case "override": return "Cleared by override";
             default: return "Everyone on the list";
         }
     }

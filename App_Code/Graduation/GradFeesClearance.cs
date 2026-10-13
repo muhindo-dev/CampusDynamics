@@ -200,6 +200,17 @@ public static class GradFeesClearance
     {
         public string acadYear = "", faculty = "", department = "", programme = "", search = "", status = "";
         public int page = 1, size = 100;
+        /// <summary>Exact student numbers. Used to read one student, or to refresh rows after an action.</summary>
+        public List<string> regnos;
+    }
+
+    /// <summary>One student's row, by exact number (indexed), or null when not on a list.</summary>
+    public static Row FetchOne(string regno, Settings st)
+    {
+        regno = (regno ?? "").Trim();
+        if (regno == "") return null;
+        List<Row> r = Fetch(new Filter { regnos = new List<string> { regno } }, st);
+        return r.Count > 0 ? r[0] : null;
     }
 
     public class Finding
@@ -219,6 +230,7 @@ public static class GradFeesClearance
         public int pendingReceipts;
         public string status = "PENDING"; // PENDING | CLEARED | HELD
         public string basis = "", reason = "", actor = "", decidedAt = "";
+        public string decidedKey = "";     // yyyyMMddHHmmss, for sorting by decision time
         public decimal decidedBalance;
         public bool owesSinceClearance;    // CLEARED but now owes
         public bool eligible;              // could be cleared now without override
@@ -240,8 +252,25 @@ public static class GradFeesClearance
             bool hasDep = f.department != "" && int.TryParse(f.department, out dep);
             if (hasDep) w += " AND p.department_id=@dep ";
             if (f.programme != "") w += " AND g.progcode=@prog ";
-            if (f.search != "") w += " AND (g.regno LIKE @q OR g.stud_name LIKE @q) ";
+            if (f.search != "") w += " AND (g.regno LIKE @q OR g.stud_name LIKE @q OR g.progcode LIKE @q OR p.progname LIKE @q) ";
+            var ids = new List<string>();
+            if (f.regnos != null)
+                foreach (string x in f.regnos)
+                {
+                    string t = (x ?? "").Trim();
+                    if (t != "" && !ids.Contains(t) && ids.Count < 500) ids.Add(t);
+                }
+            if (f.regnos != null)
+            {
+                if (ids.Count == 0) return rows;
+                var ps = new List<string>();
+                for (int i = 0; i < ids.Count; i++) ps.Add("@r" + i);
+                w += " AND g.regno IN (" + string.Join(",", ps.ToArray()) + ") ";
+            }
 
+            // Pending SchoolPay receipts are counted in ONE pass. fin_schoolpaydata has no index on
+            // regno, so the old per-row subquery scanned all 45k receipts once per graduand
+            // (4.4 of the list's 5.7 seconds).
             string sql =
                 "SELECT g.regno, IFNULL(g.stud_name,''), g.progcode, IFNULL(p.progname,''), IFNULL(TRIM(p.faculty_code),''), " +
                 "       IFNULL(g.acadyear,''), IFNULL(g.degclass,''), " +
@@ -249,19 +278,22 @@ public static class GradFeesClearance
                 "       EXISTS(SELECT 1 FROM campus_dynamics_accounts.fin_studentfeestracking t " +
                 "              WHERE t.regno=g.regno AND t.item_code=@gfi AND t.trans_type='Bill' AND t.post_status='Posted' " +
                 "                AND (t.acadyear=g.acadyear OR t.trans_date >= CONCAT(LEFT(g.acadyear,4),'-08-01'))) AS gf, " +
-                "       (SELECT COUNT(*) FROM campus_dynamics_accounts.fin_schoolpaydata sp " +
-                "         WHERE sp.regno=g.regno AND sp.captureStatus='Pending') AS pend, " +
+                "       IFNULL(pr.n,0) AS pend, " +
                 "       IFNULL(s.status,''), IFNULL(s.basis,''), IFNULL(s.reason,''), IFNULL(s.actor,''), " +
-                "       IFNULL(DATE_FORMAT(s.decided_at,'%e %b %Y %H:%i'),''), IFNULL(s.balance,0) " +
+                "       IFNULL(DATE_FORMAT(s.decided_at,'%e %b %Y %H:%i'),''), IFNULL(s.balance,0), " +
+                "       IFNULL(DATE_FORMAT(s.decided_at,'%Y%m%d%H%i%s'),'') " +
                 "FROM acad_graduands g " +
                 "LEFT JOIN acad_programme p ON p.progcode=g.progcode " +
                 "LEFT JOIN acad_grad_finance_state s ON s.regno=g.regno AND s.acadyear=g.acadyear " +
+                "LEFT JOIN (SELECT regno, COUNT(*) n FROM campus_dynamics_accounts.fin_schoolpaydata " +
+                "           WHERE captureStatus='Pending' GROUP BY regno) pr ON pr.regno=g.regno " +
                 w + " ORDER BY p.progname, g.stud_name";
 
             using (var cmd = new MySqlCommand(sql, c))
             {
                 cmd.CommandTimeout = 120;
                 cmd.Parameters.AddWithValue("@gfi", st.GradFeeItem);
+                for (int i = 0; i < ids.Count; i++) cmd.Parameters.AddWithValue("@r" + i, ids[i]);
                 if (f.acadYear != "") cmd.Parameters.AddWithValue("@ay", f.acadYear);
                 if (f.faculty != "") cmd.Parameters.AddWithValue("@fac", f.faculty);
                 if (hasDep) cmd.Parameters.AddWithValue("@dep", int.Parse(f.department));
@@ -282,6 +314,7 @@ public static class GradFeesClearance
                         x.basis = rd.GetString(11); x.reason = rd.GetString(12); x.actor = rd.GetString(13);
                         x.decidedAt = rd.GetString(14);
                         x.decidedBalance = Convert.ToDecimal(rd[15]);
+                        x.decidedKey = rd.GetString(16);
                         Assess(x, st);
                         rows.Add(x);
                     }
@@ -332,6 +365,8 @@ public static class GradFeesClearance
                 case "owing": keep = r.balance > 0; break;
                 case "drift": keep = r.owesSinceClearance; break;
                 case "nofee": keep = r.gradFeeRequired && !r.gradFeeBilled; break;
+                case "receipts": keep = r.pendingReceipts > 0; break;
+                case "override": keep = r.status == "CLEARED" && r.basis == "OVERRIDE"; break;
                 default: keep = true; break;
             }
             if (keep) o.Add(r);
@@ -341,7 +376,7 @@ public static class GradFeesClearance
 
     public static object Kpis(List<Row> all)
     {
-        int cleared = 0, pending = 0, held = 0, ready = 0, owing = 0, nofee = 0, drift = 0;
+        int cleared = 0, pending = 0, held = 0, ready = 0, owing = 0, nofee = 0, drift = 0, receipts = 0, overrides = 0;
         decimal owed = 0, credit = 0;
         foreach (Row r in all)
         {
@@ -351,8 +386,10 @@ public static class GradFeesClearance
             if (r.balance < 0) credit += -r.balance;
             if (r.gradFeeRequired && !r.gradFeeBilled) nofee++;
             if (r.owesSinceClearance) drift++;
+            if (r.pendingReceipts > 0) receipts++;
+            if (r.status == "CLEARED" && r.basis == "OVERRIDE") overrides++;
         }
-        return new { total = all.Count, cleared, pending, held, ready, owing, nofee, drift,
+        return new { total = all.Count, cleared, pending, held, ready, owing, nofee, drift, receipts, overrides,
                      owed = owed, credit = credit };
     }
 
@@ -413,9 +450,7 @@ public static class GradFeesClearance
         regno = (regno ?? "").Trim();
         if (regno == "") return Err("No student number.");
         Settings st = GetSettings();
-        var f = new Filter { search = regno };
-        Row row = null;
-        foreach (Row r in Fetch(f, st)) if (string.Equals(r.regno, regno, StringComparison.OrdinalIgnoreCase)) { row = r; break; }
+        Row row = FetchOne(regno, st);
         if (row == null) return Err(regno + " is not on any graduation list. Fees clearance applies only to students the Academic Registry has approved.");
 
         var ident = new Dictionary<string, object>();
@@ -618,9 +653,7 @@ public static class GradFeesClearance
         if (reason.Length > 600) reason = reason.Substring(0, 600);
 
         Settings st = GetSettings();
-        Row row = null;
-        foreach (Row r in Fetch(new Filter { search = o.regno }, st))
-            if (string.Equals(r.regno, o.regno, StringComparison.OrdinalIgnoreCase)) { row = r; break; }
+        Row row = FetchOne(o.regno, st);
         if (row == null) { o.message = o.regno + " is not on a graduation list."; return o; }
 
         string basis = "";
