@@ -50,7 +50,7 @@ public sealed class AcademicDocumentPdfService
 				EnsureListTranscriptProc();
 
 			string diagnosticMessage = string.Empty;
-			ResultsData dataSource = BuildSelectedStudentsData(normalizedRegnos, out diagnosticMessage);
+			ResultsData dataSource = BuildSelectedStudentsData(normalizedRegnos, normalizedDocumentType == "Certificate", out diagnosticMessage);
 			if (dataSource == null || dataSource.acad_GetBatchStudentTranscriptData == null || dataSource.acad_GetBatchStudentTranscriptData.Count == 0)
 			{
 				return new ExportResult
@@ -238,10 +238,12 @@ public sealed class AcademicDocumentPdfService
 				"  r.ID, r.regno, courseid, r.semester, acad_GetResultsAcademicYear(reg,studyyear, r.semester) acad, studyyear, score, grade, gradept,\n" +
 				"  gpa, result_comment, CreditUnits, r.progid, r.study_system,\n" +
 				"  CONCAT_WS('  ',CONCAT('GPA: ',gpa),CONCAT('      CGPA: ',acad_CGPAFinder_ByPeriod(r.regno,r.studyyear, r.semester))) AS SemesterScores\n" +
-				"  FROM acad_transcript_results r JOIN acad_graduands g ON g.regno=r.regno\n" +
+				"  FROM acad_transcript_results r\n" +
 				// No trans_status filter: once a transcript was printed (status 'Printed') the
 				// filter made every later copy blank. Who may print is GraduationPrintGate's job.
-				"  WHERE g.regno=reg\n" +
+				// No acad_graduands join either: a student not on the list got a transcript with
+				// no courses (boardfixes T2_01).
+				"  WHERE r.regno=reg\n" +
 				"  ORDER BY r.studyyear, r.semester, r.ID;\n" +
 				"END";
 
@@ -260,7 +262,7 @@ public sealed class AcademicDocumentPdfService
 		}
 	}
 
-	private static ResultsData BuildSelectedStudentsData(IEnumerable<string> regnos, out string diagnosticMessage)
+	private static ResultsData BuildSelectedStudentsData(IEnumerable<string> regnos, bool isCertificate, out string diagnosticMessage)
 	{
 		diagnosticMessage = string.Empty;
 		ResultsData master = new ResultsData();
@@ -275,7 +277,7 @@ public sealed class AcademicDocumentPdfService
 
 		foreach (string regno in regnos)
 		{
-			EnsureClassicGraduandLinkIfMissing(regno);
+			EnsureClassicGraduandLinkIfMissing(regno, isCertificate);
 
 			ResultsData single = new ResultsData();
 			single.EnforceConstraints = false;
@@ -311,7 +313,17 @@ public sealed class AcademicDocumentPdfService
 		return master;
 	}
 
-	private static void EnsureClassicGraduandLinkIfMissing(string regno)
+	/// <summary>
+	/// Prepares one student for printing. Rebuilds the transcript copy and the completion date.
+	///
+	/// Only a CERTIFICATE may add a missing student to acad_graduands (the old arrangement for
+	/// cycles before approval began; GraduationPrintGate refuses a certificate for anyone not on
+	/// the list from 2026/2027). A transcript never writes the graduation list: until 19 Oct 2026
+	/// it did, so every record-of-studies transcript put a continuing student on the list as an
+	/// unapproved "graduand" (100 in 2026/2027). acad_GetSingleStudentTranscriptData now builds
+	/// the header from the student record when there is no list row (boardfixes G1_01).
+	/// </summary>
+	private static void EnsureClassicGraduandLinkIfMissing(string regno, bool isCertificate)
 	{
 		string safeRegno = (regno ?? string.Empty).Trim();
 		if (string.IsNullOrEmpty(safeRegno))
@@ -330,7 +342,44 @@ public sealed class AcademicDocumentPdfService
 			{
 				conn.Open();
 
-				// 1. Auto-insert into acad_graduands if the student is missing
+				// 1. Certificates only: add the student to acad_graduands if missing (see summary).
+				//
+				// 1a. A graduate on the records kept from before the list was emptied on 25 Sep 2026
+				//     (acad_graduands_prior) gets THAT record back, for the programme they are on: the
+				//     year, CGPA and class they graduated with, not a year guessed from their last
+				//     registration. 1,572 real graduates had no row after the wipe.
+				if (isCertificate && GraduationStats.PriorTableExists(conn))
+				using (MySqlCommand cmd = new MySqlCommand(@"
+					INSERT INTO acad_graduands
+					(
+						regno, acadyear, cgpa, degclass, nationality, stud_name, progcode,
+						trans_status, cert_status, trans_printer, cert_printer,
+						gender, grad_date, comp_date, convocation
+					)
+					SELECT
+						TRIM(pr.regno), TRIM(pr.acadyear), IFNULL(pr.cgpa, 0), IFNULL(NULLIF(TRIM(pr.degclass), ''), '-'),
+						IFNULL(NULLIF(TRIM(s.nationality), ''), 'UGANDAN'),
+						IFNULL(NULLIF(TRIM(pr.stud_name), ''), TRIM(s.regno)),
+						TRIM(pr.progcode),
+						IFNULL(NULLIF(pr.trans_status, ''), 'Ready'), IFNULL(NULLIF(pr.cert_status, ''), 'Ready'), '-', '-',
+						IFNULL(s.gender, ''), pr.grad_date, pr.comp_date, IFNULL(NULLIF(pr.convocation, ''), '-')
+					FROM acad_graduands_prior pr
+					JOIN acad_student s ON s.regno = pr.regno
+					WHERE pr.regno = @reg
+					  AND TRIM(pr.progcode) = TRIM(s.progid)
+					  AND NOT EXISTS (SELECT 1 FROM acad_graduands g WHERE TRIM(g.regno)=TRIM(s.regno))
+					ORDER BY pr.acadyear DESC
+					LIMIT 1;", conn))
+				{
+					cmd.Parameters.AddWithValue("@reg", safeRegno);
+					cmd.ExecuteNonQuery();
+				}
+
+				// 1b. Anyone else only once they have reached the final year of their programme
+				//     (acad_grad_stats.is_candidate). Without it a certificate printed for a year-one
+				//     student put them on the graduation list: MRU2025004163 and MRU2025004241 are on
+				//     the 2025/2026 list that way, each with one year of results.
+				if (isCertificate)
 				using (MySqlCommand cmd = new MySqlCommand(@"
 					INSERT INTO acad_graduands
 					(
@@ -369,6 +418,7 @@ public sealed class AcademicDocumentPdfService
 					WHERE TRIM(s.regno) = @reg
 					  AND NOT EXISTS (SELECT 1 FROM acad_graduands g WHERE TRIM(g.regno)=TRIM(s.regno))
 					  AND EXISTS (SELECT 1 FROM acad_results r WHERE TRIM(r.regno)=TRIM(s.regno))
+					  AND EXISTS (SELECT 1 FROM acad_grad_stats a WHERE a.regno = s.regno AND a.is_candidate = 1)
 					LIMIT 1;", conn))
 				{
 					cmd.Parameters.AddWithValue("@reg", safeRegno);

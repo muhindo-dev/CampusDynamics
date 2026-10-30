@@ -95,7 +95,7 @@ public partial class COOPERP_NewScreens_GraduationCandidates : System.Web.UI.Pag
         c.Add(new GraduationExport.Col<GradCandidate>("zero", "Zero Marks", PR, true, F_zero).Off());
         c.Add(new GraduationExport.Col<GradCandidate>("unmarked", "Unmarked", PR, true, F_unmarked).Off());
         c.Add(new GraduationExport.Col<GradCandidate>("unpub", "Marks Not Yet Published", PR, true, F_unpub).Off());
-        c.Add(new GraduationExport.Col<GradCandidate>("cover", "Required Courses With No Result", PR, true, F_cover).Off());
+        c.Add(new GraduationExport.Col<GradCandidate>("cover", "Mapped Core Courses With No Result", PR, true, F_cover).Off());
 
         c.Add(new GraduationExport.Col<GradCandidate>("ready", "Readiness", DC, F_ready));
         c.Add(new GraduationExport.Col<GradCandidate>("status", "Status", DC, F_status));
@@ -121,24 +121,24 @@ public partial class COOPERP_NewScreens_GraduationCandidates : System.Web.UI.Pag
     private static string F_first(GradCandidate g) { return g.firstYear; }
     private static string F_last(GradCandidate g) { return g.lastYear; }
     private static string F_courses(GradCandidate g) { return g.coursesTaken.ToString(CultureInfo.InvariantCulture); }
-    private static string F_cuE(GradCandidate g) { return Math.Round(g.cuEarned).ToString(CultureInfo.InvariantCulture); }
+    // The credits C3 counted and measured, carried on the candidate, so the sheet, the bar and
+    // the finding are one number. Never cuRequired - cuEarned here: that ignores exemptions and
+    // a course counted twice, and showed a shortfall the check itself did not find.
+    private static string F_cuE(GradCandidate g) { return Math.Round(g.cuCounted).ToString(CultureInfo.InvariantCulture); }
     private static string F_cuR(GradCandidate g)
     { return g.cuSource == "NONE" ? "" : Math.Round(g.cuRequired).ToString(CultureInfo.InvariantCulture); }
     private static string F_cuS(GradCandidate g)
-    {
-        if (g.cuSource == "NONE") return "";
-        double d = g.cuRequired - g.cuEarned;
-        return (d > 0 ? Math.Round(d) : 0).ToString(CultureInfo.InvariantCulture);
-    }
+    { return g.cuSource == "NONE" ? "" : Math.Round(g.cuShort).ToString(CultureInfo.InvariantCulture); }
     private static string F_cuSrc(GradCandidate g)
     {
-        return g.cuSource == "STRUCTURE" ? "Programme structure"
-             : g.cuSource == "DECLARED" ? "Declared minimum" : "Not assessable";
+        if (g.cuSource != "DECLARED") return "Not assessable";
+        return g.cuProrated ? "Declared minimum, prorated" : "Declared minimum";
     }
     private static string F_cgpa(GradCandidate g)
     { return g.cgpa > 0 ? g.cgpa.ToString("F2", CultureInfo.InvariantCulture) : ""; }
     private static string F_class(GradCandidate g) { return g.degClass; }
-    private static string F_fails(GradCandidate g) { return g.failedPapers.ToString(CultureInfo.InvariantCulture); }
+    private static string F_fails(GradCandidate g)
+    { return Math.Max(0, g.failedPapers - g.duplicateFails).ToString(CultureInfo.InvariantCulture); }
     private static string F_zero(GradCandidate g) { return g.zeroMarks.ToString(CultureInfo.InvariantCulture); }
     private static string F_unmarked(GradCandidate g) { return g.missingScores.ToString(CultureInfo.InvariantCulture); }
     private static string F_unpub(GradCandidate g) { return g.UnpubTotal.ToString(CultureInfo.InvariantCulture); }
@@ -149,6 +149,7 @@ public partial class COOPERP_NewScreens_GraduationCandidates : System.Web.UI.Pag
     private static string F_status(GradCandidate g)
     {
         return g.graduatedYear != "" ? ("On the " + g.graduatedYear + " list")
+             : g.priorYear != "" ? ("Graduated in " + g.priorYear + " (earlier records)")
              : (g.holdReason != "" ? "On hold" : "Under review");
     }
     private static string F_blockers(GradCandidate g) { return Findings(g, "BLOCK"); }
@@ -664,6 +665,20 @@ public partial class COOPERP_NewScreens_GraduationCandidates : System.Web.UI.Pag
         MarksScope scope = MarksScopeResolver.Resolve();
         if (!scope.HasAccess) return GraduationBootstrap.Denied();
         return GraduationService.Release(scope, regno, acadYear, note);
+    }
+
+    /// <summary>
+    /// Takes a student off the graduation list from the Candidates screen, for a row that is
+    /// already on a list. Same action and the same right (CanClear) as the Remove on the
+    /// Graduation List screen; GraduationService.RemoveFromList re-checks scope and right and
+    /// keeps the decision history.
+    /// </summary>
+    [WebMethod(EnableSession = true)]
+    public static string RemoveStudent(string regno, string reason)
+    {
+        MarksScope scope = MarksScopeResolver.Resolve();
+        if (!scope.HasAccess) return GraduationBootstrap.Denied();
+        return GraduationService.RemoveFromList(scope, regno, reason);
     }
 
     /// <summary>

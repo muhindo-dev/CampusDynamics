@@ -58,6 +58,42 @@ public static class GraduationRights
         return false;
     }
 
+    /// <summary>
+    /// May the signed-in user APPROVE a student for graduation, or take one off the list?
+    ///
+    /// Narrower than CanDecide (MIS instruction, 29 Oct 2026): approving belongs to the dean of
+    /// the faculty and the head of the department only. The Registry (Academic Registrar,
+    /// Graduation Officer) sees every candidate and every list, holds and releases, and prints,
+    /// but does not approve. The system administrator keeps it so the process can always be
+    /// unblocked; every approval is recorded against a name and a role either way.
+    /// Setting GraduationRegistryMayApprove=true in web.config restores the Registry's right
+    /// without a code change.
+    /// </summary>
+    public static bool CanClear(MarksScope scope, out string why)
+    {
+        why = "";
+        if (scope != null && scope.IsAdmin) return true;
+
+        string note = scope == null ? "" : (scope.RoleNote ?? "").Trim();
+        if (string.Equals(note, "Dean", StringComparison.OrdinalIgnoreCase)) return true;
+        if (string.Equals(note, "Head of Department", StringComparison.OrdinalIgnoreCase)) return true;
+
+        if (string.Equals(ConfigurationManager.AppSettings["GraduationRegistryMayApprove"], "true", StringComparison.OrdinalIgnoreCase)
+            && (IsRegistrar() || HasRole(ROLE_GRADUATION_OFFICER))) return true;
+
+        why = "Only the head of department or the dean can approve a student for graduation " +
+              "or take one off the graduation list. " +
+              (note == "" ? "" : "Your account is recorded as " + note + ". ") +
+              "You can still review candidates, place or lift holds, and print.";
+        return false;
+    }
+
+    public static bool CanClear(MarksScope scope)
+    {
+        string ignored;
+        return CanClear(scope, out ignored);
+    }
+
     /// <summary>A short label for what the right rests on, written into the decision record.</summary>
     public static string RightNote(MarksScope scope)
     {

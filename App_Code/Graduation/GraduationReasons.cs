@@ -47,17 +47,27 @@ public static class GraduationReasons
     /// </summary>
     public static string For(string regno)
     {
+        MarksScope scope = null;
+        if (!string.IsNullOrEmpty(regno))
+        {
+            try { scope = MarksScopeResolver.Resolve(); } catch { scope = null; }
+        }
+        return For(scope, regno);
+    }
+
+    /// <summary>The same, under a scope already resolved (null offers only the standing reasons).</summary>
+    public static string For(MarksScope scope, string regno)
+    {
         var outp = new List<Sug>();
         try
         {
             GradCandidate g = null;
-            if (!string.IsNullOrEmpty(regno))
+            if (!string.IsNullOrEmpty(regno) && scope != null)
             {
                 // Load() assesses as it reads, and enforces scope, so a reviewer cannot pull
                 // suggestions for a student they are not allowed to see.
                 try
                 {
-                    MarksScope scope = MarksScopeResolver.Resolve();
                     if (scope.HasAccess)
                         using (var c = new MySqlConnection(Conn()))
                         {
@@ -71,46 +81,67 @@ public static class GraduationReasons
 
             if (g != null)
             {
-                bool blockFail = false, unpub = false, shortCu = false, noSpec = false, gaps = false;
+                // Driven by the findings themselves, so a suggestion can only name a problem the
+                // checks actually found, in the checks' own numbers.
+                var lvl = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+                var detail = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
                 foreach (GradFinding f in g.findings)
                 {
                     if (f.level != "BLOCK" && f.level != "WARN" && f.level != "NA") continue;
-                    if (f.code == "C2") blockFail = true;
-                    else if (f.code == "C5") unpub = true;
-                    else if (f.code == "C3") shortCu = true;
-                    else if (f.code == "C4") noSpec = true;
+                    string key = f.code + "|" + f.name;
+                    if (!lvl.ContainsKey(key)) { lvl[key] = f.level; detail[key] = f.detail; }
                 }
-                if (g.failedPapers > 0) blockFail = true;
-                if (g.zeroMarks + g.missingScores > 0) gaps = true;
-                if (g.UnpubTotal > 0) unpub = true;
+                int fails = Math.Max(0, g.failedPapers - g.duplicateFails);
 
-                if (blockFail)
+                if (g.priorYear != "" && g.graduatedYear == "")
                     outp.Add(new Sug(
-                        "Waiting on the retake result for " + g.failedPapers +
-                        (g.failedPapers == 1 ? " failed paper" : " failed papers") + ".",
-                        g.failedPapers + " paper(s) marked between 1 and 49", 0));
+                        "Already graduated from " + g.priorProg + " in " + g.priorYear + "; the earlier record is to be confirmed.",
+                        "on the graduation records kept from before 25 Sep 2026", 0));
 
-                if (unpub)
+                if (g.pendingRetakes > 0)
+                    outp.Add(new Sug(
+                        "Waiting on the result of " + g.pendingRetakes +
+                        (g.pendingRetakes == 1 ? " registered retake." : " registered retakes."),
+                        "retake registered, not yet marked", 0));
+                else if (fails > 0)
+                    outp.Add(new Sug(
+                        "Waiting on the retake result for " + fails + (fails == 1 ? " failed paper." : " failed papers."),
+                        fails + " paper(s) marked between 1 and 49", 0));
+
+                foreach (KeyValuePair<string, string> kv in lvl)
+                {
+                    if (kv.Key.StartsWith("C10|", StringComparison.Ordinal))
+                        outp.Add(new Sug(
+                            "Missing a final-year component: " + Missing(detail[kv.Key]) + ".",
+                            "every recent graduate of the programme has one", 1));
+                    else if (kv.Key.StartsWith("C6|", StringComparison.Ordinal) && kv.Value == "BLOCK")
+                        outp.Add(new Sug(
+                            detail[kv.Key].StartsWith("Has not sat", StringComparison.Ordinal)
+                                ? "Has not sat the final semester."
+                                : "Missing a full semester of results; the department to confirm.",
+                            "from the semester-by-semester check", 1));
+                    else if (kv.Key.StartsWith("C2|Course recorded twice", StringComparison.Ordinal))
+                        outp.Add(new Sug(
+                            "A course is recorded twice and must be merged before approval.",
+                            "same course under two spellings of its code", 3));
+                }
+
+                if (g.UnpubTotal > 0)
                     outp.Add(new Sug(
                         "Marks are still in the pipeline and not yet published (" +
                         g.UnpubTotal + " outstanding).",
                         "sitting below PUBLISHED in the marks workflow", 1));
 
-                if (shortCu && g.cuSource != "NONE")
+                if (g.cuSource != "NONE" && g.cuShort > 0)
                     outp.Add(new Sug(
-                        "Credit shortfall to be verified: " + Math.Round(g.cuEarned) + " of " +
+                        "Credit shortfall to be verified: " + Math.Round(g.cuCounted) + " of " +
                         Math.Round(g.cuRequired) + " credits earned.",
-                        "short by " + Math.Round(g.cuRequired - g.cuEarned) + " credits", 2));
+                        "short by " + Math.Round(g.cuShort) + " credits", 2));
 
-                if (gaps)
+                if (g.zeroMarks + Math.Max(0, g.missingScores - g.pendingRetakes) > 0)
                     outp.Add(new Sug(
                         "Papers recorded as 0 or unmarked need confirming with the department.",
-                        (g.zeroMarks + g.missingScores) + " paper(s) with no real mark", 3));
-
-                if (noSpec)
-                    outp.Add(new Sug(
-                        "Specialisation is a placeholder, so the curriculum cannot be matched.",
-                        "no real specialisation on the student record", 4));
+                        (g.zeroMarks + Math.Max(0, g.missingScores - g.pendingRetakes)) + " paper(s) with no real mark", 3));
             }
 
             // What this institution has actually written before.
@@ -122,7 +153,7 @@ public static class GraduationReasons
                     using (var cmd = new MySqlCommand(
                         "SELECT reason, COUNT(*) n FROM acad_grad_review " +
                         "WHERE verdict='HELD' AND TRIM(IFNULL(reason,''))<>'' " +
-                        "GROUP BY reason ORDER BY n DESC, MAX(id) DESC LIMIT 6", c))
+                        "GROUP BY reason ORDER BY n DESC, MAX(id) DESC LIMIT 8", c))
                     using (var r = cmd.ExecuteReader())
                     {
                         int i = 0;
@@ -131,6 +162,11 @@ public static class GraduationReasons
                             string txt = r[0].ToString().Trim();
                             int n = Convert.ToInt32(r[1]);
                             if (txt.Length < 10) continue;
+                            // "she graduated" is the commonest hold reason on record, written
+                            // before C1 could see earlier graduations. Offered to everyone it is
+                            // a false statement about most of them; C1 now says it when it is true.
+                            string low = txt.ToLowerInvariant().TrimEnd('.');
+                            if ((low == "she graduated" || low == "he graduated") && (g == null || g.priorYear == "")) continue;
                             outp.Add(new Sug(txt,
                                 "used " + n + (n == 1 ? " time before" : " times before"), 10 + i));
                             i++;
@@ -165,6 +201,17 @@ public static class GraduationReasons
         {
             return J.Serialize(new { success = false, message = ex.Message });
         }
+    }
+
+    /// <summary>"a research project or dissertation" out of C10's sentence, for a short reason.</summary>
+    private static string Missing(string c10Detail)
+    {
+        const string head = "No pass on record for ";
+        int i = c10Detail.IndexOf(head, StringComparison.Ordinal);
+        if (i < 0) return "research, school practice or internship";
+        string rest = c10Detail.Substring(i + head.Length);
+        int dot = rest.IndexOf('.');
+        return dot > 0 ? rest.Substring(0, dot) : rest;
     }
 
     /// <summary>

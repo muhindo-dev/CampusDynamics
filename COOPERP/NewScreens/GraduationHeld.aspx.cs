@@ -90,29 +90,35 @@ public partial class COOPERP_NewScreens_GraduationHeld : System.Web.UI.Page
     private static string F_who(GradCandidate g) { return g.holdActor; }
     private static string F_when(GradCandidate g) { return g.holdAt; }
     /// <summary>The column a Registrar actually acts on: a hold whose reason no longer applies
-    /// is a student waiting for nothing.</summary>
+    /// is a student waiting for nothing. The hold itself is not counted as a blocker, or every
+    /// held student would read "Yes".</summary>
     private static string F_still(GradCandidate g)
-    { return g.readiness == "BLOCKED" ? "Yes" : "No - nothing is blocking them any more"; }
+    {
+        if (g.graduatedYear == "" && g.priorYear != "")
+            return "Already graduated (" + g.priorYear + ") - the hold can be removed";
+        return g.blockedApartFromHold ? "Yes" : "No - nothing but the hold is stopping them";
+    }
     private static string F_blockers(GradCandidate g)
     {
         var sb = new StringBuilder();
         foreach (GradFinding fd in g.findings)
         {
-            if (fd.level != "BLOCK") continue;
+            if (fd.level != "BLOCK" || fd.code == "C8") continue;
             if (sb.Length > 0) sb.Append("; ");
             sb.Append(fd.detail);
         }
         return sb.ToString();
     }
+    /// <summary>The credits C3 counted, so this column and the finding never disagree.</summary>
     private static string F_cuE(GradCandidate g)
-    { return Math.Round(g.cuEarned).ToString(CultureInfo.InvariantCulture); }
+    { return Math.Round(g.cuCounted).ToString(CultureInfo.InvariantCulture); }
     private static string F_cuR(GradCandidate g)
     { return g.cuSource == "NONE" ? "" : Math.Round(g.cuRequired).ToString(CultureInfo.InvariantCulture); }
     private static string F_cgpa(GradCandidate g)
     { return g.cgpa > 0 ? g.cgpa.ToString("F2", CultureInfo.InvariantCulture) : ""; }
     private static string F_class(GradCandidate g) { return g.degClass; }
     private static string F_fails(GradCandidate g)
-    { return g.failedPapers.ToString(CultureInfo.InvariantCulture); }
+    { return Math.Max(0, g.failedPapers - g.duplicateFails).ToString(CultureInfo.InvariantCulture); }
     private static string F_last(GradCandidate g) { return g.lastYear; }
 
     protected void Page_Load(object sender, EventArgs e)
@@ -181,20 +187,25 @@ public partial class COOPERP_NewScreens_GraduationHeld : System.Web.UI.Page
     }
 
     /// <summary>
-    /// The holds that can be lifted today: nothing is blocking these students any more, so the
-    /// hold is the only thing standing between them and a list. This is the tab worth opening.
+    /// The holds that can be lifted today: nothing but the hold is stopping these students, or
+    /// they have already graduated and the hold no longer stands between them and anything. This
+    /// is the tab worth opening.
     /// </summary>
     private static GraduationExport.Sheet Stale(List<GradCandidate> rows)
     {
         var sh = new GraduationExport.Sheet();
         sh.Name = "Holds that can be lifted";
-        sh.Columns = new[] { "Student Number", "Name", "Programme", "Hold Reason", "On Hold By", "On Hold Since" };
+        sh.Columns = new[] { "Student Number", "Name", "Programme", "Hold Reason", "On Hold By", "On Hold Since", "Why" };
         foreach (GradCandidate g in rows)
-            if (g.readiness != "BLOCKED")
-                sh.Rows.Add(new[] { g.regno, g.name, g.progname == "" ? g.progcode : g.progname,
-                                    g.holdReason, g.holdActor, g.holdAt });
+        {
+            bool graduated = g.graduatedYear == "" && g.priorYear != "";
+            if (g.blockedApartFromHold && !graduated) continue;
+            sh.Rows.Add(new[] { g.regno, g.name, g.progname == "" ? g.progcode : g.progname,
+                                g.holdReason, g.holdActor, g.holdAt,
+                                graduated ? "Already graduated in " + g.priorYear : "Nothing but the hold is stopping them" });
+        }
         if (sh.Rows.Count == 0)
-            sh.Rows.Add(new[] { "Every hold in this selection still has something blocking it", "", "", "", "", "" });
+            sh.Rows.Add(new[] { "Every hold in this selection still has something blocking it", "", "", "", "", "", "" });
         return sh;
     }
 

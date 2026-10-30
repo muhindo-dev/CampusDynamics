@@ -239,6 +239,8 @@
 .g-find--WARN{border-left:3px solid #d97706;background:#fffdf7;}
 .g-find--BLOCK{border-left:3px solid #b3261e;background:#fffafa;}
 .g-find--NA{border-left:3px solid #c3ccd9;background:#fafbfc;}
+/* For reference only: decides nothing, so it reads as neutral rather than as a warning. */
+.g-find--INFO{border-left:3px solid var(--accent);background:#f7f9fd;}
 
 .g-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(128px,1fr));gap:5px 12px;margin-bottom:10px;}
 .g-grid div{font-size:11.5px;padding:4px 0;border-bottom:1px dashed #eef2f7;min-width:0;}

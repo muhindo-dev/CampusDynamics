@@ -229,6 +229,8 @@ public static class GraduationBootstrap
                 // Whether this user may decide, as opposed to merely look. The server refuses
                 // either way; this is so the page does not offer a button it knows will fail.
                 canDecide = GraduationRights.CanDecide(scope),
+                // Approving (and taking off the list) is narrower: dean and head of department.
+                canClear = GraduationRights.CanClear(scope),
                 decideNote = GraduationRights.RightNote(scope),
                 years = years,
                 currentYear = currentYear,

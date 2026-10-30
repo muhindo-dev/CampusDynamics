@@ -82,14 +82,26 @@ public static class GraduationService
         }
         if (g == null) return null;
 
+        // The same aggregate the summary is built from (GraduationStats.BuildSql), for one
+        // student, so the evidence panel and the list cannot read the same record differently.
+        const string YEAR_OK =
+            "r.acad REGEXP '^[0-9]{4}/[0-9]{4}$' " +
+            "AND CAST(LEFT(r.acad,4) AS UNSIGNED) BETWEEN 2000 AND 2035 " +
+            "AND CAST(RIGHT(r.acad,4) AS UNSIGNED)=CAST(LEFT(r.acad,4) AS UNSIGNED)+1";
         using (var cmd = new MySqlCommand(
             "SELECT MAX(r.studyyear), COUNT(*), " +
             " SUM(CASE WHEN r.score>=50 THEN IFNULL(r.CreditUnits,0) ELSE 0 END), " +
             " SUM(r.score>0 AND r.score<50), SUM(r.score=0), SUM(r.score IS NULL), " +
             " SUM(IFNULL(r.CreditUnits,0)*IFNULL(r.gradept,0)), SUM(IFNULL(r.CreditUnits,0)), " +
-            " MIN(CASE WHEN r.acad REGEXP '^[0-9]{4}/[0-9]{4}$' THEN r.acad END), " +
-            " MAX(CASE WHEN r.acad REGEXP '^[0-9]{4}/[0-9]{4}$' THEN r.acad END) " +
-            "FROM acad_results r WHERE r.regno=@r", c))
+            " MIN(CASE WHEN " + YEAR_OK + " THEN r.acad END), " +
+            " MAX(CASE WHEN " + YEAR_OK + " THEN r.acad END), " +
+            " IFNULL(MIN(CASE WHEN r.studyyear BETWEEN 1 AND 8 THEN r.studyyear END),0), " +
+            " IFNULL(BIT_OR(" + GraduationEngine.TermBitSql("r") + "),0), " +
+            " IFNULL(SUM(r.is_retake=1 AND r.score IS NULL),0), " +
+            " IFNULL(BIT_OR(" + GraduationEngine.CapBitsSql("r", "ac") + "),0), " +
+            " IFNULL(GROUP_CONCAT(CASE WHEN r.is_retake=1 AND r.score IS NULL THEN r.courseid END " +
+            "   ORDER BY r.courseid SEPARATOR ', '),'') " +
+            "FROM acad_results r LEFT JOIN acad_course ac ON ac.courseID=r.courseid WHERE r.regno=@r", c))
         {
             cmd.Parameters.AddWithValue("@r", regno);
             using (var r = cmd.ExecuteReader())
@@ -105,28 +117,68 @@ public static class GraduationService
                     g.cgpa = den > 0 ? Math.Round(num / den, 2) : 0;
                     g.firstYear = r.IsDBNull(8) ? "" : r[8].ToString();
                     g.lastYear = r.IsDBNull(9) ? "" : r[9].ToString();
+                    g.firstStudyYear = Math.Max(1, Convert.ToInt32(r[10]));
+                    g.termMask = Convert.ToInt32(r[11]);
+                    g.pendingRetakes = Convert.ToInt32(r[12]);
+                    g.capstoneMask = Convert.ToInt32(r[13]);
+                    g.pendingRetakeCodes = r[14].ToString();
                 }
         }
+        g.detailKnown = true;
+
+        // The same course on record twice, named, so the reviewer knows which two rows to merge.
+        try
+        {
+            using (var cmd = new MySqlCommand(GraduationStats.DuplicatesSql(" AND a.regno=@r"), c))
+            {
+                cmd.Parameters.AddWithValue("@r", regno);
+                using (var r = cmd.ExecuteReader())
+                    if (r.Read())
+                    {
+                        g.duplicates = Convert.ToInt32(r[1]);
+                        g.cuDuplicate = r.IsDBNull(2) ? 0 : Convert.ToDouble(r[2]);
+                        g.duplicateFails = r.IsDBNull(3) ? 0 : Convert.ToInt32(r[3]);
+                        g.duplicateNote = r.IsDBNull(4) ? "" : "Recorded twice: " + r[4] + ".";
+                    }
+            }
+        }
+        catch { }
+
+        // A final-year component registered in the portal but never marked: the commonest way a
+        // candidate reaches C10 (21 BTHM candidates hold THM3212B Dissertation like this).
+        try
+        {
+            using (var cmd = new MySqlCommand(
+                "SELECT GROUP_CONCAT(DISTINCT CONCAT(cr.courseID,' ',ac.courseName) ORDER BY cr.courseID SEPARATOR ', ') " +
+                "FROM campus_dynamics_portal.acad_course_registration cr JOIN acad_course ac ON ac.courseID=cr.courseID " +
+                "WHERE cr.regno=@r AND IFNULL(cr.mark_stage,'NOT_ENTERED')='NOT_ENTERED' " +
+                " AND (ac.courseName REGEXP '" + GraduationEngine.CAP_RESEARCH_RX + "' OR ac.courseName REGEXP '" +
+                GraduationEngine.CAP_SCHOOL_RX + "' OR ac.courseName REGEXP '" + GraduationEngine.CAP_INTERN_RX + "')", c))
+            {
+                cmd.Parameters.AddWithValue("@r", regno);
+                object o = cmd.ExecuteScalar();
+                g.capstoneUnmarked = o == null || o == DBNull.Value ? "" : o.ToString();
+            }
+        }
+        catch { }
+
+        g.cuExempt = GraduationEngine.ExemptedCredits(c, regno);
+        foreach (GraduationEngine.PriorRecord pr in GraduationEngine.PriorRecords(c, g))
+            GraduationEngine.ApplyPrior(g, pr);
 
         // C4 and C5 for this one student. The evidence panel must run the SAME checks the list
         // ran, or a reviewer opens a row marked "needs a look" and finds nothing to look at.
         try
         {
-            using (var cmd = new MySqlCommand(
-                "SELECT COUNT(*) req, " +
-                " SUM(NOT EXISTS(SELECT 1 FROM acad_results r WHERE r.regno=s.regno AND r.courseid=pc.course_code)) missing " +
-                "FROM acad_student s " +
-                "JOIN acad_programmecourses pc ON pc.progcode=s.progid " +
-                " AND pc.specialisation_id=CAST(s.specialisation AS UNSIGNED) AND pc.status='Active' " +
-                "WHERE s.regno=@r AND TRIM(IFNULL(s.specialisation,'')) NOT IN ('','0','13')", c))
+            using (var cmd = new MySqlCommand(GraduationEngine.CoverageSql("s.regno=@r"), c))
             {
                 cmd.Parameters.AddWithValue("@r", regno);
                 using (var r = cmd.ExecuteReader())
-                    if (r.Read() && !r.IsDBNull(0) && Convert.ToInt32(r[0]) > 0)
+                    if (r.Read() && !r.IsDBNull(1) && Convert.ToInt32(r[1]) > 0)
                     {
                         g.coverageChecked = true;
-                        g.coverageRequired = Convert.ToInt32(r[0]);
-                        g.coverageMissing = r.IsDBNull(1) ? 0 : Convert.ToInt32(r[1]);
+                        g.coverageRequired = Convert.ToInt32(r[1]);
+                        g.coverageMissing = r.IsDBNull(2) ? 0 : Convert.ToInt32(r[2]);
                     }
             }
         }
@@ -228,8 +280,17 @@ public static class GraduationService
                 readiness = g.readiness,
                 findings = g.findings,
                 cuEarned = g.cuEarned,
+                cuExempt = g.cuExempt,
+                cuDuplicate = g.cuDuplicate,
+                cuCounted = g.cuCounted,
                 cuRequired = g.cuRequired,
+                cuDeclared = g.cuDeclared,
+                cuProrated = g.cuProrated,
                 cuSource = g.cuSource,
+                cuSourceLabel = g.cuSourceLabel,
+                firstStudyYear = g.firstStudyYear,
+                pendingRetakes = g.pendingRetakes,
+                priorYear = g.priorYear,
                 cgpa = g.cgpa,
                 degClass = g.degClass,
                 failedPapers = g.failedPapers,
@@ -270,10 +331,9 @@ public static class GraduationService
         if (regno == "") return Fail("No student was given.");
         if (acadYear == "") return Fail("Choose the graduation year first.");
 
-        // Seeing a candidate and signing one off are different authorities: only a head of
-        // department, a dean, the Academic Registrar or an administrator may do this.
+        // Approving is for the head of department and the dean only (GraduationRights.CanClear).
         string notAllowed;
-        if (!GraduationRights.CanDecide(scope, out notAllowed)) return Fail(notAllowed);
+        if (!GraduationRights.CanClear(scope, out notAllowed)) return Fail(notAllowed);
 
         string actor = Actor();
         try
@@ -453,10 +513,9 @@ public static class GraduationService
         if (reason.Length < 10)
             return Fail("Say why this name is coming off the graduation list: at least 10 characters.");
 
-        // Seeing a candidate and signing one off are different authorities: only a head of
-        // department, a dean, the Academic Registrar or an administrator may do this.
+        // Taking a name off the list undoes an approval, so it needs the same right.
         string notAllowed;
-        if (!GraduationRights.CanDecide(scope, out notAllowed)) return Fail(notAllowed);
+        if (!GraduationRights.CanClear(scope, out notAllowed)) return Fail(notAllowed);
 
         string actor = Actor();
         try

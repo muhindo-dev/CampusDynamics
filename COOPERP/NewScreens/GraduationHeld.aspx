@@ -18,7 +18,7 @@
       <input type="text" id="fQ" placeholder="Number or name&hellip;" autocomplete="off" /></div>
     <div class="g-f" style="flex:0 0 116px;"><label for="fStale">Show</label>
       <select id="fStale"><option value="">Every hold</option>
-        <option value="stale">Only those nothing is blocking any more</option></select></div>
+        <option value="stale">Only holds that can be removed</option></select></div>
     <div class="g-bar__sp">
       <button type="button" class="g-btn" id="btnXls">Export&hellip;</button>
       <button type="button" class="g-btn" id="btnReset">Reset</button>
@@ -104,19 +104,23 @@ function load() {
         if (!d || !d.success) { G.toast((d && d.message) || 'Could not load students on hold.', false); return; }
         rows = d.rows || [];
         // "Nothing is blocking them any more" is decided per student in C#, not in SQL, so this
-        // one narrowing has to happen here.
-        if (G.qs('fStale').value === 'stale')
-            rows = rows.filter(function (g) { return g.readiness !== 'BLOCKED'; });
+        // one narrowing has to happen here. The hold itself is a block, so the engine says
+        // whether anything ELSE is (blockedApartFromHold); readiness alone is always BLOCKED here.
+        // A student who has already graduated is waiting on nothing either.
+        function liftable(g) { return !g.blockedApartFromHold || (g.priorYear && !g.graduatedYear); }
+        if (G.qs('fStale').value === 'stale') rows = rows.filter(liftable);
         var h = '';
         for (var i = 0; i < rows.length; i++) {
             var g = rows[i];
             // A hold whose blocking finding has since cleared is the one worth acting on.
-            var stale = (g.readiness !== 'BLOCKED');
+            var note = (g.priorYear && !g.graduatedYear)
+                ? 'Already graduated from ' + G.esc(g.priorProg) + ' in ' + G.esc(g.priorYear) + ': this hold can be removed'
+                : (!g.blockedApartFromHold ? 'Nothing but the hold is stopping this candidate' : '');
             h += '<tr class="is-click" data-reg="' + G.esc(g.regno) + '">' +
                 '<td>' + G.photoCell(g.regno, g.name) + '</td>' +
                 '<td>' + G.esc(g.progname || g.progcode) + '<div class="g-sub">' + G.esc(g.progcode) + '</div></td>' +
                 '<td style="max-width:320px;">' + G.esc(g.holdReason) +
-                  (stale ? '<div class="g-sub" style="color:#0b5c3a;font-weight:700;">Nothing is blocking this candidate any more</div>' : '') + '</td>' +
+                  (note ? '<div class="g-sub" style="color:#0b5c3a;font-weight:700;">' + note + '</div>' : '') + '</td>' +
                 '<td class="g-sub">' + G.esc(g.holdActor) + '</td>' +
                 '<td class="g-num g-sub">' + G.esc(g.holdAt) + '</td>' +
                 '<td><button type="button" class="g-btn g-btn--sm" data-open="' + G.esc(g.regno) + '">Review</button></td></tr>';
@@ -124,7 +128,7 @@ function load() {
         G.qs('gBody').innerHTML = h || '<tr><td colspan="6" class="g-empty">Nobody is on hold in this scope.</td></tr>';
 
         G.qs('gMeta').textContent = G.qs('fStale').value === 'stale'
-            ? 'holds nothing is blocking any more' : 'oldest first';
+            ? 'holds that can be removed' : 'oldest first';
         var pages = Math.max(1, Math.ceil((d.total || 0) / 100));
         G.pager('gPager', { page: page, size: 100, total: d.total || 0, shown: rows.length },
                 function (n) { page = n; sync(); });
@@ -181,7 +185,7 @@ function openExport() {
         ],
         groupDefault: 'prog',
         sheets: [
-            { k: 'stale', t: 'Holds that can be removed', d: 'Nothing is blocking these students any more', on: true }
+            { k: 'stale', t: 'Holds that can be removed', d: 'Nothing but the hold is stopping them, or they have already graduated', on: true }
         ]
     });
 }
@@ -189,7 +193,7 @@ function openExport() {
 function footer(g) {
     return '<button type="button" class="g-btn g-btn--p" id="mRelease">Remove the hold</button>' +
            '<button type="button" class="g-btn" id="mEdit">Edit the reason</button>' +
-           '<button type="button" class="g-btn" id="mClear">Approve for graduation</button>' +
+           (BOOT && BOOT.canClear === false ? '' : '<button type="button" class="g-btn" id="mClear">Approve for graduation</button>') +
            '<label class="g-auto" title="After a decision, open the next hold in this filter">' +
              '<input type="checkbox" id="mAuto"' + (G.autoAdvance() ? ' checked' : '') + ' />' +
              'Move to the next' +

@@ -76,33 +76,43 @@ The filter bar across the top narrows the queue:
   the departments, and choosing a department limits the programmes
 * **Intake**, the year the student joined
 * **Graduation list**, either *Not yet on a list*, *Already on the list*, or *Both*
-* **Readiness**, either *Ready*, *Needs a look*, or *Blocked*
+* **Readiness**, either *Ready*, *Needs checking*, or *Blocked*
 * **Order** and **Search**
 
 The default is the pending queue for the current cycle, which is what you want on most days.
 
-### The eight checks
+### The checks
 
-Open any student and you see eight checks. Each one passes, warns, or blocks.
+Open any student and you see the checks. Each one passes, warns, blocks, or (C4 only) is
+there for reference.
 
 | | Check | What it means |
 |---|---|---|
-| C1 | Already on a graduation list | Blocks if the student has graduated before. |
-| C2 | Outstanding papers | Blocks on a mark between 1 and 49. Warns on a mark of zero, which is usually a paper never marked rather than a paper failed. |
-| C3 | Credits earned | Compares credits earned against the programme. Blocks only where a real curriculum is on file and the student is below 90% of it. Otherwise it warns. |
-| C4 | Programme coverage | Courses in the curriculum with no result. **Never blocks.** A gap often means an equivalent course was taken under a different code. |
+| C1 | Already graduated | Blocks if the student is on a graduation list, or graduated from **the same programme** on the graduation records kept from before the list was emptied on 25 September 2026. An earlier award in a different programme (a PGD, then an MBA) does not block, and is mentioned. |
+| C2 | Outstanding papers | Blocks on a mark between 1 and 49, and on a **retake registered but not yet marked**. Warns on a mark of zero, which is usually a paper never marked rather than a paper failed. Also warns when **one course is on record twice** (the same code bar a space, the same title), and names both rows so they can be merged. |
+| C3 | Credits earned | Credits passed (plus any recorded exemptions), against the programme's **declared minimum** in the programme settings. For a student admitted into a later year the minimum is prorated to the years they sat. Blocks below 80% of it, warns between 80% and 100%. If the minimum on file is not believable for the level (MEMA's 506, for example), it says so and cannot assess. |
+| C10 | Final-year components | Blocks when the student has no pass for a research project, school practice or internship **that at least 95% of the programme's own recent graduates have**. Names the course when it is registered with no mark entered. Applies to records from 2021/2022 on. |
+| C4 | Programme coverage | For reference only, **never affects readiness.** Core courses mapped to the specialisation with no result under that code, its merged code or the same title. The mappings list options side by side (both religion tracks, for instance), so a gap here is not a shortfall. |
 | C5 | Marks not yet published | Warns while marks are still with a lecturer, a head of department, or approved but not yet published. Their position may still change. |
-| C6 | Programme duration | Blocks if the student has not reached the final year of their programme. |
+| C6 | Programme completed | Blocks if the student has not reached the final year, and, for two-semester programmes, if **the final semester or any whole semester has no results**. A record that starts after year 1 is fine when the first results are in the year the student joined (admitted into a later year); if they joined earlier, the missing years block. Session and three-term programmes are checked by year only. |
 | C7 | Class of award | Blocks if the CGPA is below 2.0, the floor below which no class is awarded at any level. |
 | C8 | Held by a reviewer | Blocks while a hold is open, and shows who held them, when, and why. |
+| C9 | Disciplinary | Blocks on a graduation bar, suspension, expulsion or an outstanding results cancellation (cannot be overridden); warns on an open case. |
 
-The student's overall state is the worst of the eight:
+The student's overall state is the worst of them:
 
 * **Ready**, every check passed
-* **Needs a look**, at least one warning, nothing blocking
+* **Needs checking**, at least one warning, nothing blocking
 * **Blocked**, at least one check blocking
 
 A warning is not a refusal. It is a request that someone look before approving.
+
+**How the checks were calibrated (31 October 2026).** Every rule above was measured against the
+people who really graduated: the 1,607 records from before 25 September 2026 and the 400
+approved for 2026/2027. On the 400 approved, the checks block none; on the 712 who graduated in
+2024/2025 and 2025/2026 they block 12, each a record that is genuinely incomplete (a student who
+reached year 2 of 4, or 26 of 65 credits). The previous credit rule, which added up the programme
+structure, blocked 109 of them.
 
 ### The four decisions
 
@@ -160,6 +170,11 @@ Everyone currently stopped, with the reason, who set it and when.
 Work this tab down to empty before a cycle closes. Every row is either something to fix
 or something to release. A hold nobody revisits is a student who quietly never graduates,
 which is exactly what this tab exists to prevent.
+
+Choose **Only holds that can be removed** to see the ones waiting on nothing: either nothing
+but the hold is stopping the student any more, or they have **already graduated** (C1). On
+31 October 2026 that second group was 254 holds, most of them reading "she graduated" or "he
+graduated", placed before the module could see earlier graduations.
 
 From here you can release a student, change the reason, or clear them once the problem is
 resolved.
@@ -255,6 +270,10 @@ Every decision is written down. Nothing in this module is anonymous.
   made it, when, in what role, and the reason or justification they typed. Decisions are
   kept even after a student is removed from the list.
 * `acad_activity_log` carries the same events into the system-wide audit trail.
+* `acad_graduands_prior` holds, read-only, the 1,607 graduation records as they stood at 12:10 on
+  25 September 2026, just before `acad_graduands` was emptied. C1 reads it, so nobody who
+  graduated then is offered for graduation again, and reprinting such a graduate's certificate
+  restores their original record rather than inventing one.
 
 A clearance made over a block is recorded as such, with the justification, and is
 distinguishable from an ordinary clearance for ever.
@@ -266,7 +285,7 @@ distinguishable from an ordinary clearance for ever.
 1. **Graduation Centre.** Choose the year. See where you stand.
 2. **Candidates**, filtered to *Ready*. Work through the queue, clearing as you go.
    These are the straightforward ones.
-3. **Candidates**, filtered to *Needs a look*. Read the warnings and decide each one.
+3. **Candidates**, filtered to *Needs checking*. Read the warnings and decide each one.
    Hold anything that needs someone else to act.
 4. **Candidates**, filtered to *Blocked*. Most of these are genuine. Fix what can be
    fixed, hold the rest with a reason.
@@ -297,6 +316,17 @@ list is published, because students can see the list.
 **A student asks why they are not on the list.**
 Search for them on the Candidates tab. Their checks say exactly what is outstanding. If
 they are held, the Held tab gives the reason and who set it.
+
+**A student shows "Already graduated" but is not on the list.**
+They graduated from the same programme on the records kept from before 25 September 2026. If
+that is right, there is nothing to do (remove any hold). If they are graduating again from a
+different programme, C1 does not block them. If the earlier record itself is the mistake,
+approve with a justification that says so.
+
+**Credits say "short by 1" for a student with every course passed.**
+The minimum on file is a little above what their courses add up to. Check the programme's
+minimum in the programme settings and the credit units of the courses taken; it warns, it does
+not block.
 
 **Will clearing someone change their marks or their CGPA?**
 No. This module reads results and never writes them. Marks are corrected in the marks

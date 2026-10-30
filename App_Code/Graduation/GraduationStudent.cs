@@ -66,7 +66,13 @@ public static class GraduationStudent
                     "  IFNULL(a.is_candidate,0) cand, IFNULL(a.maxsy,0) maxsy, " +
                     "  IFNULL(NULLIF(p.couselength,0),3) plen, " +
                     "  IFNULL(a.last_year,'') ly, " +
-                    "  IFNULL((SELECT g.acadyear FROM acad_graduands g WHERE g.regno=s.regno LIMIT 1),'') onlist " +
+                    "  IFNULL((SELECT g.acadyear FROM acad_graduands g WHERE g.regno=s.regno LIMIT 1),'') onlist, " +
+                    // An earlier graduation from the same programme, from the records kept
+                    // before 25 Sep 2026, so the reviewer sees it before opening the student.
+                    (GraduationStats.PriorTableExists(c)
+                        ? "  IFNULL((SELECT pr.acadyear FROM " + GraduationStats.PRIOR_TABLE + " pr WHERE pr.regno=s.regno " +
+                          "    AND TRIM(pr.progcode)=TRIM(s.progid) ORDER BY pr.acadyear DESC LIMIT 1),'') prior "
+                        : "  '' prior ") +
                     "FROM acad_student s " +
                     "LEFT JOIN acad_programme p ON p.progcode=s.progid " +
                     "LEFT JOIN " + GraduationStats.TABLE + " a ON a.regno=s.regno " +
@@ -83,6 +89,7 @@ public static class GraduationStudent
                             int maxsy = Convert.ToInt32(r[6]);
                             int plen = Convert.ToInt32(r[7]);
                             string onList = r[9].ToString();
+                            string prior = r[10].ToString().Trim();
                             rows.Add(new
                             {
                                 regno = r[0].ToString(),
@@ -97,9 +104,11 @@ public static class GraduationStudent
                                 // reaching for this box.
                                 note = onList != ""
                                     ? "Already on the " + onList + " graduation list"
-                                    : (cand ? "Already a candidate"
-                                            : "Not a candidate, reached year " + maxsy +
-                                              " of " + plen)
+                                    : prior != ""
+                                        ? "Already graduated in " + prior + " (earlier records)"
+                                        : (cand ? "Already a candidate"
+                                                : "Not a candidate, reached year " + maxsy +
+                                                  " of " + plen)
                             });
                         }
                 }
@@ -111,11 +120,18 @@ public static class GraduationStudent
 
     public static string Detail(string regno)
     {
+        MarksScope scope;
+        try { scope = MarksScopeResolver.Resolve(); }
+        catch (Exception ex) { return J.Serialize(new { success = false, message = ex.Message }); }
+        if (!scope.HasAccess) return GraduationBootstrap.Denied();
+        return Detail(scope, regno);
+    }
+
+    /// <summary>The evidence for one student under a scope already resolved and checked.</summary>
+    public static string Detail(MarksScope scope, string regno)
+    {
         try
         {
-            MarksScope scope = MarksScopeResolver.Resolve();
-            if (!scope.HasAccess) return GraduationBootstrap.Denied();
-
             regno = (regno ?? "").Trim();
             if (regno == "") return J.Serialize(new { success = false, message = "No student was given." });
 
@@ -169,13 +185,20 @@ public static class GraduationStudent
                 // of courses from somebody else's curriculum, which is worse than none.
                 if (!g.specIsPlaceholder)
                 {
+                    // Each code once, however many curricula list it (BIT lists 35 courses twice),
+                    // and a result found under the merged code or the same title, as C4 counts it.
+                    const string MATCH =
+                        "FROM acad_results r LEFT JOIN acad_course rc ON rc.courseID=r.courseid " +
+                        "WHERE r.regno=@r AND (r.courseid=pc.course_code OR r.courseid=ac.merged_into " +
+                        " OR (ac.courseName IS NOT NULL AND rc.courseName=ac.courseName)) " +
+                        "ORDER BY (r.courseid=pc.course_code) DESC, r.score DESC LIMIT 1";
                     using (var cmd = new MySqlCommand(
-                        "SELECT pc.study_year, pc.semester, pc.course_code, IFNULL(ac.courseName,''), " +
-                        " IFNULL(ac.CreditUnit,0), pc.course_type, " +
-                        " (SELECT r.score FROM acad_results r WHERE r.regno=@r AND r.courseid=pc.course_code LIMIT 1) " +
+                        "SELECT MIN(pc.study_year), MIN(pc.semester), pc.course_code, IFNULL(ac.courseName,''), " +
+                        " IFNULL(ac.CreditUnit,0), MIN(pc.course_type), " +
+                        " (SELECT r.score " + MATCH + "), (SELECT r.courseid " + MATCH + ") " +
                         "FROM acad_programmecourses pc LEFT JOIN acad_course ac ON ac.courseID=pc.course_code " +
                         "WHERE pc.progcode=@p AND IFNULL(pc.specialisation_id,0)=@sp AND pc.status='Active' " +
-                        "ORDER BY pc.study_year, pc.semester, pc.course_code", c))
+                        "GROUP BY pc.course_code ORDER BY 1, 2, pc.course_code", c))
                     {
                         cmd.Parameters.AddWithValue("@r", regno);
                         cmd.Parameters.AddWithValue("@p", g.progcode);
@@ -190,7 +213,8 @@ public static class GraduationStudent
                                     name = r[3].ToString(),
                                     cu = Convert.ToDouble(r[4]),
                                     type = r[5].ToString(),
-                                    score = r.IsDBNull(6) ? (object)null : Convert.ToInt32(r[6])
+                                    score = r.IsDBNull(6) ? (object)null : Convert.ToInt32(r[6]),
+                                    @as = r.IsDBNull(7) ? "" : r[7].ToString()
                                 });
                     }
                 }

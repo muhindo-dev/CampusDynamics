@@ -66,8 +66,11 @@ public static class GraduationAnalytics
             case 1: return "Certificate";
             case 2: return "Diploma";
             case 3: return "Bachelor's degree";
-            case 4: return "Master's degree";
-            case 5: return "Postgraduate";
+            // 4 is the postgraduate diplomas (PGD, PGDEMA, PGDPAM) and 5 the masters (MBA, MEMA,
+            // MMC, ...), as acad_programme holds them and the certificate printer reads them.
+            // These two were the other way round until 31 Oct 2026.
+            case 4: return "Postgraduate diploma";
+            case 5: return "Master's degree";
             default: return "Not classified";
         }
     }
